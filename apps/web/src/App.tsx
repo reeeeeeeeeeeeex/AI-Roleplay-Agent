@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitBranch, PanelLeftClose, PanelLeft, Library } from 'lucide-react';
+import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitBranch, PanelLeftClose, PanelLeft, Library } from 'lucide-react';
 import type { Conversation, MessageNode, SpeakerRef, ImportPreview } from '@new-ai-chat/contracts';
 import { api, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import Records from './Records.js';
-import NarratorSettings from './NarratorSettings.js';
+import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
+const studioCollections: Collection[] = ['characters', 'personas', 'groups', 'lorebooks'];
 
 export default function App() {
   const [data, setData] = useState<Record<string, any[]>>({});
@@ -42,8 +43,14 @@ export default function App() {
   const [importBusy, setImportBusy] = useState(false);
 
   const [narratorDefaults, setNarratorDefaults] = useState(defaults.conversations.narrator);
-  const [editNarrator, setEditNarrator] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'appearance' | 'narrator' | 'connections'>('appearance');
   const [showBranches, setShowBranches] = useState(false);
+
+  // Avatar display preferences
+  const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => (localStorage.getItem('avatar-mode') as AvatarMode) || 'large');
+  const [avatarFit, setAvatarFit] = useState<AvatarFit>(() => (localStorage.getItem('avatar-fit') as AvatarFit) || 'cover');
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const bottom = useRef<HTMLDivElement>(null);
   const streamAbort = useRef<AbortController | null>(null);
@@ -315,14 +322,14 @@ export default function App() {
           <span>资源管理</span>
         </div>
         <nav className="studio-nav">
-          {(['characters', 'personas', 'groups', 'lorebooks', 'connections'] as Collection[]).map((kind) => (
+          {studioCollections.map((kind) => (
             <button className={page === kind ? 'selected' : ''} key={kind} onClick={() => { setPage(kind); setMobileNav(false); }}>
-              {kind === 'groups' ? <Users size={14} /> : kind === 'connections' ? <Settings2 size={14} /> : <Library size={14} />}
+              {kind === 'groups' ? <Users size={14} /> : <Library size={14} />}
               {titles[kind]} <span>{data[kind]?.length ?? 0}</span>
             </button>
           ))}
-          <button onClick={() => { setEditNarrator(true); setMobileNav(false); }}>
-            <Settings2 size={14} />默认旁白
+          <button onClick={() => { setShowSettings(true); setSettingsTab('appearance'); setMobileNav(false); }}>
+            <Settings2 size={14} />设置
           </button>
           <button className={page === 'import' ? 'selected' : ''} onClick={() => { setPage('import'); setMobileNav(false); }}>
             <Upload size={14} />导入 SillyTavern
@@ -399,7 +406,7 @@ export default function App() {
               <small>{chat.agencyMode === 'protected' ? '主角保护' : '共同创作'}</small>
             </div>
 
-            <section className="messages" aria-label="聊天记录">
+            <section className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录">
               {!branch.length && (
                 <div className="scene-start">
                   <p>输入第一条消息开始对话。</p>
@@ -409,11 +416,16 @@ export default function App() {
                 const swipes = nodes.filter((n) => n.parentId === m.parentId && n.role === m.role);
                 const index = swipes.findIndex((n) => n.id === m.id);
                 const narrator = m.authorKind === 'narrator' || m.authorKind === 'user_narrator';
+                const avatar = avatarFor(m);
                 return (
                   <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={m.id}>
-                    <div className="avatar">
-                      {avatarFor(m) ? (
-                        <img src={avatarFor(m)} alt="" loading="lazy" />
+                    <div
+                      className={`avatar ${avatar ? 'clickable' : ''}`}
+                      onClick={() => { if (avatar) setPreviewImage(avatar); }}
+                      title={avatar ? '点击查看大图立绘' : undefined}
+                    >
+                      {avatar ? (
+                        <img src={avatar} alt="" loading="lazy" />
                       ) : narrator ? (
                         '旁'
                       ) : m.role === 'user' ? (
@@ -627,6 +639,27 @@ export default function App() {
         />
       )}
 
+      <SettingsModal
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        initialTab={settingsTab}
+        narratorDefaults={narratorDefaults}
+        onSaveNarrator={async (value) => {
+          setNarratorDefaults(await api('/narrator', 'PUT', value));
+          await refresh();
+        }}
+        connections={data.connections ?? []}
+        onEditConnection={(conn) => edit('connections', conn ?? defaults.connections)}
+        onDeleteConnection={(conn) => remove('connections', conn)}
+        onTestConnection={async (id) => {
+          await act(api(`/connections/${id}/test`, 'POST', {}).then(() => setNotice('连接测试通过。')));
+        }}
+        avatarMode={avatarMode}
+        setAvatarMode={setAvatarMode}
+        avatarFit={avatarFit}
+        setAvatarFit={setAvatarFit}
+      />
+
       {editor && (
         <Editor
           key={`${editor.kind}:${editor.value.id ?? 'new'}`}
@@ -635,17 +668,6 @@ export default function App() {
           data={data}
           onClose={() => setEditor(null)}
           onSave={save}
-        />
-      )}
-
-      {editNarrator && (
-        <NarratorSettings
-          initial={narratorDefaults}
-          onClose={() => setEditNarrator(false)}
-          onSave={async (value) => {
-            setNarratorDefaults(await api('/narrator', 'PUT', value));
-            setEditNarrator(false);
-          }}
         />
       )}
 
@@ -670,6 +692,12 @@ export default function App() {
               ))}
             </div>
           </section>
+        </div>
+      )}
+
+      {previewImage && (
+        <div className="lightbox-modal" onClick={() => setPreviewImage(null)} title="点击关闭大图">
+          <img className="lightbox-content" src={previewImage} alt="角色大图立绘" />
         </div>
       )}
     </div>

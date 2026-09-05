@@ -88,9 +88,10 @@ test('group Planner preserves narrator and stable cast', async ({ page }) => {
   await expect(page.getByText('planner.completed', { exact: true })).toBeVisible();
 });
 test('creates a connection through the UI with only the supported protocols', async ({ page }) => {
+  await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('button', { name: /^模型连接 \d/ }).click();
   await page.getByRole('button', { name: '创建模型连接', exact: true }).click();
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('dialog', { name: '编辑模型连接' });
   await dialog.getByRole('textbox', { name: '名称', exact: true }).fill('Browser connection');
   await dialog.getByRole('textbox', { name: '模型 ID', exact: true }).fill('local-test');
   await expect(dialog.getByRole('combobox', { name: 'API 协议', exact: true }).locator('option')).toHaveCount(3);

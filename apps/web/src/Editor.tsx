@@ -128,7 +128,7 @@ export default function Editor({
   );
 
   return (
-    <div className="modal-shade">
+    <div className="modal-shade" style={{ zIndex: 120 }}>
       <section className="modal" role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
         <header>
           <h2>{initial?.id ? '编辑' : '创建'}{titles[kind]}</h2>

@@ -538,12 +538,45 @@ main {
   font-size: 11px;
   font-weight: 500;
   overflow: hidden;
+  transition: width 0.15s ease, height 0.15s ease;
 }
 
 .avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: top center;
+  transition: transform 0.15s;
+}
+
+.messages.avatar-large .avatar {
+  width: 58px;
+  height: 80px;
+  border-radius: var(--radius-md);
+}
+
+.messages.avatar-full .avatar {
+  width: 80px;
+  height: 112px;
+  border-radius: var(--radius-md);
+}
+
+.messages.avatar-fit-contain .avatar img {
+  object-fit: contain;
+  background: #00000030;
+}
+
+.messages.avatar-fit-cover .avatar img {
+  object-fit: cover;
+  object-position: top center;
+}
+
+.avatar.clickable {
+  cursor: pointer;
+}
+
+.avatar.clickable:hover img {
+  transform: scale(1.05);
 }
 
 .message.user .avatar {
@@ -1282,6 +1315,134 @@ fieldset label {
 
 .mobile-only {
   display: none;
+}
+
+/* Settings Modal */
+.settings-modal {
+  width: min(720px, 95vw);
+  max-height: 85dvh;
+}
+
+.settings-nav {
+  display: flex;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-sidebar);
+  padding: 0 16px;
+  gap: 6px;
+}
+
+.settings-nav button {
+  border: 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-nav button:hover {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.settings-nav button.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
+  font-weight: 500;
+}
+
+.settings-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-group {
+  margin-bottom: 8px;
+}
+
+.settings-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.settings-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.option-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  transition: border-color 0.12s, background 0.12s;
+  cursor: pointer;
+}
+
+.option-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.option-card.active {
+  background: var(--bg-active);
+  border-color: var(--border-focus);
+}
+
+.option-card strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.option-card small {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.settings-form label {
+  margin-bottom: 12px;
+}
+
+/* Image preview lightbox modal */
+.lightbox-modal {
+  position: fixed;
+  inset: 0;
+  background: #000000bd;
+  backdrop-filter: blur(8px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: zoom-out;
+}
+
+.lightbox-content {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: 0 25px 80px #00000099;
 }
 
 /* Responsive & Mobile Adaptations */
