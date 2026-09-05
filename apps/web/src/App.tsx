@@ -559,38 +559,70 @@ export default function App() {
               </button>
             </header>
             <div className="management-content">
-              <div className="resource-list">
-                {data[page]?.map((v) => (
-                  <article className="resource-item" key={v.id}>
-                    <div className="resource-main">
-                      {v.avatarPath && <img className="resource-avatar" src={v.avatarPath} alt="" />}
-                      <div className="resource-info">
-                        <h3 className="resource-title">{v.name ?? v.title}</h3>
-                        {(v.model || v.description || v.scenario) && (
-                          <p className="resource-desc">{v.model ?? v.description ?? v.scenario}</p>
+              {page === 'characters' || page === 'personas' ? (
+                <div className="character-grid">
+                  {data[page]?.map((v) => (
+                    <article className="character-card" key={v.id}>
+                      <div
+                        className="character-card-image-wrap"
+                        onClick={() => { if (v.avatarPath) setPreviewImage(v.avatarPath); }}
+                        title={v.avatarPath ? '点击查看高清原图' : undefined}
+                      >
+                        {v.avatarPath ? (
+                          <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
+                        ) : (
+                          <div className="character-card-placeholder">
+                            {v.name?.slice(0, 1) || '卡'}
+                          </div>
                         )}
                       </div>
-                    </div>
-                    <div className="resource-meta">
-                      <span>{v.protocol ?? (v.entries ? `${v.entries.length} 个条目` : v.memberIds ? `${v.memberIds.length} 位角色` : '')}</span>
-                    </div>
-                    <div className="resource-actions">
-                      <button onClick={() => edit(page, v)}>编辑</button>
-                      {page === 'connections' && (
-                        <button onClick={() => act(api(`/connections/${v.id}/test`, 'POST', {}).then(() => setNotice('连接测试通过。')))}>
-                          测试连接
-                        </button>
-                      )}
-                      {page === 'characters' && (
-                        <button onClick={() => edit('conversations', { ...defaults.conversations, title: `与 ${v.name} 的故事`, characterId: v.id, connectionId: data.connections?.[0]?.id ?? null })}>
-                          开始聊天
-                        </button>
-                      )}
-                      <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
-                    </div>
-                  </article>
-                ))}
-              </div>
+                      <div className="character-card-body">
+                        <h3 className="character-card-title">{v.name}</h3>
+                        <p className="character-card-desc">{v.description || v.scenario || '暂无描述'}</p>
+                        <div className="character-card-footer">
+                          {page === 'characters' && (
+                            <button
+                              className="primary"
+                              onClick={() => edit('conversations', {
+                                ...defaults.conversations,
+                                title: `与 ${v.name} 的故事`,
+                                characterId: v.id,
+                                connectionId: data.connections?.[0]?.id ?? null,
+                              })}
+                            >
+                              开始聊天
+                            </button>
+                          )}
+                          <button onClick={() => edit(page, v)}>编辑</button>
+                          <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="resource-list">
+                  {data[page]?.map((v) => (
+                    <article className="resource-item" key={v.id}>
+                      <div className="resource-main">
+                        <div className="resource-info">
+                          <h3 className="resource-title">{v.name ?? v.title}</h3>
+                          {(v.model || v.description || v.scenario) && (
+                            <p className="resource-desc">{v.model ?? v.description ?? v.scenario}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="resource-meta">
+                        <span>{v.protocol ?? (v.entries ? `${v.entries.length} 个条目` : v.memberIds ? `${v.memberIds.length} 位成员` : '')}</span>
+                      </div>
+                      <div className="resource-actions">
+                        <button onClick={() => edit(page, v)}>编辑</button>
+                        <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
               {!data[page]?.length && <div className="empty">暂无{titles[page]}。点击右上角按钮创建。</div>}
             </div>
           </section>
