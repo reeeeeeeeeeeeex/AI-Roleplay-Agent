@@ -1,0 +1,28 @@
+{
+  "name": "new-ai-chat",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node scripts/tasks.mjs dev",
+    "demo": "node scripts/tasks.mjs demo",
+    "dev:server": "pnpm --filter @new-ai-chat/server dev",
+    "dev:web": "pnpm --filter @new-ai-chat/web dev",
+    "build": "node scripts/tasks.mjs build",
+    "typecheck": "node scripts/tasks.mjs typecheck",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:e2e": "pnpm --filter @new-ai-chat/web test:e2e",
+    "db:generate": "pnpm --filter @new-ai-chat/server db:generate",
+    "db:migrate": "pnpm --filter @new-ai-chat/server db:migrate",
+    "start": "node scripts/tasks.mjs start"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

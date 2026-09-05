@@ -1,0 +1,15 @@
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+dist/
+.vite/
+coverage/
+playwright-report/
+test-results/
+data/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+!.env.example
