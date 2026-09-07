@@ -4,6 +4,7 @@ import type {
   ProtagonistStateSnapshot,
   SpeakerRef,
   TurnPlan,
+  PromptSettings,
 } from '@new-ai-chat/contracts';
 
 export interface RuntimeConnection {
@@ -72,6 +73,18 @@ export interface BaseAgentRequest {
   latestUserIsNarration: boolean;
   source: StoryContextSource;
   signal: AbortSignal;
+  promptSettings?: PromptSettings;
+  trace?: RuntimeTraceSink;
+}
+
+export type TracePhase = 'selection' | 'planning' | 'writing' | 'records' | 'plain';
+export interface RuntimeTraceSink {
+  start(phase: TracePhase, requestIndex: number, model: string): string;
+  request(traceId: string, payload: unknown): void;
+  response(traceId: string, payload: unknown): void;
+  thinking(traceId: string, text: string): void;
+  tool(traceId: string, name: string, args: unknown, result?: unknown, ok?: boolean): void;
+  finish(traceId: string, status: 'completed' | 'failed' | 'cancelled', usage?: AgentUsage, error?: string): void;
 }
 
 export interface RouteRequest extends BaseAgentRequest {
@@ -98,10 +111,26 @@ export interface WriterResult {
   usage: AgentUsage;
 }
 
+export interface AgentTurnResult {
+  plan: TurnPlan;
+  results: Array<{ speaker: SpeakerRef; text: string; providerState: unknown; usage: AgentUsage }>;
+}
+
+export interface UnifiedWriterOptions {
+  mode: 'plain' | 'writer-agent';
+  forcedPlan?: TurnPlan;
+  prefix?: string;
+  onDelta: (speaker: SpeakerRef, outputIndex: number, delta: string) => void;
+  onTool?: (name: string, args: unknown, outputIndex?: number) => void;
+  onPhase?: (phase: 'selection' | 'writing', detail?: unknown) => void;
+  onThinking?: (text: string, outputIndex: number) => void;
+}
+
 export interface AgentRuntime {
   maintain(request: BaseAgentRequest, instruction: string): Promise<string>;
   plan(request: RouteRequest, onTool?: (name: string, args: unknown) => void): Promise<TurnPlan>;
   route(request: RouteRequest, onTool?: (name: string, args: unknown) => void): Promise<TurnPlan>;
   write(request: WriterRequest, onDelta: (delta: string) => void, onTool?: (name: string, args: unknown) => void): Promise<WriterResult>;
+  writeTurn(request: BaseAgentRequest, options: UnifiedWriterOptions): Promise<AgentTurnResult>;
   testConnection(connection: RuntimeConnection, signal: AbortSignal): Promise<{ text: string; usage: AgentUsage }>;
 }

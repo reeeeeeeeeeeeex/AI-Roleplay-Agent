@@ -11,6 +11,11 @@ import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.l
 import type { RuntimeConnection } from './types.js';
 import { estimateTokens } from './prompt.js';
 
+export type GatewayStreamOptions = SimpleStreamOptions & {
+  tracePayload?: (payload: unknown) => void;
+  traceResponse?: (response: unknown) => void;
+};
+
 const apiNames = {
   'openai-chat-completions': 'openai-completions',
   'anthropic-messages': 'anthropic-messages',
@@ -36,8 +41,9 @@ export class PiModelGateway {
     };
   }
 
-  stream(connection: RuntimeConnection, context: Context, options: SimpleStreamOptions = {}): AssistantMessageEventStream {
-    const configuredOptions = Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined));
+  stream(connection: RuntimeConnection, context: Context, options: GatewayStreamOptions = {}): AssistantMessageEventStream {
+    const { tracePayload, traceResponse, ...providerOptions } = options;
+    const configuredOptions = Object.fromEntries(Object.entries(providerOptions).filter(([, value]) => value !== undefined));
     if (estimateTokens(JSON.stringify(context)) + (options.maxTokens ?? connection.maxTokens) > (connection.contextWindow ?? 128_000)) throw new Error('Agent context exceeds the configured window after tool results. Reduce history or tool context, or increase the context window.');
     const model = this.createModel(connection);
     const api = connection.protocol === 'openai-chat-completions'
@@ -56,6 +62,14 @@ export class PiModelGateway {
       maxRetries: 1,
       ...(this.fetchOverride ? { fetch: this.fetchOverride } : {}),
       ...configuredOptions,
+      onPayload: async (payload: unknown, model: Model<Api>) => {
+        tracePayload?.(payload);
+        return providerOptions.onPayload?.(payload, model);
+      },
+      onResponse: async (response: unknown, model: Model<Api>) => {
+        traceResponse?.(response);
+        await providerOptions.onResponse?.(response as never, model);
+      },
       // Pi's loop includes apiKey: undefined; it must not erase our scoped connection key.
       // A non-secret placeholder supports local OpenAI-compatible servers without auth.
       apiKey: connection.apiKey || 'local-no-key',

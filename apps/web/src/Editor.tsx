@@ -39,6 +39,7 @@ export const defaults: Record<Collection, any> = {
     connectionId: null,
     lorebookIds: [],
     plannerEnabled: false,
+    generationMode: 'writer-agent',
     agencyMode: 'protected',
     narrator: { name: '旁白', style: '克制、具象、重视场景连续性，不替角色解释未表达的内心。', avatarPath: null },
     memoryTurnInterval: 10,
@@ -199,9 +200,17 @@ export default function Editor({
               {select('personaId', '主角', (data.personas ?? []).map((v) => [v.id, v.name]), true)}
               {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
               {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
-              <label className="check">
-                <input type="checkbox" checked={value.plannerEnabled} onChange={(e) => set('plannerEnabled', e.target.checked)} />
-                启用 Planner 规划（关闭时由 Writer 自动选择发言者）
+              <label>
+                生成模式
+                <select value={value.generationMode ?? (value.plannerEnabled ? 'planner' : 'writer-agent')} onChange={(e) => {
+                  const mode = e.target.value;
+                  setValue((old: any) => ({ ...old, generationMode: mode, plannerEnabled: mode === 'planner' }));
+                }}>
+                  <option value="plain">普通写作（ReST 提示词）</option>
+                  <option value="writer-agent">Writer Agent（先选人再写）</option>
+                  <option value="planner">Planner＋Writer</option>
+                </select>
+                <small className="muted">Writer Agent 只使用一个持续会话；Planner 模式才会先运行独立规划阶段。</small>
               </label>
               {select('agencyMode', '主角控制', [
                 ['protected', '保护主角：AI 不代替主角决定'],

@@ -40,6 +40,7 @@ export default function Records({
   const [editState, setEditState] = useState(false);
   const [busy, setBusy] = useState(false);
   const [baselineMemory, setBaselineMemory] = useState('');
+  const [traces, setTraces] = useState<any[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -47,13 +48,15 @@ export default function Records({
       api(`/conversations/${chat.id}/memory`),
       api(`/conversations/${chat.id}/state`),
       api(`/conversations/${chat.id}/proposals`),
+      api(`/conversations/${chat.id}/traces`),
     ])
-      .then(([m, s, p]) => {
+      .then(([m, s, p, t]) => {
         if (active) {
           setMemory(m);
           setState(s);
           setStateText(JSON.stringify(s.tables, null, 2));
           setProposals(p);
+          setTraces(t);
         }
       })
       .catch((error: Error) => {
@@ -189,7 +192,7 @@ export default function Records({
 
         {tab === 'planner' && (
           <>
-            <h3 className="planner-status">{chat.plannerEnabled ? 'Planner → Writer' : 'Writer 自动路由'}</h3>
+            <h3 className="planner-status">{chat.generationMode === 'plain' ? '普通写作' : chat.generationMode === 'planner' || chat.plannerEnabled ? 'Planner → Writer' : '统一 Writer Agent'}</h3>
             {proposals.map((p) => (
               <article className="proposal" key={p.id}>
                 <small className="muted">{p.kind === 'state' ? '状态提案' : '世界事件'} · {p.status}</small>
@@ -204,14 +207,23 @@ export default function Records({
               </article>
             ))}
             <div style={{ marginTop: 14 }}>
-              <div className="nav-label" style={{ paddingLeft: 0 }}>本轮活动</div>
-              {activity.map((event, index) => (
-                <details className="activity" key={event.id ?? index} open={index >= activity.length - 3}>
-                  <summary>{event.type}</summary>
-                  <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-                </details>
-              ))}
-              {!activity.length && <p className="muted">本轮尚未产生规划或工具事件。</p>}
+              <div className="nav-label" style={{ paddingLeft: 0 }}>模型请求 Trace（最近 20 回合）</div>
+              {[...new Set(traces.map((trace) => trace.turnId))].map((turnId) => {
+                const records = traces.filter((trace) => trace.turnId === turnId).sort((a, b) => a.requestIndex - b.requestIndex);
+                return <details className="activity trace-turn" key={turnId} open={turnId === traces[0]?.turnId}>
+                  <summary>回合 {turnId.slice(0, 8)} · {records.length} 次请求</summary>
+                  {records.map((trace) => <article className="trace-card" key={trace.id}>
+                    <header><strong>{trace.phase}</strong><span>{trace.model} · 请求 {trace.requestIndex + 1} · {trace.status}</span></header>
+                    <small className="muted">工具 {trace.tools?.length ?? 0} · 输入 {trace.usage?.input ?? '—'} · 输出 {trace.usage?.output ?? '—'} · 缓存命中 {trace.usage?.cacheRead ?? '—'}</small>
+                    <details><summary>实际请求 payload</summary><pre>{trace.request ? JSON.stringify(trace.request, null, 2) : '不可用（旧回合未捕获）'}</pre></details>
+                    <details><summary>工具调用与结果</summary><pre>{trace.tools?.length ? JSON.stringify(trace.tools, null, 2) : '无工具调用'}</pre></details>
+                    <details><summary>可见思考</summary><pre>{trace.thinking || '模型未返回可见思考内容。'}</pre></details>
+                    {trace.error && <p className="warning">{trace.error}</p>}
+                  </article>)}
+                </details>;
+              })}
+              {!traces.length && activity.map((event, index) => <details className="activity" key={event.id ?? index} open={index >= activity.length - 3}><summary>{event.type}</summary><pre>{JSON.stringify(event.payload, null, 2)}</pre></details>)}
+              {!traces.length && !activity.length && <p className="muted">本轮尚未产生请求记录。</p>}
             </div>
           </>
         )}

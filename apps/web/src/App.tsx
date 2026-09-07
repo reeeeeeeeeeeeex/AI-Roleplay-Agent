@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitBranch, PanelLeftClose, PanelLeft, Library } from 'lucide-react';
-import type { Conversation, MessageNode, SpeakerRef, ImportPreview } from '@new-ai-chat/contracts';
+import { defaultPromptSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings } from '@new-ai-chat/contracts';
 import { api, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import Records from './Records.js';
@@ -20,7 +20,11 @@ export default function App() {
   const [branch, setBranch] = useState<MessageNode[]>([]);
   const [nodes, setNodes] = useState<MessageNode[]>([]);
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
-  const [text, setText] = useState('');
+  const [inputDrafts, setInputDrafts] = useState<Record<string, string>>({});
+  const text = chatId ? inputDrafts[chatId] ?? '' : '';
+  const setText = (value: string) => { if (chatId) setInputDrafts(old => ({ ...old, [chatId]: value })); };
+  const [sending, setSending] = useState(false);
+  const sendPending = useRef(false);
   const [voice, setVoice] = useState('protagonist');
   const [replyTarget, setReplyTarget] = useState('auto');
   const [error, setError] = useState('');
@@ -43,8 +47,11 @@ export default function App() {
   const [importBusy, setImportBusy] = useState(false);
 
   const [narratorDefaults, setNarratorDefaults] = useState(defaults.conversations.narrator);
+  const [defaultConnectionId, setDefaultConnectionId] = useState<string | null>(null);
+  const [promptSettings, setPromptSettings] = useState<PromptSettings>(defaultPromptSettings);
+  const [promptPreview, setPromptPreview] = useState<any | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'appearance' | 'narrator' | 'connections'>('appearance');
+  const [settingsTab, setSettingsTab] = useState<'appearance' | 'narrator' | 'connections' | 'prompts'>('appearance');
   const [showBranches, setShowBranches] = useState(false);
 
   // Avatar display preferences
@@ -78,11 +85,15 @@ export default function App() {
       : data.characters?.find((c) => c.id === (message.speaker?.kind === 'character' ? message.speaker.characterId : null))?.avatarPath ?? undefined;
 
   async function refresh() {
-    const [values, narrator] = await Promise.all([
+    const [values, narrator, defaultConnection, prompts] = await Promise.all([
       Promise.all(collections.map((kind) => api(`/${kind}`))),
       api('/narrator'),
+      api('/settings/default-connection'),
+      api('/settings/prompts'),
     ]);
     setNarratorDefaults(narrator);
+    setDefaultConnectionId(defaultConnection.connectionId);
+    setPromptSettings(prompts);
     setData(Object.fromEntries(collections.map((kind, index) => [kind, values[index]])));
   }
 
@@ -129,7 +140,6 @@ export default function App() {
     }
     setChatId(id);
     setPage('chat');
-    setText('');
     setMobileNav(false);
   }
 
@@ -144,8 +154,10 @@ export default function App() {
       await streamTurn(id, (event) => {
         if (chatRef.current !== currentChat) return;
         const p = event.payload;
-        setActivity((old) => [...old.slice(-39), event]);
+        if (event.type !== 'writer.delta') setActivity((old) => [...old.slice(-79), event]);
         if (event.type === 'turn.started') setPhase('选择发言者');
+        if (event.type === 'agent.phase') setPhase(p.phase === 'selection' ? 'Writer Agent · 选择发言者' : 'Writer Agent · 写作');
+        if (event.type === 'agent.thinking') setPhase('Writer Agent · 思考');
         if (event.type === 'writer.started') {
           setPhase(`Writer · ${p.outputIndex + 1}`);
           setDraft({ speaker: p.speaker, text: '' });
@@ -190,22 +202,31 @@ export default function App() {
   }, [Object.keys(data).length]);
 
   async function send(trigger = 'normal', targetMessageId?: string) {
-    if (!chat) return;
+    if (!chat || turn || sendPending.current) return;
+    sendPending.current = true;
+    setSending(true);
     setError('');
     setNotice('');
     const target = replyTarget === 'auto'
       ? { mode: 'auto' }
       : { mode: 'explicit', speaker: replyTarget === 'narrator' ? { kind: 'narrator' } : { kind: 'character', characterId: replyTarget } };
-    const result = await api('/turns', 'POST', {
-      conversationId: chat.id,
-      trigger,
-      replyTarget: target,
-      ...(targetMessageId ? { targetMessageId } : {}),
-      ...(trigger === 'normal' ? { input: { voice, text } } : {}),
-    });
-    setText('');
-    await refreshMessages(chat.id);
-    await follow(result.id, chat.id);
+    try {
+      const result = await api('/turns', 'POST', {
+        conversationId: chat.id,
+        trigger,
+        replyTarget: target,
+        ...(targetMessageId ? { targetMessageId } : {}),
+        ...(trigger === 'normal' ? { input: { voice, text } } : {}),
+      });
+      // Clear only the accepted draft, never newer typing or another chat's input.
+      if (trigger === 'normal') setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
+      if (chatRef.current !== chat.id) return;
+      await refreshMessages(chat.id);
+      await follow(result.id, chat.id);
+    } finally {
+      sendPending.current = false;
+      setSending(false);
+    }
   }
 
   async function swipe(message: MessageNode) {
@@ -218,6 +239,12 @@ export default function App() {
     await refreshMessages(chatId!);
     await refresh();
     setRecordsVersion((v) => v + 1);
+  }
+
+  async function showPromptPreview() {
+    if (!chat) return;
+    try { setPromptPreview(await api(`/conversations/${chat.id}/prompt-preview`, 'POST', { speaker: replyTarget === 'auto' ? undefined : replyTarget === 'narrator' ? { kind: 'narrator' } : { kind: 'character', characterId: replyTarget }, brief: replyTarget === 'auto' ? '待选择回复身份' : '当前回复身份', inputText: text, inputVoice: voice })); }
+    catch (err: any) { setError(err.message || '预览失败'); }
   }
 
   const edit = (kind: Collection, value: any = defaults[kind]) =>
@@ -245,7 +272,7 @@ export default function App() {
     try {
       if (execute && preview) {
         const report = await api('/imports/execute', 'POST', { sourcePath: preview.sourcePath, sourceHash: preview.sourceHash });
-        setNotice(report.alreadyImported ? '这批文件已导入，没有重复创建。' : '导入完成。请为聊天配置连接。');
+        setNotice(report.alreadyImported ? '这批文件已导入，没有重复创建。' : '导入完成。未指定连接的聊天会使用全局默认模型。');
         await refresh();
         setPreview(report);
       } else {
@@ -260,7 +287,7 @@ export default function App() {
     edit('conversations', {
       ...defaults.conversations,
       characterId: data.characters?.[0]?.id ?? null,
-      connectionId: data.connections?.[0]?.id ?? null,
+      connectionId: null,
     });
 
   if (!paired) {
@@ -364,6 +391,7 @@ export default function App() {
                 <button title="记录面板" aria-label="记录面板" onClick={() => setPanel(!panel)}>
                   {panel ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
                 </button>
+                <button title="发送前预览提示词" aria-label="发送前预览提示词" onClick={() => act(showPromptPreview())}>预览</button>
               </>
             )}
           </div>
@@ -538,14 +566,14 @@ export default function App() {
                       <Square size={14} />
                     </button>
                   ) : (
-                    <button type="submit" className="send primary" aria-label="发送" disabled={!text.trim()}>
+                    <button type="submit" className="send primary" aria-label="发送" disabled={sending || !text.trim()}>
                       <Send size={15} />
                     </button>
                   )}
                 </div>
               </form>
               <div className="composer-hint">
-                <button disabled={!!turn} onClick={() => act(send('auto'))}>让故事继续 →</button>
+                <button disabled={sending || !!turn} onClick={() => act(send('auto'))}>让故事继续 →</button>
               </div>
             </div>
           </>
@@ -587,7 +615,7 @@ export default function App() {
                                 ...defaults.conversations,
                                 title: `与 ${v.name} 的故事`,
                                 characterId: v.id,
-                                connectionId: data.connections?.[0]?.id ?? null,
+                                connectionId: null,
                               })}
                             >
                               开始聊天
@@ -681,6 +709,11 @@ export default function App() {
           await refresh();
         }}
         connections={data.connections ?? []}
+        defaultConnectionId={defaultConnectionId}
+        onSaveDefaultConnection={async connectionId => {
+          const value = await api('/settings/default-connection', 'PUT', { connectionId });
+          setDefaultConnectionId(value.connectionId);
+        }}
         onEditConnection={(conn) => edit('connections', conn ?? defaults.connections)}
         onDeleteConnection={(conn) => remove('connections', conn)}
         onTestConnection={async (id) => {
@@ -690,6 +723,8 @@ export default function App() {
         setAvatarMode={setAvatarMode}
         avatarFit={avatarFit}
         setAvatarFit={setAvatarFit}
+        promptSettings={promptSettings}
+        onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
       />
 
       {editor && (
@@ -698,6 +733,7 @@ export default function App() {
           kind={editor.kind}
           initial={editor.value}
           data={data}
+          defaultConnectionId={defaultConnectionId}
           onClose={() => setEditor(null)}
           onSave={save}
         />
@@ -730,6 +766,15 @@ export default function App() {
       {previewImage && (
         <div className="lightbox-modal" onClick={() => setPreviewImage(null)} title="点击关闭大图">
           <img className="lightbox-content" src={previewImage} alt="角色大图立绘" />
+        </div>
+      )}
+      {promptPreview && (
+        <div className="modal-shade" style={{ zIndex: 130 }} onClick={() => setPromptPreview(null)}>
+          <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
+            <header><h2>发送前提示词预览</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
+            <p className="muted">模式：{promptPreview.generationMode} · 身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? chat?.narrator.name : speakerName(promptPreview.speaker)}</p>
+            <div className="prompt-preview-list">{promptPreview.segments?.map((segment: any, index: number) => <details key={index} open={index === 0}><summary>{segment.title} · {segment.role} · {segment.source}</summary><pre>{segment.content}</pre></details>)}</div>
+          </section>
         </div>
       )}
     </div>

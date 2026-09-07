@@ -6,7 +6,7 @@ import type { TurnService } from './services/turns.js';
 import { RecordService, applyProposal, settledStoryIds } from './services/records.js';
 import { scanImport } from './services/import-scan.js';
 import { executeImport } from './services/importer.js';
-import { expandStoryMacros } from '@new-ai-chat/agent-runtime';
+import { buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, expandStoryMacros, fitRequest } from '@new-ai-chat/agent-runtime';
 import { narratorProfileSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
@@ -93,6 +93,35 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   });
   app.post('/api/turns', async (req, reply) => reply.code(202).send(turns.start(turnRequestSchema.parse(req.body))));
   app.get('/api/turns/:id', async (req,reply) => repo.getTurn(idOf(req)) ?? reply.code(404).send({ error: 'Turn not found.' }));
+  app.get('/api/turns/:id/trace', async (req, reply) => {
+    const turn = repo.getTurn(idOf(req)); if (!turn) return reply.code(404).send({ error: 'Turn not found.' });
+    return repo.listTraces(turn.id);
+  });
+  app.get('/api/conversations/:id/traces', async req => repo.listConversationTraces(idOf(req)));
+  app.post('/api/conversations/:id/prompt-preview', async (req) => {
+    const chatId = idOf(req);
+    const body = z.object({ speaker: speakerRefSchema.optional(), brief: z.string().max(4_000).default('待选择回复身份'), inputText: z.string().max(100_000).optional(), inputVoice: z.enum(['protagonist', 'narrator']).optional() }).parse(req.body ?? {});
+    const request = await turns.request(chatId, `preview-${Date.now()}`, AbortSignal.timeout(5_000));
+    const draftRequest = { ...request, latestUserText: body.inputText ?? request.latestUserText, latestUserIsNarration: body.inputVoice ? body.inputVoice === 'narrator' : request.latestUserIsNarration };
+    const chat = repo.getConversation(chatId)!;
+    const generationMode = chat.generationMode ?? 'writer-agent';
+    const pendingSelection = !body.speaker && generationMode === 'plain' && chat.kind === 'group';
+    const speaker = body.speaker ?? (request.characters[0] ? { kind: 'character', characterId: request.characters[0].id } : { kind: 'narrator' });
+    const context = fitRequest({ ...draftRequest, speaker, brief: body.brief } as any, body.brief);
+    const writer = buildWriterContext({ ...context, speaker, brief: body.brief, outputIndex: 0 } as any);
+    const prompts = repo.getPromptSettings();
+    return {
+      segments: [
+        { source: 'system', role: 'system', title: '稳定提示词', content: writer.systemPrompt },
+        ...(generationMode === 'writer-agent' ? [{ source: 'agent', role: 'system', title: 'Writer Agent 行为指令', content: prompts.writerInstruction }] : generationMode === 'planner' ? [{ source: 'planner', role: 'system', title: 'Planner 指令', content: prompts.plannerInstruction }] : []),
+        ...writer.messages.map((message, index) => ({ source: index === writer.messages.length - 1 ? 'latest-anchor' : 'history-or-dynamic', role: message.role, title: `消息 ${index + 1}`, content: typeof message.content === 'string' ? message.content : message.content.map((part: any) => part.text ?? '').join('') })),
+      ],
+      generationMode,
+      speaker: pendingSelection ? null : speaker,
+      pendingSelection,
+      clipped: context.history.length < request.history.length || context.dynamicContext.length < request.dynamicContext.length,
+    };
+  });
   app.post('/api/turns/:id/cancel', async (req) => ({ cancelled: turns.cancel(idOf(req)) }));
   app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));
   app.post('/api/conversations/:id/memory', async (req) => {
