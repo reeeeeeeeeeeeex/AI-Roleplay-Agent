@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { narratorProfileSchema, type NarratorProfile } from '@new-ai-chat/contracts';
+import { defaultPromptSettings, narratorProfileSchema, promptSettingsSchema, type NarratorProfile, type PromptSettings, type TurnTrace } from '@new-ai-chat/contracts';
 import type {
   Character,
   CharacterInput,
@@ -36,6 +36,7 @@ import {
   stateSnapshots,
   turns,
   appSettings,
+  turnTraces,
 } from './schema.js';
 
 const now = () => new Date().toISOString();
@@ -56,6 +57,7 @@ function mapConversation(row: ConversationRow): Conversation {
     connectionId: row.connectionId,
     lorebookIds: row.lorebookIds,
     plannerEnabled: row.plannerEnabled,
+    generationMode: row.plannerEnabled ? 'planner' : (row.generationMode as Conversation['generationMode'] || 'writer-agent'),
     agencyMode: row.agencyMode as Conversation['agencyMode'],
     narrator: { name: row.narratorName, avatarPath: row.narratorAvatarPath, style: row.narratorStyle },
     headMessageId: row.headMessageId,
@@ -109,6 +111,35 @@ export class Repository {
     return narrator;
   }
 
+  getDefaultConnectionId(): string | null {
+    const row = this.database.db.select().from(appSettings).where(eq(appSettings.key, 'defaultConnection')).get();
+    return typeof row?.value === 'string' ? row.value : null;
+  }
+  setDefaultConnectionId(connectionId: string | null): void {
+    if (connectionId === null) {
+      this.database.db.delete(appSettings).where(eq(appSettings.key, 'defaultConnection')).run();
+      return;
+    }
+    if (connectionId && !this.getRuntimeConnection(connectionId)) throw new Error('Connection not found.');
+    this.database.db.insert(appSettings).values({ key: 'defaultConnection', value: connectionId })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: connectionId } }).run();
+  }
+
+  getPromptSettings(): PromptSettings {
+    const row = this.database.db.select().from(appSettings).where(eq(appSettings.key, 'prompts')).get();
+    return promptSettingsSchema.parse(row?.value ?? defaultPromptSettings);
+  }
+  setPromptSettings(value: PromptSettings): PromptSettings {
+    const prompts = promptSettingsSchema.parse(value);
+    this.database.db.insert(appSettings).values({ key: 'prompts', value: prompts })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: prompts } }).run();
+    return prompts;
+  }
+  resolveConnection(connectionId: string | null): RuntimeConnection | null {
+    const selected = connectionId ?? this.getDefaultConnectionId();
+    return selected ? this.getRuntimeConnection(selected) : null;
+  }
+
   listConnections(): ConnectionSummary[] {
     return this.database.db.select().from(connections).orderBy(asc(connections.name)).all().map((row) => ({
       id: row.id, name: row.name, protocol: row.protocol as ConnectionSummary['protocol'], baseUrl: row.baseUrl,
@@ -147,7 +178,10 @@ export class Repository {
   }
 
   deleteConnection(connectionId: string): boolean {
-    return this.database.db.delete(connections).where(eq(connections.id, connectionId)).run().changes > 0;
+    return this.database.sqlite.transaction(() => {
+      if (this.getDefaultConnectionId() === connectionId) this.setDefaultConnectionId(null);
+      return this.database.db.delete(connections).where(eq(connections.id, connectionId)).run().changes > 0;
+    })();
   }
 
   listCharacters(): Character[] {
@@ -231,7 +265,8 @@ export class Repository {
     this.database.db.insert(conversations).values({
       id: conversationId, title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
       personaId: input.personaId, connectionId: input.connectionId, lorebookIds: input.lorebookIds,
-      plannerEnabled: input.plannerEnabled, agencyMode: input.agencyMode, narratorName: input.narrator.name,
+      plannerEnabled: input.generationMode === 'planner' || input.plannerEnabled, generationMode: input.generationMode,
+      agencyMode: input.agencyMode, narratorName: input.narrator.name,
       narratorAvatarPath: input.narrator.avatarPath, narratorStyle: input.narrator.style,
       memoryTurnInterval: input.memoryTurnInterval, stateTurnInterval: input.stateTurnInterval,
       scenario: input.scenario,
@@ -244,7 +279,8 @@ export class Repository {
     this.database.db.update(conversations).set({
       title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
       personaId: input.personaId, connectionId: input.connectionId, lorebookIds: input.lorebookIds,
-      plannerEnabled: input.plannerEnabled, agencyMode: input.agencyMode, narratorName: input.narrator.name,
+      plannerEnabled: input.generationMode === 'planner' || input.plannerEnabled, generationMode: input.generationMode,
+      agencyMode: input.agencyMode, narratorName: input.narrator.name,
       narratorAvatarPath: input.narrator.avatarPath, narratorStyle: input.narrator.style,
       memoryTurnInterval: input.memoryTurnInterval, stateTurnInterval: input.stateTurnInterval, updatedAt: now(),
       scenario: input.scenario,
@@ -302,6 +338,48 @@ export class Repository {
       .where(eq(sessionEvents.turnId, turnId))
       .orderBy(asc(sessionEvents.id)).all()
       .filter((event) => event.id > afterId) as SessionEvent[];
+  }
+
+  private traceSafe(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((item) => this.traceSafe(item));
+    if (!value || typeof value !== 'object') return value;
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (/api[-_]?key|authorization|cookie|secret|signature|encrypted|access[-_]?token|refresh[-_]?token/iu.test(key)) result[key] = '[redacted]';
+      else result[key] = this.traceSafe(item);
+    }
+    return result;
+  }
+  createTrace(input: Omit<TurnTrace, 'id' | 'createdAt' | 'completedAt'>): TurnTrace {
+    const row = {
+      id: id(), conversationId: input.conversationId, turnId: input.turnId, phase: input.phase,
+      requestIndex: input.requestIndex, status: input.status, model: input.model,
+      request: this.traceSafe(input.request), response: this.traceSafe(input.response),
+      tools: this.traceSafe(input.tools) as unknown[], thinking: input.thinking,
+      usage: input.usage, error: input.error, createdAt: now(), completedAt: null,
+    };
+    this.database.db.insert(turnTraces).values(row).run();
+    return row as TurnTrace;
+  }
+  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'thinking' | 'usage' | 'error' | 'completedAt'>>): TurnTrace | null {
+    const patch = { ...values, request: values.request === undefined ? undefined : this.traceSafe(values.request), response: values.response === undefined ? undefined : this.traceSafe(values.response), tools: values.tools === undefined ? undefined : this.traceSafe(values.tools) as unknown[] };
+    this.database.db.update(turnTraces).set(patch).where(eq(turnTraces.id, traceId)).run();
+    const row = this.database.db.select().from(turnTraces).where(eq(turnTraces.id, traceId)).get();
+    return row ? row as TurnTrace : null;
+  }
+  listTraces(turnId: string): TurnTrace[] {
+    return this.database.db.select().from(turnTraces).where(eq(turnTraces.turnId, turnId)).orderBy(asc(turnTraces.requestIndex)).all() as TurnTrace[];
+  }
+  listConversationTraces(conversationId: string, limit = 20): TurnTrace[] {
+    return this.database.db.select().from(turnTraces).where(eq(turnTraces.conversationId, conversationId)).orderBy(desc(turnTraces.createdAt)).limit(limit * 8).all() as TurnTrace[];
+  }
+  pruneTraces(conversationId: string, keepTurns = 20): void {
+    const turnsWithTraces = this.database.db.select({ turnId: turnTraces.turnId }).from(turnTraces)
+      .where(eq(turnTraces.conversationId, conversationId)).orderBy(desc(turnTraces.createdAt)).all();
+    const ids = [...new Set(turnsWithTraces.map((row) => row.turnId))];
+    const remove = ids.slice(keepTurns);
+    if (!remove.length) return;
+    this.database.sqlite.prepare(`DELETE FROM turn_traces WHERE conversation_id = ? AND turn_id IN (${remove.map(() => '?').join(',')})`).run(conversationId, ...remove);
   }
 
   listMemories(conversationId: string, limit = 20): MemoryEntry[] {

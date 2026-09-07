@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,10 +22,47 @@ beforeEach(async()=>{
   connection=server.repository.createConnection(connectionInputSchema.parse({name:'Test',protocol:'openai-responses',baseUrl:'https://example.invalid',model:'test',apiKey:'secret-do-not-return',headers:{Authorization:'header-secret'}})).id;
   chat=server.repository.createConversation(conversationInputSchema.parse({title:'Test story',kind:'solo',characterId:character,connectionId:connection})).id;
 });
-afterEach(async()=>{await server.app.close();rmSync(work,{recursive:true,force:true});});
+afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
+it('model settings: discovers models with saved credentials without saving the draft', async () => {
+  const fetchMock = vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'model-b' }, { id: 'model-a' }, { id: 'model-a' }] }));
+  vi.stubGlobal('fetch', fetchMock);
+  const payload = { connectionId: connection, protocol: 'openai-responses', baseUrl: 'https://example.invalid', headers: { Authorization: '[stored]' } };
+  const response = await server.app.inject({ method: 'POST', url: '/api/connections/models', payload });
+  expect(response.json()).toEqual({ models: ['model-a', 'model-b'] });
+  const [url, options] = fetchMock.mock.calls[0]!;
+  expect(String(url)).toBe('https://example.invalid/models');
+  expect(options.headers.get('Authorization')).toBe('header-secret');
+  expect(options.redirect).toBe('error');
+  expect(server.repository.listConnections()).toHaveLength(1);
+  const changed = await server.app.inject({ method: 'POST', url: '/api/connections/models', payload: { ...payload, baseUrl: 'https://other.invalid' } });
+  expect(changed.statusCode).toBe(400);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
 async function normal(voice='protagonist',replyTarget:any={mode:'auto'}) {
   const turn=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'推开门。',voice},replyTarget}));await server.turns.idle(chat);return server.repository.getTurn(turn.id)!;
 }
+it('default connection: inherits globally for existing chats and preserves explicit overrides', async () => {
+  const current = server.repository.getConversation(chat)!;
+  server.repository.updateConversation(chat, { ...current, connectionId: null });
+  const request = { conversationId: chat, input: { voice: 'protagonist', text: '保留这条消息。' } };
+  expect((await server.app.inject({ method: 'POST', url: '/api/turns', payload: request })).statusCode).toBe(400);
+  expect(server.repository.getActiveBranch(chat)).toHaveLength(0);
+  const selected = await server.app.inject({ method: 'PUT', url: '/api/settings/default-connection', payload: { connectionId: connection } });
+  expect(selected.statusCode).toBe(200);
+  expect((await server.app.inject({ url: '/api/settings/default-connection' })).json()).toEqual({ connectionId: connection });
+  expect((await normal()).status).toBe('completed');
+  expect(runtime.requests[0]?.connection.id).toBe(connection);
+  expect(server.repository.getConversation(chat)?.connectionId).toBeNull();
+  const other = server.repository.createConnection(connectionInputSchema.parse({ name: 'Other', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'other', historyMessageLimit: 1 }));
+  server.repository.setDefaultConnectionId(other.id);
+  expect(new StoryContext(server.repository, chat).history).toHaveLength(1);
+  expect((await server.turns.request(chat, 'manual', new AbortController().signal)).connection.id).toBe(other.id);
+  server.repository.updateConversation(chat, current);
+  expect(server.repository.resolveConnection(current.connectionId)?.id).toBe(connection);
+  server.repository.deleteConnection(other.id);
+  expect(server.repository.getDefaultConnectionId()).toBeNull();
+  expect((await server.app.inject({ method: 'PUT', url: '/api/settings/default-connection', payload: { connectionId: null } })).statusCode).toBe(200);
+});
 describe('native turns and narrator',()=>{
   it('routes to narrator and character, and gives the second writer the first response',async()=>{
     const turn=await normal();expect(turn.status).toBe('completed');const branch=server.repository.getActiveBranch(chat);

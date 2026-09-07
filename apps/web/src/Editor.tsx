@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { api } from './api';
 
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
@@ -49,22 +50,56 @@ export default function Editor({
   kind,
   initial,
   data,
+  defaultConnectionId,
   onClose,
   onSave,
 }: {
   kind: Collection;
   initial: any;
   data: Record<string, any[]>;
+  defaultConnectionId?: string | null;
   onClose: () => void;
   onSave: (value: any) => Promise<void>;
 }) {
   const [value, setValue] = useState<any>(() => ({ ...defaults[kind], ...initial }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsBusy, setModelsBusy] = useState(false);
+  const [modelsNotice, setModelsNotice] = useState('');
+  const modelRequest = useRef(0);
+  const temperatureMax = value.protocol === 'anthropic-messages' ? 1 : 2;
+
+  useEffect(() => {
+    modelRequest.current++;
+    setModels([]);
+    setModelsBusy(false);
+    setModelsNotice('');
+    return () => { modelRequest.current++; };
+  }, [value.baseUrl, value.protocol, value.apiKey, value.headers]);
+
+  async function fetchModels() {
+    const request = ++modelRequest.current;
+    setModelsBusy(true);
+    setModelsNotice('');
+    try {
+      const result = await api<{ models: string[] }>('/connections/models', 'POST', {
+        connectionId: initial?.id, protocol: value.protocol, baseUrl: value.baseUrl.trim(),
+        apiKey: value.apiKey, headers: value.headers,
+      });
+      if (request !== modelRequest.current) return;
+      setModels(result.models);
+      setModelsNotice(result.models.length ? `已获取 ${result.models.length} 个模型；选择一个，也可继续手填。` : '未返回可用模型，请手动填写模型 ID。');
+    } catch (error) {
+      if (request === modelRequest.current) setModelsNotice(error instanceof Error ? error.message : '获取模型失败');
+    } finally {
+      if (request === modelRequest.current) setModelsBusy(false);
+    }
+  }
 
   const set = (key: string, v: any) => setValue((old: any) => ({ ...old, [key]: v }));
 
-  const field = (key: string, label: string, multiline = false, type = 'text') => (
+  const field = (key: string, label: string, multiline = false, type = 'text', bounds?: { min: number; max: number; step: number }) => (
     <label key={key}>
       {label}
       {multiline ? (
@@ -77,6 +112,7 @@ export default function Editor({
         <input
           type={type}
           step="any"
+          {...bounds}
           autoComplete={type === 'password' ? 'new-password' : 'off'}
           value={value[key] ?? ''}
           onChange={(event) => set(key, type === 'number' ? Number(event.target.value) : event.target.value)}
@@ -85,11 +121,11 @@ export default function Editor({
     </label>
   );
 
-  const select = (key: string, label: string, options: Array<[string, string]>, empty = false) => (
+  const select = (key: string, label: string, options: Array<[string, string]>, empty = false, emptyLabel = '未选择') => (
     <label key={key}>
       {label}
       <select value={value[key] ?? ''} onChange={(event) => set(key, event.target.value || null)}>
-        {empty && <option value="">未选择</option>}
+        {empty && <option value="">{emptyLabel}</option>}
         {options.map(([id, name]) => (
           <option key={id} value={id}>
             {name}
@@ -158,7 +194,8 @@ export default function Editor({
                 (data[value.kind === 'solo' ? 'characters' : 'groups'] ?? []).map((v) => [v.id, v.name]),
                 true
               )}
-              {select('connectionId', '模型连接', (data.connections ?? []).map((v) => [v.id, v.name]), true)}
+              {select('connectionId', '模型连接', (data.connections ?? []).map((v) => [v.id, v.name]), true,
+                `使用全局默认（${data.connections?.find(v => v.id === defaultConnectionId)?.name ?? '尚未设置'}）`)}
               {select('personaId', '主角', (data.personas ?? []).map((v) => [v.id, v.name]), true)}
               {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
               {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
@@ -218,10 +255,23 @@ export default function Editor({
                 ['openai-responses', 'OpenAI Responses'],
               ])}
               {field('baseUrl', 'Base URL')}
-              {field('model', '模型 ID')}
+              <div className="model-id-row">
+                {field('model', '模型 ID')}
+                <button type="button" onClick={() => void fetchModels()} disabled={modelsBusy || !value.baseUrl?.trim()}>
+                  {modelsBusy ? '获取中…' : '自动获取'}
+                </button>
+              </div>
+              {modelsNotice && <small className="muted" role="status">{modelsNotice}</small>}
+              {models.length > 0 && <label>
+                可用模型
+                <select value={models.includes(value.model) ? value.model : ''} onChange={(e) => { if (e.target.value) set('model', e.target.value); }}>
+                  <option value="">请选择模型</option>
+                  {models.map((model) => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </label>}
               {field('apiKey', initial?.id ? 'API Key（留空保留已保存值）' : 'API Key', false, 'password')}
               <div className="two-col">
-                {field('temperature', '温度', false, 'number')}
+                {field('temperature', `温度（0–${temperatureMax}）`, false, 'number', { min: 0, max: temperatureMax, step: 0.1 })}
                 {field('maxTokens', '最大输出 tokens', false, 'number')}
                 {field('contextWindow', '上下文窗口 tokens（默认 128000）', false, 'number')}
                 {field('historyMessageLimit', '历史消息数上限（0 不限）', false, 'number')}

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { characterInputSchema, connectionInputSchema, conversationInputSchema, groupInputSchema, lorebookInputSchema, personaInputSchema, normalizeState, applyStateOperations, blankState, turnRequestSchema } from '@new-ai-chat/contracts';
+import { characterInputSchema, connectionInputSchema, conversationInputSchema, groupInputSchema, lorebookInputSchema, personaInputSchema, normalizeState, applyStateOperations, blankState, turnRequestSchema, promptSettingsSchema, speakerRefSchema } from '@new-ai-chat/contracts';
 import type { Repository } from './db/repository.js';
 import type { TurnService } from './services/turns.js';
 import { RecordService, applyProposal, settledStoryIds } from './services/records.js';
@@ -9,6 +9,7 @@ import { executeImport } from './services/importer.js';
 import { expandStoryMacros } from '@new-ai-chat/agent-runtime';
 import { narratorProfileSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
+import { listModels, modelListInputSchema } from './services/models.js';
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
@@ -48,10 +49,30 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     app.delete(`${base}/:id`, async (req) => { idleAll(); return { deleted: Boolean(collection.remove(idOf(req))) }; });
   }
   app.get('/api/narrator', async () => repo.getNarratorDefaults());
+  app.get('/api/settings/default-connection', async () => ({ connectionId: repo.getDefaultConnectionId() }));
+  app.put('/api/settings/default-connection', async req => {
+    idleAll();
+    const { connectionId } = z.object({ connectionId: z.string().min(1).nullable() }).parse(req.body);
+    repo.setDefaultConnectionId(connectionId);
+    return { connectionId };
+  });
+  app.get('/api/settings/prompts', async () => repo.getPromptSettings());
+  app.put('/api/settings/prompts', async req => { idleAll(); return repo.setPromptSettings(promptSettingsSchema.parse(req.body)); });
   app.put('/api/narrator', async req => repo.setNarratorDefaults(narratorProfileSchema.parse(req.body)));
   app.post('/api/connections/:id/test', async (req) => {
     const connection = repo.getRuntimeConnection(idOf(req)); if (!connection) throw new Error('Connection not found.');
     return { ...await turns.runtime.testConnection(connection, AbortSignal.timeout(60_000)), streaming: true, tools: true };
+  });
+  app.post('/api/connections/models', async (req) => {
+    const input = modelListInputSchema.parse(req.body);
+    const saved = input.connectionId ? repo.getRuntimeConnection(input.connectionId) : null;
+    if (input.connectionId && !saved) throw new Error('Connection not found.');
+    const sameEndpoint = saved && saved.baseUrl.replace(/\/+$/u, '') === input.baseUrl.replace(/\/+$/u, '') && saved.protocol === input.protocol;
+    if (saved && !sameEndpoint && ((!input.apiKey && saved.apiKey) || Object.values(input.headers).includes('[stored]'))) {
+      throw new Error('连接地址或协议已改变，请重新填写 API Key 和自定义请求头后获取模型。');
+    }
+    return { models: await listModels({ ...input, apiKey: input.apiKey || (sameEndpoint ? saved.apiKey : ''),
+      headers: Object.fromEntries(Object.entries(input.headers).map(([key, value]) => [key, value === '[stored]' && sameEndpoint ? saved.headers[key] ?? '' : value])) }) };
   });
   app.get('/api/conversations/:id/messages', async (req) => ({ branch: repo.getActiveBranch(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })), nodes: repo.listMessages(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })) }));
   app.post('/api/conversations/:id/head', async (req) => { const id = idOf(req); turns.assertIdle(id); const value = z.object({ messageId: z.string().nullable() }).parse(req.body); repo.setHead(id,value.messageId); repo.addEvent(id,null,'branch.selected', value); return repo.getConversation(id); });

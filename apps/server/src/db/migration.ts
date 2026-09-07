@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   persona_id TEXT REFERENCES personas(id) ON DELETE SET NULL,
   connection_id TEXT REFERENCES connections(id) ON DELETE SET NULL,
   lorebook_ids TEXT NOT NULL DEFAULT '[]', planner_enabled INTEGER NOT NULL DEFAULT 0,
+  generation_mode TEXT NOT NULL DEFAULT 'writer-agent',
   agency_mode TEXT NOT NULL DEFAULT 'protected', narrator_name TEXT NOT NULL DEFAULT '旁白',
   narrator_avatar_path TEXT, narrator_style TEXT NOT NULL DEFAULT '', head_message_id TEXT,
   memory_turn_interval INTEGER NOT NULL DEFAULT 10, state_turn_interval INTEGER NOT NULL DEFAULT 0,
@@ -70,6 +71,14 @@ CREATE TABLE IF NOT EXISTS session_events (
   turn_id TEXT, type TEXT NOT NULL, payload TEXT, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS session_events_turn_idx ON session_events(turn_id, id);
+CREATE TABLE IF NOT EXISTS turn_traces (
+  id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  turn_id TEXT NOT NULL, phase TEXT NOT NULL, request_index INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL DEFAULT '', request TEXT,
+  response TEXT, tools TEXT NOT NULL DEFAULT '[]', thinking TEXT, usage TEXT, error TEXT,
+  created_at TEXT NOT NULL, completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS turn_traces_turn_idx ON turn_traces(turn_id, request_index);
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   stage INTEGER NOT NULL, story_turn_id TEXT, content TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL
@@ -96,6 +105,7 @@ export function migrateDatabase(database: Database.Database): void {
     ['connections', 'context_window', 'INTEGER NOT NULL DEFAULT 128000'],
     ['connections', 'history_message_limit', 'INTEGER NOT NULL DEFAULT 0'],
     ['conversations', 'scenario', "TEXT NOT NULL DEFAULT ''"],
+    ['conversations', 'generation_mode', "TEXT NOT NULL DEFAULT 'writer-agent'"],
     ['personas', 'legacy_payload', 'TEXT'],
     ['lorebooks', 'legacy_payload', 'TEXT'],
     ['proposals', 'origin_head', 'TEXT'],
@@ -103,4 +113,11 @@ export function migrateDatabase(database: Database.Database): void {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some((item) => item.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+  database.exec(`CREATE TABLE IF NOT EXISTS turn_traces (
+    id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    turn_id TEXT NOT NULL, phase TEXT NOT NULL, request_index INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL DEFAULT '', request TEXT,
+    response TEXT, tools TEXT NOT NULL DEFAULT '[]', thinking TEXT, usage TEXT, error TEXT,
+    created_at TEXT NOT NULL, completed_at TEXT
+  ); CREATE INDEX IF NOT EXISTS turn_traces_turn_idx ON turn_traces(turn_id, request_index);`);
 }

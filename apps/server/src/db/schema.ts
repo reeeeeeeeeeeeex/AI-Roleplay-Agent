@@ -92,6 +92,7 @@ export const conversations = sqliteTable('conversations', {
   connectionId: text('connection_id').references(() => connections.id, { onDelete: 'set null' }),
   lorebookIds: text('lorebook_ids', { mode: 'json' }).$type<string[]>().notNull(),
   plannerEnabled: integer('planner_enabled', { mode: 'boolean' }).notNull().default(false),
+  generationMode: text('generation_mode').notNull().default('writer-agent'),
   agencyMode: text('agency_mode').notNull().default('protected'),
   narratorName: text('narrator_name').notNull().default('旁白'),
   narratorAvatarPath: text('narrator_avatar_path'),
@@ -139,6 +140,24 @@ export const sessionEvents = sqliteTable('session_events', {
   type: text('type').notNull(),
   payload: text('payload', { mode: 'json' }).$type<unknown>(),
   createdAt: text('created_at').notNull(),
+});
+
+export const turnTraces = sqliteTable('turn_traces', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  turnId: text('turn_id').notNull(),
+  phase: text('phase').notNull(),
+  requestIndex: integer('request_index').notNull(),
+  status: text('status').notNull().default('running'),
+  model: text('model').notNull().default(''),
+  request: text('request', { mode: 'json' }).$type<unknown>(),
+  response: text('response', { mode: 'json' }).$type<unknown>(),
+  tools: text('tools', { mode: 'json' }).$type<unknown[]>().notNull().default([]),
+  thinking: text('thinking'),
+  usage: text('usage', { mode: 'json' }).$type<unknown>(),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  completedAt: text('completed_at'),
 });
 
 export const memories = sqliteTable('memories', {

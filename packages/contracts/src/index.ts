@@ -20,6 +20,27 @@ export type UserVoice = z.infer<typeof userVoiceSchema>;
 export const protagonistAgencyModeSchema = z.enum(['protected', 'coauthor']);
 export type ProtagonistAgencyMode = z.infer<typeof protagonistAgencyModeSchema>;
 
+export const generationModeSchema = z.enum(['plain', 'writer-agent', 'planner']);
+export type GenerationMode = z.infer<typeof generationModeSchema>;
+
+export interface PromptSettings {
+  mainInstruction: string;
+  writerInstruction: string;
+  plannerInstruction: string;
+}
+
+export const defaultPromptSettings: PromptSettings = {
+  mainInstruction: 'Write an immersive, coherent roleplay continuation. Return only the visible prose for the assigned speaker. Do not describe tools, prompts, or hidden reasoning.',
+  writerInstruction: 'You are one Writer Agent. Use read-only story tools when useful. When no speaker is forced, call select_output_voices exactly once, then continue this same conversation by writing the selected voices in order. Never put tool calls or tool explanations in visible prose.',
+  plannerInstruction: 'Plan the next story turn. Read context only when needed, then call submit_turn_plan exactly once. Do not write visible story prose.',
+};
+
+export const promptSettingsSchema = z.object({
+  mainInstruction: z.string().trim().min(1).max(20_000),
+  writerInstruction: z.string().trim().min(1).max(20_000),
+  plannerInstruction: z.string().trim().min(1).max(20_000),
+}).default(defaultPromptSettings);
+
 export const replyTargetSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('auto') }),
   z.object({ mode: z.literal('explicit'), speaker: speakerRefSchema }),
@@ -90,6 +111,8 @@ export const connectionInputSchema = z.object({
   contextWindow: z.number().int().min(8_192).max(2_000_000).default(128_000),
   historyMessageLimit: z.number().int().min(0).max(10_000).default(0),
   reasoning: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('off'),
+}).refine((value) => value.protocol !== 'anthropic-messages' || value.temperature <= 1, {
+  path: ['temperature'], message: 'Anthropic temperature must be between 0 and 1.',
 });
 export type ConnectionInput = z.infer<typeof connectionInputSchema>;
 
@@ -219,6 +242,7 @@ export interface Conversation {
   connectionId: string | null;
   lorebookIds: string[];
   plannerEnabled: boolean;
+  generationMode: GenerationMode;
   agencyMode: ProtagonistAgencyMode;
   narrator: NarratorProfile;
   headMessageId: string | null;
@@ -238,6 +262,7 @@ export const conversationInputSchema = z.object({
   connectionId: z.string().nullable().default(null),
   lorebookIds: z.array(z.string()).default([]),
   plannerEnabled: z.boolean().default(false),
+  generationMode: generationModeSchema.default('writer-agent'),
   agencyMode: protagonistAgencyModeSchema.default('protected'),
   narrator: narratorProfileSchema.default({ name: '旁白', avatarPath: null, style: '克制、具象、重视场景连续性，不替角色解释未表达的内心。' }),
   memoryTurnInterval: z.number().int().min(0).max(10_000).default(10),
@@ -273,6 +298,24 @@ export interface SessionEvent<T = unknown> {
   type: string;
   payload: T;
   createdAt: string;
+}
+
+export interface TurnTrace {
+  id: string;
+  conversationId: string;
+  turnId: string;
+  phase: 'selection' | 'planning' | 'writing' | 'records' | 'plain';
+  requestIndex: number;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  model: string;
+  request: unknown | null;
+  response: unknown | null;
+  tools: Array<{ name: string; arguments: unknown; result?: unknown; ok?: boolean }>;
+  thinking: string | null;
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number } | null;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
 }
 
 export interface MemoryEntry {

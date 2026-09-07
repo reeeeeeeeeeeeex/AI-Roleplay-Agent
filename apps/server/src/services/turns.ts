@@ -20,7 +20,7 @@ export class TurnService {
     const chat = this.repository.getConversation(request.conversationId);
     if (!chat) throw new Error('Conversation not found.');
     this.assertIdle(chat.id);
-    if (!chat.connectionId || !this.repository.getRuntimeConnection(chat.connectionId)) throw new Error('Select a model connection first.');
+    if (!this.repository.resolveConnection(chat.connectionId)) throw new Error('请在设置中选择默认模型连接，或在聊天设置中指定连接。');
     const source = new StoryContext(this.repository, chat.id);
     const fullHistory = this.repository.getActiveBranch(chat.id);
     const explicit = request.replyTarget.mode === 'explicit' ? request.replyTarget.speaker : null;
@@ -57,10 +57,12 @@ export class TurnService {
 
   async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false): Promise<BaseAgentRequest> {
     const chat = this.repository.getConversation(chatId)!;
+    const connection = this.repository.resolveConnection(chat.connectionId);
+    if (!connection) throw new Error('请在设置中选择默认模型连接，或在聊天设置中指定连接。');
     const source = new StoryContext(this.repository, chatId);
     const latest = [...this.repository.getActiveBranch(chatId)].reverse().find((m) => m.role === 'user');
     const persona = chat.personaId ? this.repository.getPersona(chat.personaId) : null;
-    const request: BaseAgentRequest = { connection: this.repository.getRuntimeConnection(chat.connectionId!)!, conversationId: chatId, storyTurnId,
+    const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
       agencyMode: chat.agencyMode, narrator: chat.narrator, characters: source.cast, persona,
       history: source.history, stableLore: source.stableLore(), dynamicContext: await source.dynamic(source.history.slice(-20).map((m) => m.content).join('\n')),
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal };
