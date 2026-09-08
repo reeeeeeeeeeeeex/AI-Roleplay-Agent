@@ -232,6 +232,17 @@ export const narratorProfileSchema = z.object({
   style: z.string().max(20_000).default('克制、具象、重视场景连续性，不替角色解释未表达的内心。'),
 });
 
+export const generalSettingsSchema = z.object({
+  connectionId: z.string().min(1).nullable().default(null),
+  generationMode: generationModeSchema.default('writer-agent'),
+  agencyMode: protagonistAgencyModeSchema.default('protected'),
+  narrator: narratorProfileSchema.default({ name: '旁白', avatarPath: null, style: '克制、具象、重视场景连续性，不替角色解释未表达的内心。' }),
+  memoryTurnInterval: z.number().int().min(0).max(10_000).default(10),
+  stateTurnInterval: z.number().int().min(0).max(10_000).default(0),
+});
+export type GeneralSettings = z.infer<typeof generalSettingsSchema>;
+export const defaultGeneralSettings: GeneralSettings = generalSettingsSchema.parse({});
+
 export interface Conversation {
   id: string;
   title: string;
@@ -239,15 +250,8 @@ export interface Conversation {
   characterId: string | null;
   groupId: string | null;
   personaId: string | null;
-  connectionId: string | null;
   lorebookIds: string[];
-  plannerEnabled: boolean;
-  generationMode: GenerationMode;
-  agencyMode: ProtagonistAgencyMode;
-  narrator: NarratorProfile;
   headMessageId: string | null;
-  memoryTurnInterval: number;
-  stateTurnInterval: number;
   scenario: string;
   createdAt: string;
   updatedAt: string;
@@ -259,14 +263,7 @@ export const conversationInputSchema = z.object({
   characterId: z.string().nullable().default(null),
   groupId: z.string().nullable().default(null),
   personaId: z.string().nullable().default(null),
-  connectionId: z.string().nullable().default(null),
   lorebookIds: z.array(z.string()).default([]),
-  plannerEnabled: z.boolean().default(false),
-  generationMode: generationModeSchema.default('writer-agent'),
-  agencyMode: protagonistAgencyModeSchema.default('protected'),
-  narrator: narratorProfileSchema.default({ name: '旁白', avatarPath: null, style: '克制、具象、重视场景连续性，不替角色解释未表达的内心。' }),
-  memoryTurnInterval: z.number().int().min(0).max(10_000).default(10),
-  stateTurnInterval: z.number().int().min(0).max(10_000).default(0),
   scenario: z.string().max(100_000).default(''),
 }).superRefine((value, context) => {
   if (value.kind === 'solo' && !value.characterId) {

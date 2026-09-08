@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { defaultPromptSettings, narratorProfileSchema, promptSettingsSchema, type NarratorProfile, type PromptSettings, type TurnTrace } from '@new-ai-chat/contracts';
+import { defaultPromptSettings, generalSettingsSchema, promptSettingsSchema, type GeneralSettings, type PromptSettings, type TurnTrace } from '@new-ai-chat/contracts';
 import type {
   Character,
   CharacterInput,
@@ -54,15 +54,8 @@ function mapConversation(row: ConversationRow): Conversation {
     characterId: row.characterId,
     groupId: row.groupId,
     personaId: row.personaId,
-    connectionId: row.connectionId,
     lorebookIds: row.lorebookIds,
-    plannerEnabled: row.plannerEnabled,
-    generationMode: row.plannerEnabled ? 'planner' : (row.generationMode as Conversation['generationMode'] || 'writer-agent'),
-    agencyMode: row.agencyMode as Conversation['agencyMode'],
-    narrator: { name: row.narratorName, avatarPath: row.narratorAvatarPath, style: row.narratorStyle },
     headMessageId: row.headMessageId,
-    memoryTurnInterval: row.memoryTurnInterval,
-    stateTurnInterval: row.stateTurnInterval,
     scenario: row.scenario,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -100,29 +93,28 @@ function mapTurn(row: TurnRow): TurnRecord {
 }
 
 export class Repository {
-  constructor(readonly database: AppDatabase) {}
-  getNarratorDefaults(): NarratorProfile {
-    const row = this.database.db.select().from(appSettings).where(eq(appSettings.key, 'narrator')).get();
-    return narratorProfileSchema.parse(row?.value ?? {});
+  constructor(readonly database: AppDatabase) {
+    database.sqlite.transaction(() => {
+      const settings = database.db.select().from(appSettings).all();
+      if (settings.some(row => row.key === 'general')) return;
+      const previous = settings.find(row => row.key === 'defaultConnection')?.value;
+      this.setGeneralSettings(generalSettingsSchema.parse({
+        connectionId: typeof previous === 'string' && this.getRuntimeConnection(previous) ? previous : null,
+        narrator: settings.find(row => row.key === 'narrator')?.value,
+      }));
+      database.db.delete(appSettings).where(inArray(appSettings.key, ['defaultConnection', 'narrator'])).run();
+    })();
   }
-  setNarratorDefaults(value: NarratorProfile): NarratorProfile {
-    const narrator = narratorProfileSchema.parse(value);
-    this.database.db.insert(appSettings).values({ key: 'narrator', value: narrator }).onConflictDoUpdate({ target: appSettings.key, set: { value: narrator } }).run();
-    return narrator;
+  getGeneralSettings(): GeneralSettings {
+    const row = this.database.db.select().from(appSettings).where(eq(appSettings.key, 'general')).get();
+    return generalSettingsSchema.parse(row?.value ?? {});
   }
-
-  getDefaultConnectionId(): string | null {
-    const row = this.database.db.select().from(appSettings).where(eq(appSettings.key, 'defaultConnection')).get();
-    return typeof row?.value === 'string' ? row.value : null;
-  }
-  setDefaultConnectionId(connectionId: string | null): void {
-    if (connectionId === null) {
-      this.database.db.delete(appSettings).where(eq(appSettings.key, 'defaultConnection')).run();
-      return;
-    }
-    if (connectionId && !this.getRuntimeConnection(connectionId)) throw new Error('Connection not found.');
-    this.database.db.insert(appSettings).values({ key: 'defaultConnection', value: connectionId })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: connectionId } }).run();
+  setGeneralSettings(value: GeneralSettings): GeneralSettings {
+    const settings = generalSettingsSchema.parse(value);
+    if (settings.connectionId && !this.getRuntimeConnection(settings.connectionId)) throw new Error('Connection not found.');
+    this.database.db.insert(appSettings).values({ key: 'general', value: settings })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: settings } }).run();
+    return settings;
   }
 
   getPromptSettings(): PromptSettings {
@@ -135,8 +127,8 @@ export class Repository {
       .onConflictDoUpdate({ target: appSettings.key, set: { value: prompts } }).run();
     return prompts;
   }
-  resolveConnection(connectionId: string | null): RuntimeConnection | null {
-    const selected = connectionId ?? this.getDefaultConnectionId();
+  resolveConnection(): RuntimeConnection | null {
+    const selected = this.getGeneralSettings().connectionId;
     return selected ? this.getRuntimeConnection(selected) : null;
   }
 
@@ -179,7 +171,8 @@ export class Repository {
 
   deleteConnection(connectionId: string): boolean {
     return this.database.sqlite.transaction(() => {
-      if (this.getDefaultConnectionId() === connectionId) this.setDefaultConnectionId(null);
+      const settings = this.getGeneralSettings();
+      if (settings.connectionId === connectionId) this.setGeneralSettings({ ...settings, connectionId: null });
       return this.database.db.delete(connections).where(eq(connections.id, connectionId)).run().changes > 0;
     })();
   }
@@ -264,11 +257,7 @@ export class Repository {
     const timestamp = now(); const conversationId = id();
     this.database.db.insert(conversations).values({
       id: conversationId, title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
-      personaId: input.personaId, connectionId: input.connectionId, lorebookIds: input.lorebookIds,
-      plannerEnabled: input.generationMode === 'planner' || input.plannerEnabled, generationMode: input.generationMode,
-      agencyMode: input.agencyMode, narratorName: input.narrator.name,
-      narratorAvatarPath: input.narrator.avatarPath, narratorStyle: input.narrator.style,
-      memoryTurnInterval: input.memoryTurnInterval, stateTurnInterval: input.stateTurnInterval,
+      personaId: input.personaId, lorebookIds: input.lorebookIds,
       scenario: input.scenario,
       createdAt: timestamp, updatedAt: timestamp,
     }).run();
@@ -278,11 +267,7 @@ export class Repository {
     if (!this.getConversation(conversationId)) return null;
     this.database.db.update(conversations).set({
       title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
-      personaId: input.personaId, connectionId: input.connectionId, lorebookIds: input.lorebookIds,
-      plannerEnabled: input.generationMode === 'planner' || input.plannerEnabled, generationMode: input.generationMode,
-      agencyMode: input.agencyMode, narratorName: input.narrator.name,
-      narratorAvatarPath: input.narrator.avatarPath, narratorStyle: input.narrator.style,
-      memoryTurnInterval: input.memoryTurnInterval, stateTurnInterval: input.stateTurnInterval, updatedAt: now(),
+      personaId: input.personaId, lorebookIds: input.lorebookIds, updatedAt: now(),
       scenario: input.scenario,
     }).where(eq(conversations.id, conversationId)).run();
     return this.getConversation(conversationId);

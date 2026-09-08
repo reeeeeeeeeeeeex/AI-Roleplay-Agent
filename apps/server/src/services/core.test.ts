@@ -7,6 +7,7 @@ import { FakeRuntime, type WriterRequest } from '@new-ai-chat/agent-runtime';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, blankState } from '@new-ai-chat/contracts';
 import { settledStoryIds, applyProposal } from './records.js';
 import { StoryContext } from './context.js';
+import { Repository } from '../db/repository.js';
 
 class InspectRuntime extends FakeRuntime {
   requests: WriterRequest[]=[];
@@ -20,7 +21,8 @@ beforeEach(async()=>{
   server=await createApp({host:'127.0.0.1',port:0,databasePath:join(work,'test.db'),assetDir:join(work,'assets'),webDist:join(work,'web'),pairingToken:null,defaultImportPath:work,fakeModel:false},runtime);
   character=server.repository.createCharacter(characterInputSchema.parse({name:'Sina'})).id;
   connection=server.repository.createConnection(connectionInputSchema.parse({name:'Test',protocol:'openai-responses',baseUrl:'https://example.invalid',model:'test',apiKey:'secret-do-not-return',headers:{Authorization:'header-secret'}})).id;
-  chat=server.repository.createConversation(conversationInputSchema.parse({title:'Test story',kind:'solo',characterId:character,connectionId:connection})).id;
+  server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), connectionId: connection });
+  chat=server.repository.createConversation(conversationInputSchema.parse({title:'Test story',kind:'solo',characterId:character})).id;
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
 it('model settings: discovers models with saved credentials without saving the draft', async () => {
@@ -41,27 +43,42 @@ it('model settings: discovers models with saved credentials without saving the d
 async function normal(voice='protagonist',replyTarget:any={mode:'auto'}) {
   const turn=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'推开门。',voice},replyTarget}));await server.turns.idle(chat);return server.repository.getTurn(turn.id)!;
 }
-it('default connection: inherits globally for existing chats and preserves explicit overrides', async () => {
-  const current = server.repository.getConversation(chat)!;
-  server.repository.updateConversation(chat, { ...current, connectionId: null });
-  const request = { conversationId: chat, input: { voice: 'protagonist', text: '保留这条消息。' } };
-  expect((await server.app.inject({ method: 'POST', url: '/api/turns', payload: request })).statusCode).toBe(400);
-  expect(server.repository.getActiveBranch(chat)).toHaveLength(0);
-  const selected = await server.app.inject({ method: 'PUT', url: '/api/settings/default-connection', payload: { connectionId: connection } });
-  expect(selected.statusCode).toBe(200);
-  expect((await server.app.inject({ url: '/api/settings/default-connection' })).json()).toEqual({ connectionId: connection });
-  expect((await normal()).status).toBe('completed');
-  expect(runtime.requests[0]?.connection.id).toBe(connection);
-  expect(server.repository.getConversation(chat)?.connectionId).toBeNull();
-  const other = server.repository.createConnection(connectionInputSchema.parse({ name: 'Other', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'other', historyMessageLimit: 1 }));
-  server.repository.setDefaultConnectionId(other.id);
-  expect(new StoryContext(server.repository, chat).history).toHaveLength(1);
-  expect((await server.turns.request(chat, 'manual', new AbortController().signal)).connection.id).toBe(other.id);
-  server.repository.updateConversation(chat, current);
-  expect(server.repository.resolveConnection(current.connectionId)?.id).toBe(connection);
-  server.repository.deleteConnection(other.id);
-  expect(server.repository.getDefaultConnectionId()).toBeNull();
-  expect((await server.app.inject({ method: 'PUT', url: '/api/settings/default-connection', payload: { connectionId: null } })).statusCode).toBe(200);
+it('general settings: migrates old global values and persists updates', async () => {
+  const db = server.repository.database;
+  db.sqlite.prepare("DELETE FROM app_settings WHERE key = 'general'").run();
+  const put = db.sqlite.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)');
+  put.run('defaultConnection', JSON.stringify(connection));
+  put.run('narrator', JSON.stringify({ name: '记录者', avatarPath: null, style: 'restrained' }));
+  const migrated = new Repository(db).getGeneralSettings();
+  expect(migrated).toMatchObject({ connectionId: connection, generationMode: 'writer-agent', agencyMode: 'protected', narrator: { name: '记录者' }, memoryTurnInterval: 10, stateTurnInterval: 0 });
+  const changed = { ...migrated, generationMode: 'plain', agencyMode: 'coauthor', memoryTurnInterval: 3 };
+  expect((await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: changed })).statusCode).toBe(200);
+  expect((await server.app.inject({ url: '/api/settings/general' })).json()).toEqual(changed);
+  expect(new Repository(db).getGeneralSettings()).toEqual(changed);
+});
+
+it('general settings: old and new stories share preview and generation settings', async () => {
+  const repo = server.repository;
+  repo.database.sqlite.prepare("UPDATE conversations SET connection_id = ?, generation_mode = 'planner', planner_enabled = 1, narrator_name = '旧旁白', agency_mode = 'protected' WHERE id = ?").run(connection, chat);
+  const selected = repo.createConnection(connectionInputSchema.parse({ name: 'Shared', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'shared-model' }));
+  const settings = { ...repo.getGeneralSettings(), connectionId: selected.id, generationMode: 'plain', agencyMode: 'coauthor', narrator: { name: '全局旁白', avatarPath: null, style: '简短叙述' } };
+  await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: settings });
+  const group = repo.createGroup({ name: 'Group', memberIds: [character], scenario: 'group scene' });
+  const created = await server.app.inject({ method: 'POST', url: '/api/conversations', payload: { title: 'New', kind: 'group', groupId: group.id, connectionId: connection, generationMode: 'planner' } });
+  const writeTurn = vi.spyOn(runtime, 'writeTurn');
+  for (const id of [chat, created.json().id]) {
+    const story = (await server.app.inject({ url: `/api/conversations/${id}` })).json();
+    expect(story).not.toHaveProperty('connectionId');
+    expect(story).not.toHaveProperty('generationMode');
+    const preview = (await server.app.inject({ method: 'POST', url: `/api/conversations/${id}/prompt-preview`, payload: { inputText: '开门。', speaker: { kind: 'narrator' } } })).json();
+    expect(preview.generationMode).toBe('plain');
+    expect(preview.segments[0].content).toContain('全局旁白');
+    const turn = server.turns.start(turnRequestSchema.parse({ conversationId: id, input: { text: '开门。', voice: 'protagonist' }, replyTarget: { mode: 'explicit', speaker: { kind: 'narrator' } } }));
+    await server.turns.idle(id);
+    expect(repo.getTurn(turn.id)?.status).toBe('completed');
+    expect(runtime.requests.at(-1)).toMatchObject({ connection: { id: selected.id }, agencyMode: 'coauthor', narrator: settings.narrator });
+  }
+  expect(writeTurn.mock.calls.map(([, options]) => options.mode)).toEqual(['plain', 'plain']);
 });
 describe('native turns and narrator',()=>{
   it('routes to narrator and character, and gives the second writer the first response',async()=>{
@@ -85,7 +102,7 @@ describe('branches and records',()=>{
   it('keeps state snapshots scoped to the chosen branch',async()=>{await normal();const b=server.repository.getActiveBranch(chat);const state=blankState();state.global_state[0]!.current_location='room';server.repository.createState(chat,b.at(-1)!.storyTurnId,state);expect(server.repository.latestState(chat)?.tables.global_state[0]?.current_location).toBe('room');server.repository.setHead(chat,b[0]!.id);expect(server.repository.latestState(chat)).toBeNull();});
   it('keeps memory scoped to the chosen branch',async()=>{await normal();const b=server.repository.getActiveBranch(chat);server.repository.createMemory({conversationId:chat,stage:1,storyTurnId:b.at(-1)!.storyTurnId,content:'one',source:'generated'});server.repository.setHead(chat,b[0]!.id);expect(server.repository.listMemories(chat)).toEqual([]);});
   it('rejects a head from a different conversation',async()=>{await normal();const other=server.repository.createConversation(conversationInputSchema.parse({title:'Other',kind:'solo',characterId:character}));expect(()=>server.repository.setHead(other.id,server.repository.getActiveBranch(chat)[0]!.id)).toThrow(/Invalid branch/);});
-  it('counts a two-output group once',async()=>{const group=server.repository.createGroup({name:'Group',memberIds:[character],scenario:'group only'});const c=server.repository.getConversation(chat)!;server.repository.updateConversation(chat,{...c,kind:'group',characterId:null,groupId:group.id,plannerEnabled:true});await normal();expect(settledStoryIds(server.repository,chat)).toHaveLength(1);expect(runtime.requests[0]?.characters[0]?.scenario).toBe('');});
+  it('counts a two-output group once',async()=>{const group=server.repository.createGroup({name:'Group',memberIds:[character],scenario:'group only'});const c=server.repository.getConversation(chat)!;server.repository.updateConversation(chat,{...c,kind:'group',characterId:null,groupId:group.id});await normal();expect(settledStoryIds(server.repository,chat)).toHaveLength(1);expect(runtime.requests[0]?.characters[0]?.scenario).toBe('');});
   it('records a manual memory update with its successful turn marker',async()=>{await normal();await server.records.generate(chat,'memory',new AbortController().signal);expect(server.repository.listMemories(chat)[0]?.content).toContain('chronicle');expect(server.repository.listMemories(chat)[0]?.storyTurnId).toBe(settledStoryIds(server.repository,chat)[0]);});
   it('does not checkpoint an empty state initialization',async()=>{await normal();await server.records.generate(chat,'state',new AbortController().signal);expect(server.repository.latestState(chat)).toBeNull();});
 });
@@ -112,14 +129,35 @@ describe('record truth and logical-turn safeguards', () => {
     const response = await server.app.inject({ method: 'POST', url: `/api/messages/${target.id}/edit`, payload: { content: 'Edited prose.' } });
     expect(response.statusCode).toBe(200); expect(settledStoryIds(server.repository, chat)).toHaveLength(1); expect(server.repository.getMessage(target.id)?.content).toBe(target.content);
   });
-  it('counts ten double-output turns once each and appends a single automatic memory', async () => {
-    for (let i = 0; i < 10; i++) await normal();
-    expect(settledStoryIds(server.repository, chat)).toHaveLength(10);
-    expect(server.repository.listMemories(chat)).toHaveLength(1);
-    await normal(); expect(server.repository.listMemories(chat)).toHaveLength(1);
+  it('general settings: record intervals are global but progress belongs to each story', async () => {
+    const repo = server.repository;
+    repo.setGeneralSettings({ ...repo.getGeneralSettings(), memoryTurnInterval: 2, stateTurnInterval: 2 });
+    repo.database.sqlite.prepare('UPDATE conversations SET memory_turn_interval = 1, state_turn_interval = 1 WHERE id = ?').run(chat);
+    const other = repo.createConversation(conversationInputSchema.parse({ title: 'Other', kind: 'solo', characterId: character }));
+    const maintain = runtime.maintain.bind(runtime);
+    runtime.maintain = async (request, instruction) => instruction.includes('state operations')
+      ? JSON.stringify([{ op: 'updateRow', table: 'global_state', rowId: 1, cells: { current_location: request.conversationId } }])
+      : maintain(request, instruction);
+    const advance = async (id: string) => {
+      const turn = server.turns.start(turnRequestSchema.parse({ conversationId: id, input: { text: '继续故事。', voice: 'protagonist' } }));
+      await server.turns.idle(id);
+      expect(repo.getTurn(turn.id)?.status).toBe('completed');
+    };
+    await advance(chat); await advance(other.id);
+    expect(repo.listMemories(chat)).toHaveLength(0);
+    expect(repo.latestState(chat)).toBeNull();
+    await advance(chat);
+    expect(repo.listMemories(chat)).toHaveLength(1);
+    expect(repo.latestState(chat)?.tables.global_state[0]?.current_location).toBe(chat);
+    expect(repo.listMemories(other.id)).toHaveLength(0);
+    expect(repo.latestState(other.id)).toBeNull();
+    await advance(other.id);
+    expect(repo.listMemories(other.id)).toHaveLength(1);
+    expect(repo.latestState(other.id)?.tables.global_state[0]?.current_location).toBe(other.id);
+    expect(repo.listMemories(chat)).toHaveLength(1);
   });
   it('keeps failed automatic updates eligible for the next complete turn', async () => {
-    server.repository.updateConversation(chat, { ...server.repository.getConversation(chat)!, memoryTurnInterval: 1 });
+    server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), memoryTurnInterval: 1 });
     const original = runtime.maintain.bind(runtime); let attempts = 0;
     runtime.maintain = async (...args) => { if (++attempts === 1) throw new Error('temporary record failure'); return original(...args); };
     await normal(); expect(server.repository.listMemories(chat)).toHaveLength(0);
@@ -184,12 +222,6 @@ describe('record truth and logical-turn safeguards', () => {
     server.repository.updateCharacter(character, characterInputSchema.parse({ name: 'Sina', firstMessage: '{{char}} waves to {{user}}.' }));
     const response = await server.app.inject({ method: 'POST', url: '/api/conversations', payload: { title: 'Greeting', kind: 'solo', characterId: character } });
     const id = response.json().id; expect(response.statusCode).toBe(201); expect(server.repository.getActiveBranch(id)[0]?.content).toBe('Sina waves to 主角.'); expect(settledStoryIds(server.repository, id)).toEqual([]);
-  });
-  it('uses global narrator defaults only for new conversations', async () => {
-    server.repository.setNarratorDefaults({ name: '记录者', avatarPath: null, style: 'restrained' });
-    const response = await server.app.inject({ method: 'POST', url: '/api/conversations', payload: { title: 'New', kind: 'solo', characterId: character } });
-    expect(response.json().narrator.name).toBe('记录者'); expect(server.repository.getConversation(chat)?.narrator.name).toBe('旁白');
-    expect((await server.app.inject({ method: 'DELETE', url: '/api/narrator' })).statusCode).toBe(404);
   });
   it('serves only content-addressed image assets', async () => {
     const name = 'a'.repeat(64) + '.png'; writeFileSync(join(work, 'assets', name), Buffer.from([137, 80, 78, 71]));

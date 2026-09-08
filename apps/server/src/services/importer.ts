@@ -90,7 +90,7 @@ export async function executeImport(repository: Repository, sourcePath: string, 
       }
       const chat = repository.createConversation(conversationInputSchema.parse({ title: importName(file.path), kind: isGroup ? 'group' : 'solo', characterId, groupId: groupId ?? null,
         personaId: personaNames.get(header.user_name) ?? null, lorebookIds: [...new Set([...globalWorlds, ...(characterId ? bindings.get(characterId) ?? [] : [])])],
-        scenario: string(header.chat_metadata?.scenario), plannerEnabled: false }));
+        scenario: string(header.chat_metadata?.scenario) }));
       repository.addEvent(chat.id, null, 'legacy.chat', { ...header, sourceFile: file.path });
       let parent: string | null = null; let story = randomUUID(); let userSeen = false;
       for (const record of records.filter((r) => typeof r.mes === 'string')) {

@@ -6,8 +6,8 @@ import type { TurnService } from './services/turns.js';
 import { RecordService, applyProposal, settledStoryIds } from './services/records.js';
 import { scanImport } from './services/import-scan.js';
 import { executeImport } from './services/importer.js';
-import { buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, expandStoryMacros, fitRequest } from '@new-ai-chat/agent-runtime';
-import { narratorProfileSchema } from '@new-ai-chat/contracts';
+import { buildWriterContext, expandStoryMacros, fitRequest } from '@new-ai-chat/agent-runtime';
+import { generalSettingsSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 
@@ -36,7 +36,6 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     if (path !== 'conversations') return;
     if (input.characterId && !repo.getCharacter(input.characterId)) throw new Error('Character not found.');
     if (input.groupId && !repo.getGroup(input.groupId)) throw new Error('Group not found.');
-    if (input.connectionId && !repo.getRuntimeConnection(input.connectionId)) throw new Error('Connection not found.');
     if (input.personaId && !repo.getPersona(input.personaId)) throw new Error('Persona not found.');
     if (input.lorebookIds.some((id: string) => !repo.getLorebook(id))) throw new Error('Lorebook not found.');
   }
@@ -44,21 +43,17 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const base = `/api/${collection.path}`;
     app.get(base, async () => collection.list());
     app.get(`${base}/:id`, async (req, reply) => collection.get(idOf(req)) ?? reply.code(404).send({ error: 'Not found.' }));
-    app.post(base, async (req, reply) => { const body = collection.path === 'conversations' && req.body && typeof req.body === 'object' ? { narrator: repo.getNarratorDefaults(), ...req.body } : req.body; const value = collection.schema.parse(body); refs(collection.path, value); return reply.code(201).send(collection.create(value)); });
+    app.post(base, async (req, reply) => { const value = collection.schema.parse(req.body); refs(collection.path, value); return reply.code(201).send(collection.create(value)); });
     app.put(`${base}/:id`, async (req, reply) => { idleAll(); const value = collection.schema.parse(req.body); refs(collection.path, value); return collection.update(idOf(req), value) ?? reply.code(404).send({ error: 'Not found.' }); });
     app.delete(`${base}/:id`, async (req) => { idleAll(); return { deleted: Boolean(collection.remove(idOf(req))) }; });
   }
-  app.get('/api/narrator', async () => repo.getNarratorDefaults());
-  app.get('/api/settings/default-connection', async () => ({ connectionId: repo.getDefaultConnectionId() }));
-  app.put('/api/settings/default-connection', async req => {
+  app.get('/api/settings/general', async () => repo.getGeneralSettings());
+  app.put('/api/settings/general', async req => {
     idleAll();
-    const { connectionId } = z.object({ connectionId: z.string().min(1).nullable() }).parse(req.body);
-    repo.setDefaultConnectionId(connectionId);
-    return { connectionId };
+    return repo.setGeneralSettings(generalSettingsSchema.parse(req.body));
   });
   app.get('/api/settings/prompts', async () => repo.getPromptSettings());
   app.put('/api/settings/prompts', async req => { idleAll(); return repo.setPromptSettings(promptSettingsSchema.parse(req.body)); });
-  app.put('/api/narrator', async req => repo.setNarratorDefaults(narratorProfileSchema.parse(req.body)));
   app.post('/api/connections/:id/test', async (req) => {
     const connection = repo.getRuntimeConnection(idOf(req)); if (!connection) throw new Error('Connection not found.');
     return { ...await turns.runtime.testConnection(connection, AbortSignal.timeout(60_000)), streaming: true, tools: true };
@@ -104,7 +99,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const request = await turns.request(chatId, `preview-${Date.now()}`, AbortSignal.timeout(5_000));
     const draftRequest = { ...request, latestUserText: body.inputText ?? request.latestUserText, latestUserIsNarration: body.inputVoice ? body.inputVoice === 'narrator' : request.latestUserIsNarration };
     const chat = repo.getConversation(chatId)!;
-    const generationMode = chat.generationMode ?? 'writer-agent';
+    const generationMode = repo.getGeneralSettings().generationMode;
     const pendingSelection = !body.speaker && generationMode === 'plain' && chat.kind === 'group';
     const speaker = body.speaker ?? (request.characters[0] ? { kind: 'character', characterId: request.characters[0].id } : { kind: 'narrator' });
     const context = fitRequest({ ...draftRequest, speaker, brief: body.brief } as any, body.brief);

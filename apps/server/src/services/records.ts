@@ -17,7 +17,7 @@ export class RecordService {
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime,
     private request: (chat: string, turn: string, signal: AbortSignal) => Promise<BaseAgentRequest>) {}
   async automatic(chat: string, signal: AbortSignal) {
-    const config = this.repository.getConversation(chat)!;
+    const config = this.repository.getGeneralSettings();
     const completed = settledStoryIds(this.repository, chat);
     const memory = this.repository.listMemories(chat, 1)[0];
     const state = this.repository.latestState(chat);

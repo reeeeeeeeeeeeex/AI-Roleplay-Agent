@@ -20,7 +20,7 @@ export class TurnService {
     const chat = this.repository.getConversation(request.conversationId);
     if (!chat) throw new Error('Conversation not found.');
     this.assertIdle(chat.id);
-    if (!this.repository.resolveConnection(chat.connectionId)) throw new Error('请在设置中选择默认模型连接，或在聊天设置中指定连接。');
+    if (!this.repository.resolveConnection()) throw new Error('请在左下角通用设置中选择模型连接。');
     const source = new StoryContext(this.repository, chat.id);
     const fullHistory = this.repository.getActiveBranch(chat.id);
     const explicit = request.replyTarget.mode === 'explicit' ? request.replyTarget.speaker : null;
@@ -57,13 +57,14 @@ export class TurnService {
 
   async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false): Promise<BaseAgentRequest> {
     const chat = this.repository.getConversation(chatId)!;
-    const connection = this.repository.resolveConnection(chat.connectionId);
-    if (!connection) throw new Error('请在设置中选择默认模型连接，或在聊天设置中指定连接。');
+    const settings = this.repository.getGeneralSettings();
+    const connection = this.repository.resolveConnection();
+    if (!connection) throw new Error('请在左下角通用设置中选择模型连接。');
     const source = new StoryContext(this.repository, chatId);
     const latest = [...this.repository.getActiveBranch(chatId)].reverse().find((m) => m.role === 'user');
     const persona = chat.personaId ? this.repository.getPersona(chat.personaId) : null;
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
-      agencyMode: chat.agencyMode, narrator: chat.narrator, characters: source.cast, persona,
+      agencyMode: settings.agencyMode, narrator: settings.narrator, characters: source.cast, persona,
       history: source.history, stableLore: source.stableLore(), dynamicContext: await source.dynamic(source.history.slice(-20).map((m) => m.content).join('\n')),
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal,
       promptSettings: this.repository.getPromptSettings() };
@@ -79,7 +80,7 @@ export class TurnService {
       this.repository.updateTurn(turn.id, { status: 'running' }); emit('turn.started');
       const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto');
       const chat = this.repository.getConversation(turn.conversationId)!;
-      const mode = chat.generationMode ?? (chat.plannerEnabled ? 'planner' : 'writer-agent');
+      const mode = this.repository.getGeneralSettings().generationMode;
       let plan: TurnPlan | null = forced ? { ...fallbackPlan(turn.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : null;
       const traceSink = {
         start: (phase: TracePhase, requestIndex: number, model: string) => {

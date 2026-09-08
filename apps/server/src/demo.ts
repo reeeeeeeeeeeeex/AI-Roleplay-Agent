@@ -7,6 +7,7 @@ export function seedDemo(repo:Repository) {
   const persona=repo.createPersona({name:'旅人',description:'初次来到海岸灯塔的旅人。',avatarPath:null});
   const connection=repo.createConnection(connectionInputSchema.parse({name:'离线演示（不调用 API）',protocol:'openai-chat-completions',baseUrl:'https://example.invalid',model:'offline-demo'}));
   const group=repo.createGroup({name:'灯塔里的来信',memberIds:[sina.id,mara.id],scenario:'海边的旧灯塔，雨刚停。'});
-  repo.createConversation(conversationInputSchema.parse({title:'灯塔来信 · 单聊',kind:'solo',characterId:sina.id,personaId:persona.id,connectionId:connection.id}));
-  repo.createConversation(conversationInputSchema.parse({title:'灯塔来信 · 群像',kind:'group',groupId:group.id,personaId:persona.id,connectionId:connection.id,plannerEnabled:true}));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), connectionId: connection.id });
+  repo.createConversation(conversationInputSchema.parse({title:'灯塔来信 · 单聊',kind:'solo',characterId:sina.id,personaId:persona.id}));
+  repo.createConversation(conversationInputSchema.parse({title:'灯塔来信 · 群像',kind:'group',groupId:group.id,personaId:persona.id}));
 }

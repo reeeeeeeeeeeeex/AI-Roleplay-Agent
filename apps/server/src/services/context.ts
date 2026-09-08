@@ -12,7 +12,7 @@ export class StoryContext implements StoryContextSource {
   constructor(repository: Repository, conversationId: string) {
     const chat = repository.getConversation(conversationId)!;
     const history = repository.getActiveBranch(conversationId).filter((m) => m.role !== 'system');
-    const ceiling = repository.resolveConnection(chat.connectionId)?.historyMessageLimit ?? 0;
+    const ceiling = repository.resolveConnection()?.historyMessageLimit ?? 0;
     this.history = ceiling > 0 ? history.slice(-ceiling) : history;
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
