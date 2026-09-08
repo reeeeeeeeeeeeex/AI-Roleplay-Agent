@@ -1,6 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set OPEN_BROWSER=1
 set FAKE_MODEL=1
 set DATABASE_PATH=./data/demo.db
 set ASSET_DIR=./data/demo-assets
