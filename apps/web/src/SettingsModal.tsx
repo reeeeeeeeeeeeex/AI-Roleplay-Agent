@@ -1,36 +1,20 @@
-import { useState } from 'react';
-import { X, Plus, Image, Feather, Settings2, FileText } from 'lucide-react';
-import { defaultPromptSettings, type NarratorProfile, type PromptSettings } from '@new-ai-chat/contracts';
+import { useEffect, useState } from 'react';
+import { X, Plus } from 'lucide-react';
+import { defaultPromptSettings, type GeneralSettings, type PromptSettings } from '@new-ai-chat/contracts';
 
 export type AvatarMode = 'compact' | 'large' | 'full';
 export type AvatarFit = 'cover' | 'contain';
 
 export default function SettingsModal({
-  open,
-  onClose,
-  narratorDefaults,
-  onSaveNarrator,
-  connections,
-  defaultConnectionId,
-  onSaveDefaultConnection,
-  onEditConnection,
-  onDeleteConnection,
-  onTestConnection,
-  promptSettings,
-  onSavePrompts,
-  avatarMode,
-  setAvatarMode,
-  avatarFit,
-  setAvatarFit,
-  initialTab = 'appearance',
+  onClose, generalSettings, onSaveGeneral, generationActive, connections,
+  onEditConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
+  avatarMode, setAvatarMode, avatarFit, setAvatarFit,
 }: {
-  open: boolean;
   onClose: () => void;
-  narratorDefaults: NarratorProfile;
-  onSaveNarrator: (value: NarratorProfile) => Promise<void>;
+  generalSettings: GeneralSettings;
+  onSaveGeneral: (value: GeneralSettings) => Promise<void>;
+  generationActive: boolean;
   connections: any[];
-  defaultConnectionId: string | null;
-  onSaveDefaultConnection: (connectionId: string | null) => Promise<void>;
   onEditConnection: (connection?: any) => void;
   onDeleteConnection: (connection: any) => Promise<void>;
   onTestConnection: (id: string) => Promise<void>;
@@ -40,241 +24,124 @@ export default function SettingsModal({
   setAvatarMode: (mode: AvatarMode) => void;
   avatarFit: AvatarFit;
   setAvatarFit: (fit: AvatarFit) => void;
-  initialTab?: 'appearance' | 'narrator' | 'connections' | 'prompts';
 }) {
-  const [tab, setTab] = useState<'appearance' | 'narrator' | 'connections' | 'prompts'>(initialTab);
-  const [narrator, setNarrator] = useState<NarratorProfile>(narratorDefaults);
-  const [prompts, setPrompts] = useState<PromptSettings>(promptSettings);
+  const [tab, setTab] = useState('connections');
+  const [writing, setWriting] = useState(generalSettings);
+  const [prompts, setPrompts] = useState(promptSettings);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  useEffect(() => { setWriting(generalSettings); }, [generalSettings]);
+  const locked = busy || generationActive;
 
-  const handleSavePrompts = async (e: React.FormEvent) => {
-    e.preventDefault(); setBusy(true); setError(''); setNotice('');
-    try { await onSavePrompts(prompts); setNotice('提示词已保存。'); }
-    catch (err: any) { setError(err.message || '保存失败'); }
+  async function save(action: () => Promise<void>, message: string) {
+    setBusy(true); setError(''); setNotice('');
+    try { await action(); setNotice(message); }
+    catch (err) { setError(err instanceof Error ? err.message : '保存失败'); }
     finally { setBusy(false); }
-  };
-
-  if (!open) return null;
-
-  const handleSaveNarrator = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      await onSaveNarrator(narrator);
-      setNotice('默认旁白已保存。');
-    } catch (err: any) {
-      setError(err.message || '保存失败');
-    } finally {
-      setBusy(false);
-    }
-  };
+  }
 
   return (
     <div className="modal-shade">
-      <section className="modal settings-modal" role="dialog" aria-modal="true" aria-label="设置">
+      <section className="modal settings-modal" role="dialog" aria-modal="true" aria-label="通用设置">
         <header>
-          <h2>设置</h2>
-          <button aria-label="关闭设置" onClick={onClose}>
-            <X size={16} />
-          </button>
+          <h2>通用设置</h2>
+          <button aria-label="关闭设置" onClick={onClose}><X size={16} /></button>
         </header>
-
         <nav className="settings-nav">
-          <button
-            className={tab === 'appearance' ? 'active' : ''}
-            onClick={() => { setTab('appearance'); setError(''); setNotice(''); }}
-          >
-            <Image size={14} />外观与显示
-          </button>
-          <button
-            className={tab === 'prompts' ? 'active' : ''}
-            onClick={() => { setTab('prompts'); setError(''); setNotice(''); }}
-          >
-            <FileText size={14} />提示词
-          </button>
-          <button
-            className={tab === 'narrator' ? 'active' : ''}
-            onClick={() => { setTab('narrator'); setError(''); setNotice(''); }}
-          >
-            <Feather size={14} />默认旁白
-          </button>
-          <button
-            className={tab === 'connections' ? 'active' : ''}
-            onClick={() => { setTab('connections'); setError(''); setNotice(''); }}
-          >
-            <Settings2 size={14} />模型连接 {connections.length}
-          </button>
+          {([['connections', '模型'], ['writing', '写作'], ['prompts', '提示词'], ['appearance', '外观']] as const).map(([id, label]) => (
+            <button key={id} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setError(''); setNotice(''); }}>{label}</button>
+          ))}
         </nav>
-
         <div className="settings-content">
-          {error && <div className="banner error" style={{ margin: '0 0 12px' }}>{error}</div>}
-          {notice && <div className="banner" style={{ margin: '0 0 12px' }}>{notice}</div>}
+          {error && <p className="banner error" role="alert">{error}</p>}
+          {notice && <p className="banner" role="status">{notice}</p>}
+          {generationActive && tab !== 'appearance' && <p className="muted">生成结束后可保存运行设置。</p>}
 
-          {tab === 'appearance' && (
-            <div className="settings-section">
-              <div className="settings-group">
-                <label className="settings-label">角色图片 / 头像显示尺寸</label>
-                <p className="muted" style={{ marginBottom: 10 }}>
-                  控制聊天窗口中角色立绘与头像的显示大小与完整度。
-                </p>
-                <div className="settings-options-grid">
-                  <button
-                    type="button"
-                    className={`option-card ${avatarMode === 'compact' ? 'active' : ''}`}
-                    onClick={() => { setAvatarMode('compact'); localStorage.setItem('avatar-mode', 'compact'); }}
-                  >
-                    <strong>紧凑标准</strong>
-                    <small>32×32 正方形经典头像，适合专注文字叙事</small>
-                  </button>
-                  <button
-                    type="button"
-                    className={`option-card ${avatarMode === 'large' ? 'active' : ''}`}
-                    onClick={() => { setAvatarMode('large'); localStorage.setItem('avatar-mode', 'large'); }}
-                  >
-                    <strong>大图立绘（推荐）</strong>
-                    <small>60×80 纵向大图，展现角色服饰与神态，少裁剪</small>
-                  </button>
-                  <button
-                    type="button"
-                    className={`option-card ${avatarMode === 'full' ? 'active' : ''}`}
-                    onClick={() => { setAvatarMode('full'); localStorage.setItem('avatar-mode', 'full'); }}
-                  >
-                    <strong>完整卡片</strong>
-                    <small>80×110 宽广立绘，最大化展示卡片原图形象</small>
-                  </button>
+          {tab === 'connections' && <div className="settings-section">
+            <label>当前模型连接
+              <select value={generalSettings.connectionId ?? ''} disabled={locked} onChange={e => {
+                const connectionId = e.target.value || null;
+                void save(() => onSaveGeneral({ ...generalSettings, connectionId }), '模型已保存，所有聊天统一使用。');
+              }}>
+                <option value="">未设置</option>
+                {connections.map(c => <option key={c.id} value={c.id}>{c.name} · {c.model}</option>)}
+              </select>
+            </label>
+            <p className="muted">适用于所有新旧聊天。温度、输出上限等参数在连接中编辑。</p>
+            <button className="primary" onClick={() => onEditConnection()}><Plus size={14} />创建模型连接</button>
+            <div className="resource-list">
+              {connections.map(c => <article className="resource-item" key={c.id}>
+                <div className="resource-info"><h3>{c.name}</h3><p>{c.model} · {c.baseUrl}</p></div>
+                <div className="resource-actions">
+                  <button onClick={() => onEditConnection(c)}>编辑</button>
+                  <button disabled={locked} onClick={() => void save(() => onTestConnection(c.id), '连接测试通过。')}>测试连接</button>
+                  <button className="danger" disabled={locked} onClick={() => void save(() => onDeleteConnection(c), '连接已删除。')}>删除</button>
                 </div>
-              </div>
-
-              <div className="settings-group" style={{ marginTop: 16 }}>
-                <label className="settings-label">图片裁剪方式</label>
-                <div className="settings-options-grid">
-                  <button
-                    type="button"
-                    className={`option-card ${avatarFit === 'cover' ? 'active' : ''}`}
-                    onClick={() => { setAvatarFit('cover'); localStorage.setItem('avatar-fit', 'cover'); }}
-                  >
-                    <strong>智能填充（少裁剪）</strong>
-                    <small>聚焦头像顶部与半身，自然充满显示区域</small>
-                  </button>
-                  <button
-                    type="button"
-                    className={`option-card ${avatarFit === 'contain' ? 'active' : ''}`}
-                    onClick={() => { setAvatarFit('contain'); localStorage.setItem('avatar-fit', 'contain'); }}
-                  >
-                    <strong>完全无裁剪</strong>
-                    <small>按原图完整比例内嵌展示，原汁原味保留全部画面</small>
-                  </button>
-                </div>
-              </div>
+              </article>)}
+              {!connections.length && <p className="muted">创建一个模型连接即可开始聊天。</p>}
             </div>
-          )}
+          </div>}
 
-          {tab === 'narrator' && (
-            <form onSubmit={handleSaveNarrator} className="settings-form">
-              <p className="muted" style={{ marginBottom: 12 }}>
-                新故事将默认应用该配置；已有聊天可在聊天设置中独立调整。
-              </p>
-              <label>
-                显示名称
-                <input
-                  required
-                  value={narrator.name}
-                  onChange={(e) => setNarrator({ ...narrator, name: e.target.value })}
-                />
-              </label>
-              <label>
-                写作风格
-                <textarea
-                  rows={4}
-                  value={narrator.style}
-                  onChange={(e) => setNarrator({ ...narrator, style: e.target.value })}
-                />
-              </label>
-              <label>
-                旁白头像（本地资产路径）
-                <input
-                  value={narrator.avatarPath ?? ''}
-                  onChange={(e) => setNarrator({ ...narrator, avatarPath: e.target.value || null })}
-                />
-              </label>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-                <button className="primary" disabled={busy} type="submit">
-                  {busy ? '保存中…' : '保存默认旁白'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {tab === 'connections' && (
-            <div className="settings-section">
-              <div className="settings-group">
-                <label>
-                  所有聊天的默认模型
-                  <select value={defaultConnectionId ?? ''} disabled={busy} onChange={async e => {
-                    setBusy(true); setError(''); setNotice('');
-                    try {
-                      await onSaveDefaultConnection(e.target.value || null);
-                      setNotice('默认模型已保存。');
-                    } catch (err: any) { setError(err.message || '保存失败'); }
-                    finally { setBusy(false); }
-                  }}>
-                    <option value="">未设置</option>
-                    {connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name} · {connection.model}</option>)}
-                  </select>
-                </label>
-                <p className="muted">未单独指定连接的新旧聊天都会使用此模型；聊天设置中仍可单独覆盖。</p>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <span className="muted">管理 OpenAI、Anthropic、OpenAI Responses 模型端点</span>
-                <button className="primary" onClick={() => onEditConnection()}>
-                  <Plus size={14} />创建模型连接
-                </button>
-              </div>
-
-              <div className="resource-list">
-                {connections.map((v) => (
-                  <article className="resource-item" key={v.id}>
-                    <div className="resource-main">
-                      <div className="resource-info">
-                        <h3 className="resource-title">{v.name}</h3>
-                        <p className="resource-desc">{v.model} · {v.baseUrl}</p>
-                      </div>
-                    </div>
-                    <div className="resource-meta">
-                      <span>{v.protocol}</span>
-                    </div>
-                    <div className="resource-actions">
-                      <button onClick={() => onEditConnection(v)}>编辑</button>
-                      <button onClick={() => onTestConnection(v.id)}>测试连接</button>
-                      <button className="danger" onClick={() => onDeleteConnection(v)}>删除</button>
-                    </div>
-                  </article>
-                ))}
-                {!connections.length && (
-                  <div className="empty" style={{ padding: '30px 10px' }}>
-                    暂无模型连接。点击上方按钮添加你的第一个连接。
-                  </div>
-                )}
-              </div>
+          {tab === 'writing' && <form className="settings-form" onSubmit={e => {
+            e.preventDefault();
+            void save(() => onSaveGeneral({ ...writing, connectionId: generalSettings.connectionId }), '写作设置已保存，所有聊天统一使用。');
+          }}>
+            <label>生成模式
+              <select value={writing.generationMode} onChange={e => setWriting({ ...writing, generationMode: e.target.value as GeneralSettings['generationMode'] })}>
+                <option value="plain">普通写作</option>
+                <option value="writer-agent">Writer Agent</option>
+                <option value="planner">Planner＋Writer</option>
+              </select>
+            </label>
+            <label>主角控制
+              <select value={writing.agencyMode} onChange={e => setWriting({ ...writing, agencyMode: e.target.value as GeneralSettings['agencyMode'] })}>
+                <option value="protected">保护主角：AI 不代替主角决定</option>
+                <option value="coauthor">共同创作：AI 可描写主角行动和内心</option>
+              </select>
+            </label>
+            <label>旁白名称<input required maxLength={100} value={writing.narrator.name} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, name: e.target.value } })} /></label>
+            <label>旁白风格<textarea rows={3} value={writing.narrator.style} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, style: e.target.value } })} /></label>
+            <label>旁白头像（本地资产地址）<input value={writing.narrator.avatarPath ?? ''} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, avatarPath: e.target.value || null } })} /></label>
+            <div className="two-col">
+              <label>Memory 自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.memoryTurnInterval} onChange={e => setWriting({ ...writing, memoryTurnInterval: Number(e.target.value) })} /></label>
+              <label>状态自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.stateTurnInterval} onChange={e => setWriting({ ...writing, stateTurnInterval: Number(e.target.value) })} /></label>
             </div>
-          )}
+            <p className="muted">间隔按完整回合计算，每段故事分别记录进度。</p>
+            <button className="primary" disabled={locked} type="submit">保存写作设置</button>
+          </form>}
 
-          {tab === 'prompts' && (
-            <form onSubmit={handleSavePrompts} className="settings-form">
-              <p className="muted" style={{ marginBottom: 12 }}>只编辑三段写作意图；角色卡、历史、工具定义和权限规则仍由系统稳定组装。</p>
-              <label>写作主指令<textarea rows={6} value={prompts.mainInstruction} onChange={e => setPrompts({ ...prompts, mainInstruction: e.target.value })} /></label>
-              <label>Writer Agent 行为指令<textarea rows={7} value={prompts.writerInstruction} onChange={e => setPrompts({ ...prompts, writerInstruction: e.target.value })} /></label>
-              <label>Planner 指令<textarea rows={6} value={prompts.plannerInstruction} onChange={e => setPrompts({ ...prompts, plannerInstruction: e.target.value })} /></label>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
-                <button type="button" onClick={() => setPrompts(defaultPromptSettings)}>恢复默认</button>
-                <button className="primary" disabled={busy} type="submit">{busy ? '保存中…' : '保存提示词'}</button>
-              </div>
-            </form>
-          )}
+          {tab === 'prompts' && <form className="settings-form" onSubmit={e => {
+            e.preventDefault(); void save(() => onSavePrompts(prompts), '提示词已保存。');
+          }}>
+            <label>写作主指令<textarea required rows={6} value={prompts.mainInstruction} onChange={e => setPrompts({ ...prompts, mainInstruction: e.target.value })} /></label>
+            <label>Writer Agent 行为指令<textarea required rows={7} value={prompts.writerInstruction} onChange={e => setPrompts({ ...prompts, writerInstruction: e.target.value })} /></label>
+            <label>Planner 指令<textarea required rows={6} value={prompts.plannerInstruction} onChange={e => setPrompts({ ...prompts, plannerInstruction: e.target.value })} /></label>
+            <div className="resource-actions">
+              <button type="button" onClick={() => setPrompts(defaultPromptSettings)}>恢复默认</button>
+              <button className="primary" disabled={locked} type="submit">保存提示词</button>
+            </div>
+          </form>}
+
+          {tab === 'appearance' && <div className="settings-section">
+            <label>头像尺寸
+              <select value={avatarMode} onChange={e => {
+                setAvatarMode(e.target.value as AvatarMode); localStorage.setItem('avatar-mode', e.target.value);
+              }}>
+                <option value="compact">紧凑标准</option>
+                <option value="large">大图立绘</option>
+                <option value="full">完整卡片</option>
+              </select>
+            </label>
+            <label>图片裁剪方式
+              <select value={avatarFit} onChange={e => {
+                setAvatarFit(e.target.value as AvatarFit); localStorage.setItem('avatar-fit', e.target.value);
+              }}>
+                <option value="cover">填充显示</option>
+                <option value="contain">完整显示</option>
+              </select>
+            </label>
+          </div>}
         </div>
       </section>
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import type { Conversation } from '@new-ai-chat/contracts';
+import type { Conversation, GenerationMode } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
 
@@ -16,6 +16,7 @@ const tableNames: Record<string, string> = {
 
 export default function Records({
   chat,
+  generationMode,
   version,
   activity,
   disabled,
@@ -24,6 +25,7 @@ export default function Records({
   onClose,
 }: {
   chat: Conversation;
+  generationMode: GenerationMode;
   version: number;
   activity: any[];
   disabled: boolean;
@@ -192,7 +194,7 @@ export default function Records({
 
         {tab === 'planner' && (
           <>
-            <h3 className="planner-status">{chat.generationMode === 'plain' ? '普通写作' : chat.generationMode === 'planner' || chat.plannerEnabled ? 'Planner → Writer' : '统一 Writer Agent'}</h3>
+            <h3 className="planner-status">{generationMode === 'plain' ? '普通写作' : generationMode === 'planner' ? 'Planner → Writer' : '统一 Writer Agent'}</h3>
             {proposals.map((p) => (
               <article className="proposal" key={p.id}>
                 <small className="muted">{p.kind === 'state' ? '状态提案' : '世界事件'} · {p.status}</small>

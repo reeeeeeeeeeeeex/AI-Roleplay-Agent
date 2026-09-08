@@ -9,7 +9,7 @@ export const titles: Record<Collection, string> = {
   connections: '模型连接',
   lorebooks: '世界书',
   groups: '群组',
-  conversations: '聊天',
+  conversations: '故事资料',
 };
 
 export const defaults: Record<Collection, any> = {
@@ -36,14 +36,7 @@ export const defaults: Record<Collection, any> = {
     characterId: null,
     groupId: null,
     personaId: null,
-    connectionId: null,
     lorebookIds: [],
-    plannerEnabled: false,
-    generationMode: 'writer-agent',
-    agencyMode: 'protected',
-    narrator: { name: '旁白', style: '克制、具象、重视场景连续性，不替角色解释未表达的内心。', avatarPath: null },
-    memoryTurnInterval: 10,
-    stateTurnInterval: 0,
   },
 };
 
@@ -51,14 +44,12 @@ export default function Editor({
   kind,
   initial,
   data,
-  defaultConnectionId,
   onClose,
   onSave,
 }: {
   kind: Collection;
   initial: any;
   data: Record<string, any[]>;
-  defaultConnectionId?: string | null;
   onClose: () => void;
   onSave: (value: any) => Promise<void>;
 }) {
@@ -122,11 +113,11 @@ export default function Editor({
     </label>
   );
 
-  const select = (key: string, label: string, options: Array<[string, string]>, empty = false, emptyLabel = '未选择') => (
+  const select = (key: string, label: string, options: Array<[string, string]>, empty = false) => (
     <label key={key}>
       {label}
       <select value={value[key] ?? ''} onChange={(event) => set(key, event.target.value || null)}>
-        {empty && <option value="">{emptyLabel}</option>}
+        {empty && <option value="">未选择</option>}
         {options.map(([id, name]) => (
           <option key={id} value={id}>
             {name}
@@ -195,46 +186,9 @@ export default function Editor({
                 (data[value.kind === 'solo' ? 'characters' : 'groups'] ?? []).map((v) => [v.id, v.name]),
                 true
               )}
-              {select('connectionId', '模型连接', (data.connections ?? []).map((v) => [v.id, v.name]), true,
-                `使用全局默认（${data.connections?.find(v => v.id === defaultConnectionId)?.name ?? '尚未设置'}）`)}
               {select('personaId', '主角', (data.personas ?? []).map((v) => [v.id, v.name]), true)}
               {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
               {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
-              <label>
-                生成模式
-                <select value={value.generationMode ?? (value.plannerEnabled ? 'planner' : 'writer-agent')} onChange={(e) => {
-                  const mode = e.target.value;
-                  setValue((old: any) => ({ ...old, generationMode: mode, plannerEnabled: mode === 'planner' }));
-                }}>
-                  <option value="plain">普通写作（ReST 提示词）</option>
-                  <option value="writer-agent">Writer Agent（先选人再写）</option>
-                  <option value="planner">Planner＋Writer</option>
-                </select>
-                <small className="muted">Writer Agent 只使用一个持续会话；Planner 模式才会先运行独立规划阶段。</small>
-              </label>
-              {select('agencyMode', '主角控制', [
-                ['protected', '保护主角：AI 不代替主角决定'],
-                ['coauthor', '共同创作：AI 可描写主角行动和内心'],
-              ])}
-              <label>
-                旁白名称
-                <input value={value.narrator.name} onChange={(e) => set('narrator', { ...value.narrator, name: e.target.value })} />
-              </label>
-              <label>
-                旁白风格
-                <textarea rows={3} value={value.narrator.style} onChange={(e) => set('narrator', { ...value.narrator, style: e.target.value })} />
-              </label>
-              <label>
-                旁白头像（本地资产地址）
-                <input
-                  value={value.narrator.avatarPath ?? ''}
-                  onChange={(e) => set('narrator', { ...value.narrator, avatarPath: e.target.value || null })}
-                />
-              </label>
-              <div className="two-col">
-                {field('memoryTurnInterval', 'Memory 自动更新间隔（0 关闭）', false, 'number')}
-                {field('stateTurnInterval', '状态自动更新间隔（0 关闭）', false, 'number')}
-              </div>
             </>
           ) : (
             field('name', '名称')

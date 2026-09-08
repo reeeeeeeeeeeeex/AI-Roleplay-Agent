@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitBranch, PanelLeftClose, PanelLeft, Library } from 'lucide-react';
-import { defaultPromptSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings } from '@new-ai-chat/contracts';
+import { defaultGeneralSettings, defaultPromptSettings, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings } from '@new-ai-chat/contracts';
 import { api, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import Records from './Records.js';
@@ -46,12 +46,10 @@ export default function App() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importBusy, setImportBusy] = useState(false);
 
-  const [narratorDefaults, setNarratorDefaults] = useState(defaults.conversations.narrator);
-  const [defaultConnectionId, setDefaultConnectionId] = useState<string | null>(null);
+  const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(defaultGeneralSettings);
   const [promptSettings, setPromptSettings] = useState<PromptSettings>(defaultPromptSettings);
   const [promptPreview, setPromptPreview] = useState<any | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'appearance' | 'narrator' | 'connections' | 'prompts'>('appearance');
   const [showBranches, setShowBranches] = useState(false);
 
   // Avatar display preferences
@@ -69,7 +67,7 @@ export default function App() {
 
   const speakerName = (speaker: SpeakerRef | null) =>
     speaker?.kind === 'narrator'
-      ? chat?.narrator.name ?? '旁白'
+      ? generalSettings.narrator.name ?? '旁白'
       : (data.characters ?? []).find((c) => c.id === (speaker?.kind === 'character' ? speaker.characterId : ''))?.name ?? '角色';
 
   const act = (promise: Promise<unknown>) => {
@@ -81,18 +79,16 @@ export default function App() {
     message.role === 'user'
       ? data.personas?.find((p) => p.id === chat?.personaId)?.avatarPath ?? undefined
       : message.speaker?.kind === 'narrator'
-      ? chat?.narrator.avatarPath ?? undefined
+      ? generalSettings.narrator.avatarPath ?? undefined
       : data.characters?.find((c) => c.id === (message.speaker?.kind === 'character' ? message.speaker.characterId : null))?.avatarPath ?? undefined;
 
   async function refresh() {
-    const [values, narrator, defaultConnection, prompts] = await Promise.all([
+    const [values, general, prompts] = await Promise.all([
       Promise.all(collections.map((kind) => api(`/${kind}`))),
-      api('/narrator'),
-      api('/settings/default-connection'),
+      api('/settings/general'),
       api('/settings/prompts'),
     ]);
-    setNarratorDefaults(narrator);
-    setDefaultConnectionId(defaultConnection.connectionId);
+    setGeneralSettings(general);
     setPromptSettings(prompts);
     setData(Object.fromEntries(collections.map((kind, index) => [kind, values[index]])));
   }
@@ -248,7 +244,7 @@ export default function App() {
   }
 
   const edit = (kind: Collection, value: any = defaults[kind]) =>
-    setEditor({ kind, value: kind === 'conversations' && !value.id ? { ...value, narrator: narratorDefaults } : value });
+    setEditor({ kind, value });
 
   async function save(value: any) {
     if (!editor) return;
@@ -272,7 +268,7 @@ export default function App() {
     try {
       if (execute && preview) {
         const report = await api('/imports/execute', 'POST', { sourcePath: preview.sourcePath, sourceHash: preview.sourceHash });
-        setNotice(report.alreadyImported ? '这批文件已导入，没有重复创建。' : '导入完成。未指定连接的聊天会使用全局默认模型。');
+        setNotice(report.alreadyImported ? '这批文件已导入，没有重复创建。' : '导入完成。所有聊天统一使用通用设置中的模型。');
         await refresh();
         setPreview(report);
       } else {
@@ -287,7 +283,6 @@ export default function App() {
     edit('conversations', {
       ...defaults.conversations,
       characterId: data.characters?.[0]?.id ?? null,
-      connectionId: null,
     });
 
   if (!paired) {
@@ -338,7 +333,7 @@ export default function App() {
               <MessageSquare size={14} />
               <span>
                 {c.title}
-                <small>{c.kind === 'group' ? '群聊' : '单聊'} · {c.plannerEnabled ? 'Planner' : 'Writer'}</small>
+                <small>{c.kind === 'group' ? '群聊' : '单聊'} · {{ plain: '普通写作', 'writer-agent': 'Writer Agent', planner: 'Planner＋Writer' }[generalSettings.generationMode]}</small>
               </span>
             </button>
           ))}
@@ -355,8 +350,8 @@ export default function App() {
               {titles[kind]} <span>{data[kind]?.length ?? 0}</span>
             </button>
           ))}
-          <button onClick={() => { setShowSettings(true); setSettingsTab('appearance'); setMobileNav(false); }}>
-            <Settings2 size={14} />设置
+          <button onClick={() => { setShowSettings(true); setMobileNav(false); }}>
+            <Settings2 size={14} />通用设置
           </button>
           <button className={page === 'import' ? 'selected' : ''} onClick={() => { setPage('import'); setMobileNav(false); }}>
             <Upload size={14} />导入 SillyTavern
@@ -385,7 +380,7 @@ export default function App() {
                 <button title="故事分支" aria-label="故事分支" onClick={() => setShowBranches(true)}>
                   <GitBranch size={16} />
                 </button>
-                <button title="聊天设置" aria-label="聊天设置" onClick={() => edit('conversations', chat)}>
+                <button title="故事资料" aria-label="故事资料" onClick={() => edit('conversations', chat)}>
                   <Settings2 size={16} />
                 </button>
                 <button title="记录面板" aria-label="记录面板" onClick={() => setPanel(!panel)}>
@@ -427,11 +422,11 @@ export default function App() {
         {page === 'chat' && chat && (
           <>
             <div className="cast-strip">
-              <span><i className="dot narrator" />{chat.narrator.name}</span>
+              <span><i className="dot narrator" />{generalSettings.narrator.name}</span>
               {cast.map((id: string) => (
                 <span key={id}><i className="dot" />{data.characters?.find((c) => c.id === id)?.name}</span>
               ))}
-              <small>{chat.agencyMode === 'protected' ? '主角保护' : '共同创作'}</small>
+              <small>{generalSettings.agencyMode === 'protected' ? '主角保护' : '共同创作'}</small>
             </div>
 
             <section className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录">
@@ -555,7 +550,7 @@ export default function App() {
                     由谁回复
                     <select aria-label="回复者" value={replyTarget} onChange={(e) => setReplyTarget(e.target.value)}>
                       <option value="auto">自动选择</option>
-                      <option value="narrator">{chat.narrator.name}</option>
+                      <option value="narrator">{generalSettings.narrator.name}</option>
                       {cast.map((id: string) => (
                         <option value={id} key={id}>{data.characters?.find((c) => c.id === id)?.name}</option>
                       ))}
@@ -615,7 +610,6 @@ export default function App() {
                                 ...defaults.conversations,
                                 title: `与 ${v.name} 的故事`,
                                 characterId: v.id,
-                                connectionId: null,
                               })}
                             >
                               开始聊天
@@ -690,6 +684,7 @@ export default function App() {
       {page === 'chat' && chat && panel && (
         <Records
           chat={chat}
+          generationMode={generalSettings.generationMode}
           version={recordsVersion}
           activity={activity}
           disabled={!!turn}
@@ -699,25 +694,16 @@ export default function App() {
         />
       )}
 
-      <SettingsModal
-        open={showSettings}
+      {showSettings && <SettingsModal
         onClose={() => setShowSettings(false)}
-        initialTab={settingsTab}
-        narratorDefaults={narratorDefaults}
-        onSaveNarrator={async (value) => {
-          setNarratorDefaults(await api('/narrator', 'PUT', value));
-          await refresh();
-        }}
+        generalSettings={generalSettings}
+        onSaveGeneral={async value => { setGeneralSettings(await api('/settings/general', 'PUT', value)); }}
+        generationActive={sending || !!turn}
         connections={data.connections ?? []}
-        defaultConnectionId={defaultConnectionId}
-        onSaveDefaultConnection={async connectionId => {
-          const value = await api('/settings/default-connection', 'PUT', { connectionId });
-          setDefaultConnectionId(value.connectionId);
-        }}
         onEditConnection={(conn) => edit('connections', conn ?? defaults.connections)}
         onDeleteConnection={(conn) => remove('connections', conn)}
         onTestConnection={async (id) => {
-          await act(api(`/connections/${id}/test`, 'POST', {}).then(() => setNotice('连接测试通过。')));
+          await api(`/connections/${id}/test`, 'POST', {});
         }}
         avatarMode={avatarMode}
         setAvatarMode={setAvatarMode}
@@ -725,7 +711,7 @@ export default function App() {
         setAvatarFit={setAvatarFit}
         promptSettings={promptSettings}
         onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
-      />
+      />}
 
       {editor && (
         <Editor
@@ -733,7 +719,6 @@ export default function App() {
           kind={editor.kind}
           initial={editor.value}
           data={data}
-          defaultConnectionId={defaultConnectionId}
           onClose={() => setEditor(null)}
           onSave={save}
         />
@@ -772,7 +757,7 @@ export default function App() {
         <div className="modal-shade" style={{ zIndex: 130 }} onClick={() => setPromptPreview(null)}>
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
             <header><h2>发送前提示词预览</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
-            <p className="muted">模式：{promptPreview.generationMode} · 身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? chat?.narrator.name : speakerName(promptPreview.speaker)}</p>
+            <p className="muted">模式：{promptPreview.generationMode} · 身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)}</p>
             <div className="prompt-preview-list">{promptPreview.segments?.map((segment: any, index: number) => <details key={index} open={index === 0}><summary>{segment.title} · {segment.role} · {segment.source}</summary><pre>{segment.content}</pre></details>)}</div>
           </section>
         </div>

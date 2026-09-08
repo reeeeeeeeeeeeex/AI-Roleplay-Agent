@@ -1489,59 +1489,7 @@ fieldset label {
 .settings-section {
   display: flex;
   flex-direction: column;
-}
-
-.settings-group {
-  margin-bottom: 8px;
-}
-
-.settings-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.settings-options-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 10px;
-}
-
-.option-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-  padding: 12px 14px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-  transition: border-color 0.12s, background 0.12s;
-  cursor: pointer;
-}
-
-.option-card:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-strong);
-}
-
-.option-card.active {
-  background: var(--bg-active);
-  border-color: var(--border-focus);
-}
-
-.option-card strong {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.option-card small {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.4;
+  gap: 12px;
 }
 
 .settings-form label {

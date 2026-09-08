@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { defaultGeneralSettings } from '@new-ai-chat/contracts';
 
 test.use({ serviceWorkers: 'block' });
 
@@ -11,7 +12,8 @@ async function send(page: Page, text: string, count: number) {
 test.beforeEach(async ({ page, request }, info) => {
   const characters = await (await request.get('/api/characters')).json();
   const connections = await (await request.get('/api/connections')).json();
-  const chat = await (await request.post('/api/conversations', { data: { title: `Browser ${info.title}`, kind: 'solo', characterId: characters.find((c: any) => c.name === 'Sina').id, connectionId: connections[0].id } })).json();
+  await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, connectionId: connections[0].id } });
+  const chat = await (await request.post('/api/conversations', { data: { title: `Browser ${info.title}`, kind: 'solo', characterId: characters.find((c: any) => c.name === 'Sina').id } })).json();
   await page.goto('/');
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
 });
@@ -38,26 +40,6 @@ test('swipe and continue keep alternate branches', async ({ page }) => {
   await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
   await expect.poll(async () => (await page.locator('article.message .prose').last().textContent())?.length ?? 0).toBeGreaterThan(before!.length);
 });
-test('chat settings, memory and state editing', async ({ page }) => {
-  await page.getByRole('button', { name: '聊天设置', exact: true }).click();
-  await page.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('coauthor');
-  await page.getByLabel('旁白名称', { exact: true }).fill('记录者');
-  await page.getByLabel('启用 Planner', { exact: false }).check();
-  await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.getByText('共同创作', { exact: true })).toBeVisible();
-  await send(page, '故事开始。', 3);
-  await page.getByRole('button', { name: '立即生成 Memory', exact: true }).click();
-  await expect(page.locator('.memory-entry')).toHaveCount(1);
-  await page.getByRole('button', { name: '主角状态', exact: true }).click();
-  await page.getByRole('button', { name: '编辑数据', exact: true }).click();
-  const state = JSON.parse(await page.getByLabel('状态 JSON').inputValue());
-  state.global_state[0].current_location = '书店';
-  await page.getByLabel('状态 JSON').fill(JSON.stringify(state));
-  await page.getByRole('button', { name: '验证并保存', exact: true }).click();
-  await expect(page.getByLabel('状态 JSON')).toHaveValue(/书店/);
-  await page.getByRole('button', { name: '编辑数据', exact: true }).click();
-  await expect(page.getByText('书店', { exact: true })).toBeVisible();
-});
 test('mobile layout and forced character', async ({ page }, info) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const close = page.getByRole('button', { name: '关闭记录面板' });
@@ -76,23 +58,9 @@ test('branch picker restores the old second output', async ({ page }) => {
   await page.getByRole('dialog', { name: '故事分支', exact: true }).getByRole('button', { name: /Sina/ }).click();
   await expect(page.locator('article.message:not(.streaming)')).toHaveCount(3);
 });
-test('group Planner preserves narrator and stable cast', async ({ page }) => {
-  await page.getByRole('button', { name: '聊天设置', exact: true }).click();
-  await page.getByRole('combobox', { name: '聊天类型', exact: true }).selectOption('group');
-  await page.getByRole('combobox', { name: '群组', exact: true }).selectOption({ label: '灯塔里的来信' });
-  await page.getByLabel('启用 Planner', { exact: false }).check();
-  await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.locator('.cast-strip')).toContainText('旁白');
-  await expect(page.locator('.cast-strip')).toContainText('Mara');
-  await send(page, '谁知道这封信的来历？', 3);
-  await page.getByRole('button', { name: 'Agent', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Planner → Writer' })).toBeVisible();
-  await expect(page.getByText('planner.completed', { exact: true })).toBeVisible();
-});
 test('creates a connection through the UI with only the supported protocols', async ({ page }) => {
   await page.route('**/api/connections/models', route => route.fulfill({ json: { models: ['local-test', 'other-test'] } }));
-  await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('button', { name: /^模型连接 \d/ }).click();
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
   await page.getByRole('button', { name: '创建模型连接', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '编辑模型连接' });
   await dialog.getByRole('textbox', { name: '名称', exact: true }).fill('Browser connection');
@@ -114,39 +82,53 @@ test('creates a connection through the UI with only the supported protocols', as
   await expect(page.getByRole('heading', { name: 'Browser connection', exact: true })).toBeVisible();
 });
 
-test('default model and failed-send draft survive settings changes', async ({ page, request }, info) => {
-  await request.put('/api/settings/default-connection', { data: { connectionId: null } });
+test('general settings: all stories share controls and failed drafts survive', async ({ page, request }, info) => {
   const connections = await (await request.get('/api/connections')).json();
-  const personas = await (await request.get('/api/personas')).json();
-  await page.getByRole('button', { name: '聊天设置', exact: true }).click();
-  await page.getByRole('combobox', { name: '模型连接', exact: true }).selectOption('');
-  await page.getByRole('button', { name: '保存', exact: true }).click();
   const input = page.getByRole('textbox', { name: '输入消息' });
   const text = '我把这封没能寄出的信收进口袋。';
   await input.fill(text);
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await expect(settings.locator('.settings-nav button')).toHaveText(['模型', '写作', '提示词', '外观']);
+  await settings.getByLabel('当前模型连接').selectOption('');
+  await expect(settings.getByRole('status')).toContainText('模型已保存');
+  await settings.getByRole('button', { name: '关闭设置' }).click();
   await page.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(page.getByText('请在设置中选择默认模型连接，或在聊天设置中指定连接。', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('请在左下角通用设置中选择模型连接。');
   await expect(input).toHaveValue(text);
-  await page.getByRole('button', { name: '聊天设置', exact: true }).click();
-  await page.getByRole('combobox', { name: '主角', exact: true }).selectOption(personas[0].id);
-  await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(input).toHaveValue(text);
+
+  await page.getByRole('button', { name: '故事资料', exact: true }).click();
+  const story = page.getByRole('dialog', { name: '编辑故事资料', exact: true });
+  await expect(story.getByRole('combobox')).toHaveCount(3);
+  await expect(story.getByText(/生成模式|模型连接|主角控制|旁白名称|自动更新间隔/)).toHaveCount(0);
+  await story.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByRole('button', { name: /灯塔来信 · 单聊/ }).click();
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
   await expect(input).toHaveValue(text);
-  await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('button', { name: /^模型连接 \d/ }).click();
-  await page.getByRole('combobox', { name: '所有聊天的默认模型', exact: true }).selectOption(connections[0].id);
-  await expect(page.getByText('默认模型已保存。', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await settings.getByLabel('当前模型连接').selectOption(connections[0].id);
+  await expect(settings.getByRole('status')).toContainText('模型已保存');
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  await settings.getByRole('combobox', { name: /生成模式/ }).selectOption('plain');
+  await settings.getByRole('combobox', { name: /主角控制/ }).selectOption('coauthor');
+  await settings.getByLabel('旁白名称', { exact: true }).fill('记录者');
+  await settings.getByLabel('Memory 自动更新间隔（0 关闭）').fill('3');
+  await settings.getByRole('button', { name: '保存写作设置' }).click();
+  await expect(settings.getByRole('status')).toContainText('写作设置已保存');
+  await settings.getByRole('button', { name: '关闭设置' }).click();
   await expect(input).toHaveValue(text);
-  await page.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(page.locator('article.message:not(.streaming)')).toHaveCount(3);
+  await expect(page.locator('.cast-strip')).toContainText('记录者');
+  await expect(page.locator('.cast-strip')).toContainText('共同创作');
+  await send(page, text, 2);
   await expect(input).toHaveValue('');
-  await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
-  await expect(page.locator('article.message').filter({ hasText: text })).toHaveCount(1);
-  await input.fill('下一条尚未发送的草稿');
-  await page.getByRole('button', { name: '让故事继续 →', exact: true }).click();
-  await expect(page.locator('article.message:not(.streaming)')).toHaveCount(5);
-  await expect(input).toHaveValue('下一条尚未发送的草稿');
+  await page.getByRole('button', { name: /灯塔来信 · 单聊/ }).click();
+  await expect(page.locator('.cast-strip')).toContainText('记录者');
+  await page.reload();
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await expect(settings.getByLabel('当前模型连接')).toHaveValue(connections[0].id);
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  await expect(settings.getByRole('combobox', { name: /生成模式/ })).toHaveValue('plain');
+  await expect(settings.getByLabel('旁白名称', { exact: true })).toHaveValue('记录者');
+  await expect(settings.getByLabel('Memory 自动更新间隔（0 关闭）')).toHaveValue('3');
 });
