@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitBranch, PanelLeftClose, PanelLeft, Library } from 'lucide-react';
 import { defaultGeneralSettings, defaultPromptSettings, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings } from '@new-ai-chat/contracts';
-import { api, streamTurn } from './api.js';
+import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import Records from './Records.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
@@ -109,8 +109,10 @@ export default function App() {
         return refresh();
       })
       .catch((err) => {
-        setPaired(false);
-        setError(err.message);
+        setPaired(!(err instanceof ApiError && err.status === 401));
+        setError(err instanceof ApiError && err.status === 404
+          ? '页面与服务版本不一致，请按 Ctrl+F5 刷新；若仍失败，请更新后重启。'
+          : err.message);
       });
     return () => streamAbort.current?.abort();
   }, []);

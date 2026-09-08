@@ -17,6 +17,26 @@ test.beforeEach(async ({ page, request }, info) => {
   await page.goto('/');
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
 });
+test('startup distinguishes missing endpoints from required pairing', async ({ page }) => {
+  let status = 404;
+  await page.route('**/api/settings/general', route => status
+    ? route.fulfill({ status, json: { error: status === 401 ? 'Pair this device first.' : 'Not found.' } })
+    : route.continue());
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('页面与服务版本不一致');
+  await expect(page.getByRole('textbox', { name: '配对令牌' })).toHaveCount(0);
+  status = 401;
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '连接空间' })).toBeVisible();
+  await page.route('**/api/pair', route => {
+    status = 0;
+    return route.fulfill({ json: { paired: true } });
+  });
+  await page.getByRole('textbox', { name: '配对令牌' }).fill('browser-test-token');
+  await page.getByRole('button', { name: '配对', exact: true }).click();
+  await expect(page.getByRole('button', { name: '通用设置', exact: true })).toBeVisible();
+});
+
 test('native narrator and user narration', async ({ page }, info) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await send(page, '我推开旧书店的门。', 3);
