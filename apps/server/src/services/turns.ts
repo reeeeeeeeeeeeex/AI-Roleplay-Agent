@@ -9,7 +9,7 @@ import type { InternalPluginHost } from './plugins.js';
 export class TurnService {
   private active = new Map<string, { id: string; controller: AbortController; done: Promise<void> }>();
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime, readonly events: EventBroker,
-    private postprocess: (chat: string, signal: AbortSignal) => Promise<void> = async () => {}, private plugins?: InternalPluginHost) {}
+    private postprocess: (chat: string, signal: AbortSignal, trace?: BaseAgentRequest['trace']) => Promise<void> = async () => {}, private plugins?: InternalPluginHost) {}
   busy(chat: string) { return this.active.has(chat); }
   assertIdle(chat: string) { if (this.busy(chat)) throw Object.assign(new Error('Generation is active. Stop it before editing this conversation.'), { statusCode: 409 }); }
   async idle(chat: string) { await this.active.get(chat)?.done; }
@@ -64,6 +64,7 @@ export class TurnService {
     const latest = [...this.repository.getActiveBranch(chatId)].reverse().find((m) => m.role === 'user');
     const persona = chat.personaId ? this.repository.getPersona(chat.personaId) : null;
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
+      conversationKind: chat.kind, scenario: chat.scenario, streaming: settings.streaming,
       agencyMode: settings.agencyMode, narrator: settings.narrator, characters: source.cast, persona,
       history: source.history, stableLore: source.stableLore(), dynamicContext: await source.dynamic(source.history.slice(-20).map((m) => m.content).join('\n')),
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal,
@@ -75,28 +76,37 @@ export class TurnService {
     let expectedHead = this.repository.getConversation(turn.conversationId)!.headMessageId;
     let wrote = false;
     const emit = (type: string, data: unknown = {}) => this.events.publish(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
+    const emitVolatile = (type: string, data: unknown = {}) => this.events.publishVolatile(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
     const fresh = () => { signal.throwIfAborted(); if (this.repository.getConversation(turn.conversationId)?.headMessageId !== expectedHead) throw new Error('Branch changed; discarded stale generation.'); };
     try {
       this.repository.updateTurn(turn.id, { status: 'running' }); emit('turn.started');
       const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto');
       const chat = this.repository.getConversation(turn.conversationId)!;
       const mode = this.repository.getGeneralSettings().generationMode;
+      let actualMode = mode;
       let plan: TurnPlan | null = forced ? { ...fallbackPlan(turn.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : null;
+      let requestIndex = 0;
       const traceSink = {
-        start: (phase: TracePhase, requestIndex: number, model: string) => {
-          const trace = this.repository.createTrace({ conversationId: turn.conversationId, turnId: turn.id, phase, requestIndex, status: 'running', model, request: null, response: null, tools: [], thinking: null, usage: null, error: null });
-          emit('trace.started', { traceId: trace.id, phase, requestIndex, model }); return trace.id;
+        start: (phase: TracePhase, model: string, speaker?: SpeakerRef) => {
+          const index = requestIndex++;
+          const trace = this.repository.createTrace({ conversationId: turn.conversationId, turnId: turn.id, phase, requestIndex: index, status: 'running', model, speaker: speaker ?? null, request: null, response: null, tools: [], thinking: null, usage: null, timing: { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null }, error: null });
+          emit('trace.started', { traceId: trace.id, phase, requestIndex: index, model, speaker }); return trace.id;
         },
         request: (traceId: string, payload: unknown) => { this.repository.updateTrace(traceId, { request: payload }); emit('trace.request', { traceId }); },
         response: (traceId: string, response: unknown) => { this.repository.updateTrace(traceId, { response }); emit('trace.response', { traceId }); },
         thinking: (traceId: string, text: string) => { this.repository.updateTrace(traceId, { thinking: text }); emit('agent.thinking', { traceId, text }); },
+        timing: (traceId: string, timing: any) => {
+          const current = this.repository.listTraces(turn.id).find((item) => item.id === traceId);
+          if (current?.timing) this.repository.updateTrace(traceId, { timing: { ...current.timing, ...timing } });
+        },
         tool: (traceId: string, name: string, args: unknown, result?: unknown, ok = true) => {
           const current = this.repository.listTraces(turn.id).find((item) => item.id === traceId);
           this.repository.updateTrace(traceId, { tools: [...(current?.tools ?? []), { name, arguments: args, result, ok }] });
           emit('tool.called', { phase: 'writer', traceId, name, args, ok });
         },
         finish: (traceId: string, status: 'completed' | 'failed' | 'cancelled', usage?: any, error?: string) => {
-          this.repository.updateTrace(traceId, { status, usage, error: error ?? null, completedAt: new Date().toISOString() });
+          const knownUsage = usage && [usage.input, usage.output, usage.cacheRead, usage.cacheWrite, usage.totalTokens].some((value: number) => value > 0) ? usage : null;
+          this.repository.updateTrace(traceId, { status, usage: knownUsage, error: error ?? null, completedAt: new Date().toISOString() });
           emit('trace.completed', { traceId, status, usage, error });
         },
       };
@@ -113,7 +123,9 @@ export class TurnService {
         }
       }
       let started = new Set<number>();
-      const startOutput = (speaker: SpeakerRef, outputIndex: number) => { if (started.has(outputIndex)) return; started.add(outputIndex); emit('writer.started', { speaker, outputIndex }); };
+      const live = new Map<number, { speaker: SpeakerRef; text: string; thinking: string }>();
+      const snapshot = () => this.events.setSnapshot(turn.id, { outputs: [...live.entries()].map(([outputIndex, value]) => ({ outputIndex, ...value })) });
+      const startOutput = (speaker: SpeakerRef, outputIndex: number) => { if (started.has(outputIndex)) return; started.add(outputIndex); live.set(outputIndex, { speaker, text: '', thinking: '' }); snapshot(); emit('writer.started', { speaker, outputIndex }); };
       const runWriter = async (writerMode: 'plain' | 'writer-agent', forcedPlan?: TurnPlan) => {
         const writerOptions: Parameters<AgentRuntime['writeTurn']>[1] = {
           mode: writerMode, prefix,
@@ -123,9 +135,9 @@ export class TurnService {
               plan = detail as TurnPlan; startOutput(plan.outputs[0]!.speaker, 0);
             }
           },
-          onDelta: (speaker, outputIndex, delta) => { fresh(); startOutput(speaker, outputIndex); emit('writer.delta', { speaker, outputIndex, delta }); },
+          onDelta: (speaker, outputIndex, delta) => { fresh(); startOutput(speaker, outputIndex); const value = live.get(outputIndex)!; value.text += delta; snapshot(); emitVolatile('writer.delta', { speaker, outputIndex, delta }); },
           onTool: (name, args, outputIndex) => emit('tool.called', { phase: 'writer', outputIndex, name, args }),
-          onThinking: (text, outputIndex) => emit('agent.thinking', { outputIndex, text }),
+          onThinkingDelta: (delta, outputIndex) => { const value = live.get(outputIndex); if (value) { value.thinking += delta; snapshot(); } emitVolatile('thinking.delta', { outputIndex, delta }); },
         };
         if (forcedPlan) writerOptions.forcedPlan = forcedPlan;
         return this.runtime.writeTurn({ ...request, trace: traceSink, signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]) }, writerOptions);
@@ -134,9 +146,10 @@ export class TurnService {
       try {
         generated = await runWriter(mode === 'plain' ? 'plain' : 'writer-agent', plan ?? undefined);
       } catch (error) {
-        if (!forced && mode === 'writer-agent') {
-          fresh(); plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = ['Writer Agent failed; used the current character.']; emit('routing.fallback', { reason: this.repository.redactError(error) });
-          generated = await runWriter('writer-agent', plan);
+        const reason = this.repository.redactError(error);
+        if (!forced && mode === 'writer-agent' && !plan && /select_output_voices|valid selection/iu.test(reason)) {
+          fresh(); plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = ['Writer Agent selection failed; used plain writing with the current character.']; emit('routing.fallback', { reason });
+          actualMode = 'plain'; generated = await runWriter('plain', plan);
         } else throw error;
       }
       const finalPlan = validatePlan(generated.plan, turn.storyTurnId, request.characters);
@@ -149,9 +162,13 @@ export class TurnService {
         this.repository.database.sqlite.transaction(() => {
           const message = this.repository.createMessage({ conversationId: turn.conversationId, parentId: parent, storyTurnId: turn.storyTurnId,
             role: 'assistant', authorKind: output.speaker.kind, speaker: output.speaker, content: outputIndex === 0 ? prefix + result.text : result.text,
-            providerState: outputIndex === 0 && !prefix ? result.providerState : null, legacyPayload: null });
+            providerState: outputIndex === 0 && !prefix ? result.providerState : null,
+            generationInfo: { mode: actualMode, model: request.connection.model, streaming: request.streaming ?? true, thinking: result.thinking || null,
+              usage: [result.usage.input, result.usage.output, result.usage.cacheRead, result.usage.cacheWrite, result.usage.totalTokens].some(value => value > 0) ? result.usage : null,
+              timing: result.timing, requestCount: result.requestCount }, legacyPayload: null });
           parent = expectedHead = message.id; this.repository.setHead(turn.conversationId, message.id);
           emit('message.completed', { message: { ...message, providerState: null }, outputIndex, usage: result.usage });
+          live.delete(outputIndex); snapshot();
         })(); wrote = true;
       }
       fresh();
@@ -161,7 +178,7 @@ export class TurnService {
         emit('story.settled', { head: expectedHead, variant: input.trigger === 'continue' || swipe });
       })();
       if (input.trigger !== 'continue' && !swipe) {
-        try { await this.postprocess(turn.conversationId, signal); } catch { emit('postprocess.failed', { error: 'Memory/state update failed; the same turns remain eligible.' }); }
+        try { await this.postprocess(turn.conversationId, signal, traceSink); } catch { emit('postprocess.failed', { error: 'Memory/state update failed; the same turns remain eligible.' }); }
         await this.plugins?.settled(turn.conversationId);
       }
       fresh(); this.repository.updateTurn(turn.id, { status: 'completed', completedAt: new Date().toISOString() });
@@ -173,6 +190,6 @@ export class TurnService {
       this.repository.updateTurn(turn.id, { status: signal.aborted ? 'cancelled' : 'failed', error: message, completedAt: new Date().toISOString() });
       this.repository.pruneTraces(turn.conversationId, 20);
       emit(signal.aborted ? 'turn.cancelled' : 'turn.failed', { error: message });
-    }
+    } finally { this.events.clearSnapshot(turn.id); }
   }
 }

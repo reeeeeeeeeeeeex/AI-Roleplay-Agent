@@ -13,7 +13,8 @@ export class FakeRuntime implements AgentRuntime {
     request.signal.throwIfAborted();
     const text = request.speaker.kind === 'narrator' ? '窗外的雨渐渐停了。门边留着一封未拆的信，纸面映着微光。' : '“要一起看看吗？”她把信推到桌子中央，等着你的回应。';
     for (const delta of text.match(/.{1,5}/gu) ?? []) { request.signal.throwIfAborted(); onDelta(delta); await new Promise((resolve) => setTimeout(resolve, 10)); }
-    return { text, providerState: null, usage: { input: 10, output: text.length, cacheRead: 0, cacheWrite: 0, totalTokens: 10 + text.length } };
+    const completedAt = new Date().toISOString();
+    return { text, providerState: null, usage: { input: 10, output: text.length, cacheRead: 0, cacheWrite: 0, totalTokens: 10 + text.length }, thinking: '', timing: { preparedAt: completedAt, sentAt: completedAt, headersAt: completedAt, firstThinkingAt: null, firstTextAt: completedAt, completedAt } };
   }
   async writeTurn(request: BaseAgentRequest, options: UnifiedWriterOptions) {
     const plan = options.forcedPlan ?? await this.route({ ...request, plannerEnabled: false });
@@ -21,8 +22,8 @@ export class FakeRuntime implements AgentRuntime {
     let history = request.history;
     for (const [outputIndex, output] of plan.outputs.entries()) {
       const result = await this.write({ ...request, history, speaker: output.speaker, outputIndex, brief: output.brief, signal: request.signal }, (delta) => options.onDelta(output.speaker, outputIndex, delta), (name, args) => options.onTool?.(name, args, outputIndex));
-      results.push({ speaker: output.speaker, ...result });
-      const generated = { id: `fake-${outputIndex}`, conversationId: request.conversationId, parentId: null, storyTurnId: request.storyTurnId, role: 'assistant' as const, authorKind: output.speaker.kind, speaker: output.speaker, content: result.text, providerState: null, legacyPayload: null, createdAt: new Date().toISOString() };
+      results.push({ speaker: output.speaker, ...result, requestCount: 1 });
+      const generated = { id: `fake-${outputIndex}`, conversationId: request.conversationId, parentId: null, storyTurnId: request.storyTurnId, role: 'assistant' as const, authorKind: output.speaker.kind, speaker: output.speaker, content: result.text, providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() };
       history = request.connection.historyMessageLimit ? [generated] : [...history, generated];
     }
     return { plan, results };

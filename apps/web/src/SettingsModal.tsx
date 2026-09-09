@@ -68,6 +68,13 @@ export default function SettingsModal({
                 {connections.map(c => <option key={c.id} value={c.id}>{c.name} · {c.model}</option>)}
               </select>
             </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={generalSettings.streaming} disabled={locked} onChange={e => {
+                const streaming = e.target.checked;
+                void save(() => onSaveGeneral({ ...generalSettings, streaming }), streaming ? '流式传输已开启。' : '流式传输已关闭，回复完成后一次显示。');
+              }} />
+              流式传输
+            </label>
             <p className="muted">适用于所有新旧聊天。温度、输出上限等参数在连接中编辑。</p>
             <button className="primary" onClick={() => onEditConnection()}><Plus size={14} />创建模型连接</button>
             <div className="resource-list">

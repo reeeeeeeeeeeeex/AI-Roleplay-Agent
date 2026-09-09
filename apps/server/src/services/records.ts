@@ -16,16 +16,16 @@ export class RecordService {
   private pending = new Set<string>();
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime,
     private request: (chat: string, turn: string, signal: AbortSignal) => Promise<BaseAgentRequest>) {}
-  async automatic(chat: string, signal: AbortSignal) {
+  async automatic(chat: string, signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
     const config = this.repository.getGeneralSettings();
     const completed = settledStoryIds(this.repository, chat);
     const memory = this.repository.listMemories(chat, 1)[0];
     const state = this.repository.latestState(chat);
     const since = (marker: string | null | undefined) => marker ? completed.length - (completed.indexOf(marker) + 1) : completed.length;
-    if (config.memoryTurnInterval > 0 && since(memory?.storyTurnId) >= config.memoryTurnInterval) await this.generate(chat, 'memory', signal);
-    if (config.stateTurnInterval > 0 && since(state?.storyTurnId) >= config.stateTurnInterval) await this.generate(chat, 'state', signal);
+    if (config.memoryTurnInterval > 0 && since(memory?.storyTurnId) >= config.memoryTurnInterval) await this.generate(chat, 'memory', signal, trace);
+    if (config.stateTurnInterval > 0 && since(state?.storyTurnId) >= config.stateTurnInterval) await this.generate(chat, 'state', signal, trace);
   }
-  async generate(chat: string, kind: 'memory' | 'state', signal: AbortSignal) {
+  async generate(chat: string, kind: 'memory' | 'state', signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
     if (this.pending.has(chat)) throw new Error('A record update is already running.');
     this.pending.add(chat);
     try {
@@ -34,6 +34,7 @@ export class RecordService {
       const beforeMemory = this.repository.listMemories(chat, 1)[0];
       const storyTurnId = settledStoryIds(this.repository, chat).at(-1) ?? null;
       const request = await this.request(chat, storyTurnId ?? 'manual', AbortSignal.any([signal, AbortSignal.timeout(120_000)]));
+      if (trace) request.trace = trace;
       const instruction = kind === 'memory'
         ? 'Return only a JSON object with timeSpan, location, chronicle (objective chronology, target 400 Chinese characters), dialogue (up to 3 strings), overview (at most 40 characters). Append a new stage, preserve earlier memory, and avoid repeating details already summarized. No AM codes. Do not invent events.'
         : `Return only a JSON array of state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Never use SQL. Fields: ${JSON.stringify(stateColumns)}. global_state/protagonist_info/options are update-only row 1. Do not delete important_characters. Maintain current facts and compact long-term conclusions; chronology belongs in Memory. Required insert identities: name+gender_age, skill_name+skill_type, item_name+quantity+category, quest_name+quest_type. Inventory quantity is a positive integer; is_absent is 是 or 否. Empty array if no evidenced change.`;

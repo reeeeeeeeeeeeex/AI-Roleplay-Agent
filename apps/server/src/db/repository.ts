@@ -73,6 +73,7 @@ function mapMessage(row: MessageRow): MessageNode {
     speaker: row.speaker,
     content: row.content,
     providerState: row.providerState,
+    generationInfo: row.generationInfo,
     legacyPayload: row.legacyPayload,
     createdAt: row.createdAt,
   };
@@ -288,8 +289,8 @@ export class Repository {
     while (current) { if (visited.has(current.id)) throw new Error('Cycle in message branch.'); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }
     return branch.reverse();
   }
-  createMessage(input: Omit<MessageNode, 'id' | 'createdAt'>): MessageNode {
-    const row = { ...input, id: id(), createdAt: now() };
+  createMessage(input: Omit<MessageNode, 'id' | 'createdAt' | 'generationInfo'> & { generationInfo?: MessageNode['generationInfo'] }): MessageNode {
+    const row = { ...input, generationInfo: input.generationInfo ?? null, id: id(), createdAt: now() };
     this.database.db.insert(messages).values(row).run(); return this.getMessage(row.id)!;
   }
   setHead(conversationId: string, messageId: string | null): void {
@@ -339,14 +340,15 @@ export class Repository {
     const row = {
       id: id(), conversationId: input.conversationId, turnId: input.turnId, phase: input.phase,
       requestIndex: input.requestIndex, status: input.status, model: input.model,
+      speaker: input.speaker,
       request: this.traceSafe(input.request), response: this.traceSafe(input.response),
       tools: this.traceSafe(input.tools) as unknown[], thinking: input.thinking,
-      usage: input.usage, error: input.error, createdAt: now(), completedAt: null,
+      usage: input.usage, timing: input.timing, error: input.error, createdAt: now(), completedAt: null,
     };
     this.database.db.insert(turnTraces).values(row).run();
     return row as TurnTrace;
   }
-  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'thinking' | 'usage' | 'error' | 'completedAt'>>): TurnTrace | null {
+  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'thinking' | 'usage' | 'timing' | 'error' | 'completedAt'>>): TurnTrace | null {
     const patch = { ...values, request: values.request === undefined ? undefined : this.traceSafe(values.request), response: values.response === undefined ? undefined : this.traceSafe(values.response), tools: values.tools === undefined ? undefined : this.traceSafe(values.tools) as unknown[] };
     this.database.db.update(turnTraces).set(patch).where(eq(turnTraces.id, traceId)).run();
     const row = this.database.db.select().from(turnTraces).where(eq(turnTraces.id, traceId)).get();

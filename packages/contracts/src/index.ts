@@ -234,7 +234,8 @@ export const narratorProfileSchema = z.object({
 
 export const generalSettingsSchema = z.object({
   connectionId: z.string().min(1).nullable().default(null),
-  generationMode: generationModeSchema.default('writer-agent'),
+  generationMode: generationModeSchema.default('plain'),
+  streaming: z.boolean().default(true),
   agencyMode: protagonistAgencyModeSchema.default('protected'),
   narrator: narratorProfileSchema.default({ name: '旁白', avatarPath: null, style: '克制、具象、重视场景连续性，不替角色解释未表达的内心。' }),
   memoryTurnInterval: z.number().int().min(0).max(10_000).default(10),
@@ -284,8 +285,37 @@ export interface MessageNode {
   speaker: SpeakerRef | null;
   content: string;
   providerState: unknown;
+  generationInfo?: GenerationInfo | null;
   legacyPayload: unknown;
   createdAt: string;
+}
+
+export interface AgentUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  reasoning?: number;
+}
+
+export interface RequestTiming {
+  preparedAt: string;
+  sentAt: string | null;
+  headersAt: string | null;
+  firstThinkingAt: string | null;
+  firstTextAt: string | null;
+  completedAt: string | null;
+}
+
+export interface GenerationInfo {
+  mode: GenerationMode;
+  model: string;
+  streaming: boolean;
+  thinking: string | null;
+  usage: AgentUsage | null;
+  timing: RequestTiming | null;
+  requestCount: number;
 }
 
 export interface SessionEvent<T = unknown> {
@@ -305,11 +335,13 @@ export interface TurnTrace {
   requestIndex: number;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   model: string;
+  speaker: SpeakerRef | null;
   request: unknown | null;
   response: unknown | null;
   tools: Array<{ name: string; arguments: unknown; result?: unknown; ok?: boolean }>;
   thinking: string | null;
-  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number } | null;
+  usage: AgentUsage | null;
+  timing: RequestTiming | null;
   error: string | null;
   createdAt: string;
   completedAt: string | null;

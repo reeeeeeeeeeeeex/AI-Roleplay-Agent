@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   parent_id TEXT, story_turn_id TEXT, role TEXT NOT NULL, author_kind TEXT NOT NULL,
-  speaker TEXT, content TEXT NOT NULL, provider_state TEXT, legacy_payload TEXT, created_at TEXT NOT NULL
+  speaker TEXT, content TEXT NOT NULL, provider_state TEXT, generation_info TEXT, legacy_payload TEXT, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_conversation_created_idx ON messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS messages_parent_idx ON messages(parent_id);
@@ -74,8 +74,8 @@ CREATE INDEX IF NOT EXISTS session_events_turn_idx ON session_events(turn_id, id
 CREATE TABLE IF NOT EXISTS turn_traces (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   turn_id TEXT NOT NULL, phase TEXT NOT NULL, request_index INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL DEFAULT '', request TEXT,
-  response TEXT, tools TEXT NOT NULL DEFAULT '[]', thinking TEXT, usage TEXT, error TEXT,
+  status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL DEFAULT '', speaker TEXT, request TEXT,
+  response TEXT, tools TEXT NOT NULL DEFAULT '[]', thinking TEXT, usage TEXT, timing TEXT, error TEXT,
   created_at TEXT NOT NULL, completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS turn_traces_turn_idx ON turn_traces(turn_id, request_index);
@@ -109,6 +109,9 @@ export function migrateDatabase(database: Database.Database): void {
     ['personas', 'legacy_payload', 'TEXT'],
     ['lorebooks', 'legacy_payload', 'TEXT'],
     ['proposals', 'origin_head', 'TEXT'],
+    ['messages', 'generation_info', 'TEXT'],
+    ['turn_traces', 'speaker', 'TEXT'],
+    ['turn_traces', 'timing', 'TEXT'],
   ]) {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some((item) => item.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -116,8 +119,8 @@ export function migrateDatabase(database: Database.Database): void {
   database.exec(`CREATE TABLE IF NOT EXISTS turn_traces (
     id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     turn_id TEXT NOT NULL, phase TEXT NOT NULL, request_index INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL DEFAULT '', request TEXT,
-    response TEXT, tools TEXT NOT NULL DEFAULT '[]', thinking TEXT, usage TEXT, error TEXT,
+    status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL DEFAULT '', speaker TEXT, request TEXT,
+    response TEXT, tools TEXT NOT NULL DEFAULT '[]', thinking TEXT, usage TEXT, timing TEXT, error TEXT,
     created_at TEXT NOT NULL, completed_at TEXT
   ); CREATE INDEX IF NOT EXISTS turn_traces_turn_idx ON turn_traces(turn_id, request_index);`);
 }

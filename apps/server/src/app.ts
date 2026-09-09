@@ -27,7 +27,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
   configurePlugins?.(plugins);
   const pluginHost = new InternalPluginHost(plugins, repository);
   let records: RecordService;
-  const turns = new TurnService(repository,gateway,events,async (chat,signal) => records.automatic(chat,signal),pluginHost);
+  const turns = new TurnService(repository,gateway,events,async (chat,signal,trace) => records.automatic(chat,signal,trace),pluginHost);
   records = new RecordService(repository,gateway,(chat,turn,signal) => turns.request(chat,turn,signal));
   app.addHook('onRequest',async (req,reply) => {
     const host = req.headers.host ?? '';
@@ -66,10 +66,11 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     if (!Number.isSafeInteger(after)||after<0) throw new Error('Invalid event cursor.');
     reply.hijack(); reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
     const terminal=(type:string)=>['turn.completed','turn.failed','turn.cancelled'].includes(type);
-    const send=(event:ReturnType<Repository['addEvent']>)=>{ if (!reply.raw.destroyed) reply.raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`); };
+    const send=(event:ReturnType<Repository['addEvent']>)=>{ if (!reply.raw.destroyed) reply.raw.write(`${event.id > 0 ? `id: ${event.id}\n` : ''}data: ${JSON.stringify(event)}\n\n`); };
     const prior=repository.eventsForTurn(id,after); for(const event of prior) send(event);
     const all=repository.eventsForTurn(id); if (all.some((event)=>terminal(event.type))) {reply.raw.end();return;}
     const unsubscribe=events.subscribe(id,(event)=>{ send(event); if(terminal(event.type))reply.raw.end(); });
+    const snapshot=events.snapshot(id); if(snapshot) send({id:0,conversationId:repository.getTurn(id)!.conversationId,turnId:id,type:'writer.snapshot',payload:snapshot,createdAt:new Date().toISOString()});
     const heartbeat=setInterval(()=>{ if(!reply.raw.destroyed)reply.raw.write(': heartbeat\n\n'); },15_000);
     reply.raw.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
   });

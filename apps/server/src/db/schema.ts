@@ -1,5 +1,7 @@
 import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type {
+  GenerationInfo,
+  RequestTiming,
   ProtagonistTables,
   SpeakerRef,
   TurnPlan,
@@ -106,6 +108,7 @@ export const messages = sqliteTable('messages', {
   speaker: text('speaker', { mode: 'json' }).$type<SpeakerRef | null>(),
   content: text('content').notNull(),
   providerState: text('provider_state', { mode: 'json' }).$type<unknown>(),
+  generationInfo: text('generation_info', { mode: 'json' }).$type<GenerationInfo | null>(),
   legacyPayload: text('legacy_payload', { mode: 'json' }).$type<unknown>(),
   createdAt: text('created_at').notNull(),
 }, (table) => [
@@ -141,11 +144,13 @@ export const turnTraces = sqliteTable('turn_traces', {
   requestIndex: integer('request_index').notNull(),
   status: text('status').notNull().default('running'),
   model: text('model').notNull().default(''),
+  speaker: text('speaker', { mode: 'json' }).$type<SpeakerRef | null>(),
   request: text('request', { mode: 'json' }).$type<unknown>(),
   response: text('response', { mode: 'json' }).$type<unknown>(),
   tools: text('tools', { mode: 'json' }).$type<unknown[]>().notNull().default([]),
   thinking: text('thinking'),
   usage: text('usage', { mode: 'json' }).$type<unknown>(),
+  timing: text('timing', { mode: 'json' }).$type<RequestTiming | null>(),
   error: text('error'),
   createdAt: text('created_at').notNull(),
   completedAt: text('completed_at'),

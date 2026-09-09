@@ -21,7 +21,7 @@ export async function streamTurn(id:string,onEvent:(event:any)=>void,signal:Abor
           while((boundary=buffer.indexOf('\n\n'))>=0) {
             const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);
             const data=block.split('\n').filter((line)=>line.startsWith('data:')).map((line)=>line.slice(5).trimStart()).join('\n');
-            if(!data)continue;const event=JSON.parse(data);if(event.id<=after)continue;after=event.id;onEvent(event);
+            if(!data)continue;const event=JSON.parse(data);if(event.id>0&&event.id<=after)continue;if(event.id>0)after=event.id;onEvent(event);
             if(['turn.completed','turn.failed','turn.cancelled'].includes(event.type))return;
           }
         }
