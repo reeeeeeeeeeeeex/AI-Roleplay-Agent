@@ -80,7 +80,7 @@ export class TurnService {
     const fresh = () => { signal.throwIfAborted(); if (this.repository.getConversation(turn.conversationId)?.headMessageId !== expectedHead) throw new Error('Branch changed; discarded stale generation.'); };
     try {
       this.repository.updateTurn(turn.id, { status: 'running' }); emit('turn.started');
-      const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto');
+      const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto' || input.trigger === 'continue');
       const chat = this.repository.getConversation(turn.conversationId)!;
       const mode = this.repository.getGeneralSettings().generationMode;
       let actualMode = mode;

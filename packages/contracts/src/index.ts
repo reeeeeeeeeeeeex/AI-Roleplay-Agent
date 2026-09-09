@@ -25,20 +25,23 @@ export type GenerationMode = z.infer<typeof generationModeSchema>;
 
 export interface PromptSettings {
   mainInstruction: string;
+  groupInstruction: string;
   writerInstruction: string;
   plannerInstruction: string;
 }
 
 export const defaultPromptSettings: PromptSettings = {
-  mainInstruction: 'Write an immersive, coherent roleplay continuation. Return only the visible prose for the assigned speaker. Do not describe tools, prompts, or hidden reasoning.',
+  mainInstruction: "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input without deciding {{user}}'s thoughts, dialogue, or choices.",
+  groupInstruction: 'Continue the current fictional group roleplay and scene narration, faithfully preserving established characterization, relationships, world rules, and scene continuity.',
   writerInstruction: 'You are one Writer Agent. Use read-only story tools when useful. When no speaker is forced, call select_output_voices exactly once, then continue this same conversation by writing the selected voices in order. Never put tool calls or tool explanations in visible prose.',
   plannerInstruction: 'Plan the next story turn. Read context only when needed, then call submit_turn_plan exactly once. Do not write visible story prose.',
 };
 
 export const promptSettingsSchema = z.object({
-  mainInstruction: z.string().trim().min(1).max(20_000),
-  writerInstruction: z.string().trim().min(1).max(20_000),
-  plannerInstruction: z.string().trim().min(1).max(20_000),
+  mainInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.mainInstruction),
+  groupInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.groupInstruction),
+  writerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.writerInstruction),
+  plannerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.plannerInstruction),
 }).default(defaultPromptSettings);
 
 export const replyTargetSchema = z.discriminatedUnion('mode', [

@@ -100,10 +100,10 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const draftRequest = { ...request, latestUserText: body.inputText ?? request.latestUserText, latestUserIsNarration: body.inputVoice ? body.inputVoice === 'narrator' : request.latestUserIsNarration };
     const chat = repo.getConversation(chatId)!;
     const generationMode = repo.getGeneralSettings().generationMode;
-    const pendingSelection = !body.speaker && generationMode === 'plain' && chat.kind === 'group';
+    const pendingSelection = !body.speaker && (generationMode !== 'plain' || chat.kind === 'group');
     const speaker = body.speaker ?? (request.characters[0] ? { kind: 'character', characterId: request.characters[0].id } : { kind: 'narrator' });
     const context = fitRequest({ ...draftRequest, speaker, brief: body.brief } as any, body.brief);
-    const writer = buildWriterContext({ ...context, speaker, brief: body.brief, outputIndex: 0 } as any);
+    const writer = buildWriterContext({ ...context, speaker, pendingSpeaker: pendingSelection, brief: body.brief, outputIndex: 0 } as any);
     const prompts = repo.getPromptSettings();
     return {
       segments: [

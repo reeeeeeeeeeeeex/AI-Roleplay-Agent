@@ -99,6 +99,7 @@ export interface RouteRequest extends BaseAgentRequest {
 
 export interface WriterRequest extends BaseAgentRequest {
   speaker: SpeakerRef;
+  pendingSpeaker?: boolean;
   brief: string;
   outputIndex: number;
 }

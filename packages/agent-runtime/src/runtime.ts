@@ -275,7 +275,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const requestCounts = [0, 0];
     const initialSpeaker = selected?.outputs[0]?.speaker ?? fallbackSpeaker;
     const initialBrief = selected?.outputs[0]?.brief ?? options.prefix ?? 'Choose the appropriate output voice before writing.';
-    const context = buildWriterContext({ ...request, speaker: initialSpeaker, brief: initialBrief, outputIndex });
+    const context = buildWriterContext({ ...request, speaker: initialSpeaker, pendingSpeaker: !selected, brief: initialBrief, outputIndex });
     const tools = [...domainTools(request.source, request.toolOverrides), selectionTool(request, (plan) => { selected = plan; options.onPhase?.('writing', plan); })];
     const phase = () => options.mode === 'writer-agent' && !selected ? 'selection' : options.mode === 'plain' ? 'plain' : 'writing';
     const agent = new Agent({

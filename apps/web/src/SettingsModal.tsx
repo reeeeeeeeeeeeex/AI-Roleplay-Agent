@@ -122,6 +122,7 @@ export default function SettingsModal({
             e.preventDefault(); void save(() => onSavePrompts(prompts), '提示词已保存。');
           }}>
             <label>写作主指令<textarea required rows={6} value={prompts.mainInstruction} onChange={e => setPrompts({ ...prompts, mainInstruction: e.target.value })} /></label>
+            <label>群聊主指令<textarea required rows={5} value={prompts.groupInstruction} onChange={e => setPrompts({ ...prompts, groupInstruction: e.target.value })} /></label>
             <label>Writer Agent 行为指令<textarea required rows={7} value={prompts.writerInstruction} onChange={e => setPrompts({ ...prompts, writerInstruction: e.target.value })} /></label>
             <label>Planner 指令<textarea required rows={6} value={prompts.plannerInstruction} onChange={e => setPrompts({ ...prompts, plannerInstruction: e.target.value })} /></label>
             <div className="resource-actions">
