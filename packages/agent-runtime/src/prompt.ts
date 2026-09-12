@@ -153,15 +153,29 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
 }
 
 export function buildWriterContext(input: WriterRequest): { systemPrompt: string; messages: Message[] } {
-  const request = fitRequest(input, input.brief);
+  const isPlain = input.mode === 'plain';
+  const effectiveBrief = isPlain ? '' : input.brief;
+  const request = fitRequest(input, effectiveBrief);
   const messages = buildHistoryMessages(request);
   for (const item of [...request.dynamicContext].sort((left, right) => right.priority - left.priority)) {
     const content = dynamicSection(item, request);
     if (content) messages.push(syntheticContext(content));
   }
+  const briefSection = !isPlain ? section('Writer Brief', effectiveBrief) : '';
+  const currentSpeakerSection = isPlain && !input.forcedSpeaker
+    ? ''
+    : section('Current Speaker', request.pendingSpeaker ? 'Pending selection' : speakerName(request.speaker, request.characters, request.narrator.name));
+
+  const content = [
+    ...postHistorySections(request),
+    briefSection,
+    section(request.latestUserIsNarration ? 'User Narration' : 'Latest User Input', request.latestUserText),
+    currentSpeakerSection,
+  ].filter(Boolean).join('\n\n');
+
   messages.push({
     role: 'user',
-    content: [...postHistorySections(request), section('Writer Brief', request.brief), section(request.latestUserIsNarration ? 'User Narration' : 'Latest User Input', request.latestUserText), section('Current Speaker', request.pendingSpeaker ? 'Pending selection' : speakerName(request.speaker, request.characters, request.narrator.name))].filter(Boolean).join('\n\n'),
+    content: content || (request.latestUserText?.trim() ? request.latestUserText.trim() : '请继续推进剧情。'),
     timestamp: Date.now(),
   });
   return { systemPrompt: buildStableSystemPrompt(request), messages };

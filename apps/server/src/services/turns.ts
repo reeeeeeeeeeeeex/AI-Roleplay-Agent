@@ -128,7 +128,7 @@ export class TurnService {
       const startOutput = (speaker: SpeakerRef, outputIndex: number) => { if (started.has(outputIndex)) return; started.add(outputIndex); live.set(outputIndex, { speaker, text: '', thinking: '' }); snapshot(); emit('writer.started', { speaker, outputIndex }); };
       const runWriter = async (writerMode: 'plain' | 'writer-agent', forcedPlan?: TurnPlan) => {
         const writerOptions: Parameters<AgentRuntime['writeTurn']>[1] = {
-          mode: writerMode, prefix,
+          mode: writerMode, prefix, forcedSpeaker: Boolean(forced),
           onPhase: (phase, detail) => {
             emit('agent.phase', { phase, detail });
             if (phase === 'writing' && detail && typeof detail === 'object' && 'outputs' in detail) {

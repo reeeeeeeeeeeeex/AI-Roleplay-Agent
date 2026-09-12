@@ -208,7 +208,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const results: AgentTurnResult['results'] = [];
     let history = request.history;
     for (const [outputIndex, output] of plan.outputs.entries()) {
-      const context = buildWriterContext({ ...request, history, speaker: output.speaker, brief: '', outputIndex });
+      const context = buildWriterContext({ ...request, history, speaker: output.speaker, brief: '', outputIndex, mode: 'plain', forcedSpeaker: Boolean(options.forcedSpeaker) });
       const timing: RequestTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
       const traceId = request.trace?.start('plain', request.connection.model, output.speaker) ?? null;
       let final: AssistantMessage | null = null;
@@ -276,7 +276,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const requestCounts = [0, 0];
     const initialSpeaker = selected?.outputs[0]?.speaker ?? fallbackSpeaker;
     const initialBrief = selected?.outputs[0]?.brief ?? options.prefix ?? 'Choose the appropriate output voice before writing.';
-    const context = buildWriterContext({ ...request, speaker: initialSpeaker, pendingSpeaker: !selected, brief: initialBrief, outputIndex });
+    const context = buildWriterContext({ ...request, speaker: initialSpeaker, pendingSpeaker: !selected, brief: initialBrief, outputIndex, mode: options.mode, forcedSpeaker: Boolean(options.forcedSpeaker) });
     const tools = [...domainTools(request.source, request.toolOverrides), selectionTool(request, (plan) => { selected = plan; options.onPhase?.('writing', plan); })];
     const phase = () => options.mode === 'writer-agent' && !selected ? 'selection' : options.mode === 'plain' ? 'plain' : 'writing';
     const agent = new Agent({

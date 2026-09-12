@@ -36,4 +36,52 @@ describe('ReST prompt assembly', () => {
     expect(final.indexOf('[Post-History]')).toBeLessThan(final.indexOf('[Latest User Input]'));
     expect(final.indexOf('[Latest User Input]')).toBeLessThan(final.indexOf('[Current Speaker]'));
   });
+
+  it('omits writer brief and automatic speaker in plain mode, and formats memory and state with guidance', () => {
+    const history: MessageNode[] = [{ id: 'u', conversationId: 'chat', parentId: null, storyTurnId: 's', role: 'user', authorKind: 'protagonist', speaker: null, content: 'history', providerState: null, legacyPayload: null, createdAt: new Date().toISOString() }];
+    const plain = buildWriterContext({
+      ...base,
+      history,
+      dynamicContext: [
+        { source: 'state', title: 'Protagonist State', content: 'HP: 100', priority: 3 },
+        { source: 'memory', title: 'Chapter 1', content: 'old events', priority: 2 },
+      ],
+      speaker: { kind: 'character', characterId: 'a' },
+      outputIndex: 0,
+      brief: '待选择回复身份',
+      pendingSpeaker: false,
+      mode: 'plain',
+      forcedSpeaker: false,
+    });
+
+    const textOf = (msg: any) => typeof msg?.content === 'string' ? msg.content : (msg?.content ?? []).map((p: any) => p.text ?? '').join('');
+
+    const stateMsg = textOf(plain.messages[1]);
+    expect(stateMsg).toContain('[Protagonist State]\n以下是主角在当前剧情分支中已记录的状态事实');
+    expect(stateMsg).toContain('HP: 100');
+
+    const memoryMsg = textOf(plain.messages[2]);
+    expect(memoryMsg).toContain('[Memory: Chapter 1]\n以下是此前剧情的长期记忆');
+    expect(memoryMsg).toContain('old events');
+
+    const finalPlain = textOf(plain.messages.at(-1));
+    expect(finalPlain).toContain('[Latest User Input]\n我推开门。');
+    expect(finalPlain).not.toContain('[Writer Brief]');
+    expect(finalPlain).not.toContain('[Current Speaker]');
+
+    const forced = buildWriterContext({
+      ...base,
+      history,
+      speaker: { kind: 'character', characterId: 'a' },
+      outputIndex: 0,
+      brief: '',
+      pendingSpeaker: false,
+      mode: 'plain',
+      forcedSpeaker: true,
+    });
+    const forcedFinal = String(forced.messages.at(-1)?.content);
+    expect(forcedFinal).toContain('[Current Speaker]\nA');
+    expect(forcedFinal).not.toContain('[Writer Brief]');
+  });
 });
+
