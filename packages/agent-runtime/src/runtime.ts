@@ -208,7 +208,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const results: AgentTurnResult['results'] = [];
     let history = request.history;
     for (const [outputIndex, output] of plan.outputs.entries()) {
-      const context = buildWriterContext({ ...request, history, speaker: output.speaker, brief: options.prefix ?? output.brief, outputIndex });
+      const context = buildWriterContext({ ...request, history, speaker: output.speaker, brief: '', outputIndex });
       const timing: RequestTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
       const traceId = request.trace?.start('plain', request.connection.model, output.speaker) ?? null;
       let final: AssistantMessage | null = null;

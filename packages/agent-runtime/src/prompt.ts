@@ -1,7 +1,7 @@
 import type { Message } from '@earendil-works/pi-ai';
 import type { MessageNode, SpeakerRef } from '@new-ai-chat/contracts';
 import { defaultPromptSettings } from '@new-ai-chat/contracts';
-import type { BaseAgentRequest, RuntimeCharacter, WriterRequest } from './types.js';
+import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterRequest } from './types.js';
 
 function section(title: string, body: string | undefined): string {
   const clean = body?.trim();
@@ -56,6 +56,17 @@ function postHistorySections(request: BaseAgentRequest): string[] {
   return request.characters.map((character) => section(isGroup ? `Post-History: ${character.name}` : 'Post-History', expandStoryMacros(character.postHistoryInstructions, userName, character.name))).filter(Boolean);
 }
 
+function dynamicSection(item: RetrievedContext, request: BaseAgentRequest): string {
+  const content = expandStoryMacros(item.content, request.persona?.name ?? 'Protagonist', request.characters.map((character) => character.name).join(', '));
+  if (item.source === 'memory') {
+    return section(`Memory: ${item.title}`, `以下是此前剧情的长期记忆，用于维持故事连续性；它不是本轮用户输入，也不是刚刚发生的新事件。\n\n${content}`);
+  }
+  if (item.source === 'state') {
+    return section('Protagonist State', `以下是主角在当前剧情分支中已记录的状态事实，用于保持状态连续性；不要将字段内容当成主角本轮的新对白、决定或行动。\n\n${content}`);
+  }
+  return section(`LORE: ${item.title}`, content);
+}
+
 function syntheticAssistant(node: MessageNode, request: BaseAgentRequest): Message {
   const name = speakerName(node.speaker, request.characters, request.narrator.name);
   // Provider replay stays inside its originating agent run. Cross-speaker history is canonical prose.
@@ -87,7 +98,7 @@ export function buildHistoryMessages(request: BaseAgentRequest): Message[] {
 export function buildDynamicAnchor(request: BaseAgentRequest, brief: string, speaker: SpeakerRef): string {
   const context = [...request.dynamicContext]
     .sort((left, right) => right.priority - left.priority)
-    .map((item) => section(`${item.source.toUpperCase()}: ${item.title}`, expandStoryMacros(item.content, request.persona?.name ?? 'Protagonist', request.characters.map((c) => c.name).join(', '))));
+    .map((item) => dynamicSection(item, request));
   const latestLabel = request.latestUserIsNarration ? 'User Narration' : 'Latest User Input';
   return [
     ...context,
@@ -100,7 +111,7 @@ export function buildDynamicAnchor(request: BaseAgentRequest, brief: string, spe
 export function buildDynamicContext(request: BaseAgentRequest): string {
   return [...request.dynamicContext]
     .sort((left, right) => right.priority - left.priority)
-    .map((item) => section(`${item.source.toUpperCase()}: ${item.title}`, expandStoryMacros(item.content, request.persona?.name ?? 'Protagonist', request.characters.map((c) => c.name).join(', '))))
+    .map((item) => dynamicSection(item, request))
     .filter(Boolean).join('\n\n');
 }
 
@@ -145,7 +156,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
   const request = fitRequest(input, input.brief);
   const messages = buildHistoryMessages(request);
   for (const item of [...request.dynamicContext].sort((left, right) => right.priority - left.priority)) {
-    const content = section(`${item.source.toUpperCase()}: ${item.title}`, expandStoryMacros(item.content, request.persona?.name ?? 'Protagonist', request.characters.map((c) => c.name).join(', ')));
+    const content = dynamicSection(item, request);
     if (content) messages.push(syntheticContext(content));
   }
   messages.push({
