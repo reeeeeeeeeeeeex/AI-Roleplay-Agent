@@ -1,4 +1,7 @@
 import type { FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, groupInputSchema, lorebookInputSchema, personaInputSchema, normalizeState, applyStateOperations, blankState, turnRequestSchema, promptSettingsSchema, speakerRefSchema } from '@new-ai-chat/contracts';
 import type { Repository } from './db/repository.js';
@@ -176,4 +179,19 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.get('/api/imports', async () => repo.listImports());
   app.post('/api/imports/preview', async (req) => { const input=z.object({ sourcePath:z.string().default(config.defaultImportPath) }).parse(req.body); return (await scanImport(input.sourcePath)).preview; });
   app.post('/api/imports/execute', async (req) => { idleAll(); const input=z.object({ sourcePath:z.string(), sourceHash:z.string().length(64) }).parse(req.body); return executeImport(repo,input.sourcePath,input.sourceHash,config.assetDir); });
+  app.post('/api/assets/upload', async (req, reply) => {
+    const { dataUrl } = z.object({
+      filename: z.string().min(1).max(255).optional(),
+      dataUrl: z.string().min(1).max(25_000_000),
+    }).parse(req.body);
+    const match = /^data:image\/(png|jpe?g|webp);base64,(.+)$/u.exec(dataUrl);
+    if (!match) return reply.code(400).send({ error: '仅支持 PNG、JPEG 或 WebP 格式的图片。' });
+    const ext = match[1] === 'jpeg' ? 'jpg' : match[1]!;
+    const buffer = Buffer.from(match[2]!, 'base64');
+    const hash = createHash('sha256').update(buffer).digest('hex');
+    const targetName = `${hash}.${ext}`;
+    await mkdir(config.assetDir, { recursive: true });
+    await writeFile(join(config.assetDir, targetName), buffer);
+    return { url: `/api/assets/${targetName}` };
+  });
 }

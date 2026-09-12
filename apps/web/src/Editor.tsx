@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import AvatarField from './AvatarField';
 
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
@@ -13,8 +14,8 @@ export const titles: Record<Collection, string> = {
 };
 
 export const defaults: Record<Collection, any> = {
-  characters: { name: '', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogue: '', systemPrompt: '', postHistoryInstructions: '' },
-  personas: { name: '', description: '' },
+  characters: { name: '', avatarPath: null, description: '', personality: '', scenario: '', firstMessage: '', exampleDialogue: '', systemPrompt: '', postHistoryInstructions: '' },
+  personas: { name: '', avatarPath: null, description: '' },
   connections: {
     name: '',
     protocol: 'openai-chat-completions',
@@ -192,6 +193,15 @@ export default function Editor({
             </>
           ) : (
             field('name', '名称')
+          )}
+
+          {(kind === 'characters' || kind === 'personas') && (
+            <AvatarField
+              label={kind === 'characters' ? '角色头像' : '主角头像'}
+              value={value.avatarPath}
+              disabled={busy}
+              onChange={(url) => set('avatarPath', url)}
+            />
           )}
 
           {(kind === 'characters' || kind === 'personas' || kind === 'lorebooks') && field('description', '描述', true)}

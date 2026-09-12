@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Plus } from 'lucide-react';
 import { defaultPromptSettings, type GeneralSettings, type PromptSettings } from '@new-ai-chat/contracts';
+import AvatarField from './AvatarField';
 
 export type AvatarMode = 'compact' | 'large' | 'full';
 export type AvatarFit = 'cover' | 'contain';
@@ -109,7 +110,12 @@ export default function SettingsModal({
             </label>
             <label>旁白名称<input required maxLength={100} value={writing.narrator.name} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, name: e.target.value } })} /></label>
             <label>旁白风格<textarea rows={3} value={writing.narrator.style} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, style: e.target.value } })} /></label>
-            <label>旁白头像（本地资产地址）<input value={writing.narrator.avatarPath ?? ''} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, avatarPath: e.target.value || null } })} /></label>
+            <AvatarField
+              label="旁白头像"
+              value={writing.narrator.avatarPath}
+              disabled={locked}
+              onChange={(url) => setWriting({ ...writing, narrator: { ...writing.narrator, avatarPath: url } })}
+            />
             <div className="two-col">
               <label>Memory 自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.memoryTurnInterval} onChange={e => setWriting({ ...writing, memoryTurnInterval: Number(e.target.value) })} /></label>
               <label>状态自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.stateTurnInterval} onChange={e => setWriting({ ...writing, stateTurnInterval: Number(e.target.value) })} /></label>
