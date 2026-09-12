@@ -628,7 +628,10 @@ export default function App() {
                         title={v.avatarPath ? '点击查看高清原图' : undefined}
                       >
                         {v.avatarPath ? (
-                          <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
+                          <>
+                            <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
+                            <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
+                          </>
                         ) : (
                           <div className="character-card-placeholder">
                             {v.name?.slice(0, 1) || '卡'}

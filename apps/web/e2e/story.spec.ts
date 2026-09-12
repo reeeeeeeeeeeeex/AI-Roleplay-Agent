@@ -12,7 +12,7 @@ async function send(page: Page, text: string, count: number) {
 test.beforeEach(async ({ page, request }, info) => {
   const characters = await (await request.get('/api/characters')).json();
   const connections = await (await request.get('/api/connections')).json();
-  await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, connectionId: connections[0].id } });
+  await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, connectionId: connections[0].id, generationMode: 'writer-agent' } });
   const chat = await (await request.post('/api/conversations', { data: { title: `Browser ${info.title}`, kind: 'solo', characterId: characters.find((c: any) => c.name === 'Sina').id } })).json();
   await page.goto('/');
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
