@@ -25,6 +25,13 @@ const apiNames = {
   'openai-responses': 'openai-responses',
 } as const;
 
+let rawRequestSequence = 0;
+
+function logRaw(direction: 'Input' | 'Output', sequence: number, value: unknown): void {
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  process.stdout.write(`\n[AI Raw ${direction} #${sequence}]\n${text ?? ''}\n`);
+}
+
 function normalizePayload(value: unknown, connection: RuntimeConnection, streaming: boolean): Record<string, unknown> {
   const payload: Record<string, unknown> = { ...(value as Record<string, unknown>), stream: streaming };
   if (connection.protocol === 'openai-chat-completions' && /(^|\.)deepseek\.com$/iu.test(new URL(connection.baseUrl).hostname)) {
@@ -132,9 +139,16 @@ export class PiModelGateway {
     const baseFetch = this.fetchOverride ?? globalThis.fetch;
     const transportFetch: typeof fetch = async (input, init) => {
       const payload = normalizePayload(JSON.parse(String(init?.body ?? '{}')), connection, streaming);
+      const sequence = ++rawRequestSequence;
+      logRaw('Input', sequence, payload);
       tracePayload?.(payload); onSent?.();
       const response = await baseFetch(input, { ...init, body: JSON.stringify(payload) });
       onHeaders?.();
+      try {
+        void response.clone().text().then((text) => logRaw('Output', sequence, text)).catch((error) => logRaw('Output', sequence, `[unavailable: ${String(error)}]`));
+      } catch (error) {
+        logRaw('Output', sequence, `[unavailable: ${String(error)}]`);
+      }
       if (streaming || !response.ok) return response;
       const body = await response.json();
       return new Response(convertNonStreamingResponse(connection.protocol, body), {

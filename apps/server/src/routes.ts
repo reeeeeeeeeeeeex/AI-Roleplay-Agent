@@ -11,6 +11,33 @@ import { generalSettingsSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 
+function promptText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((part: any) => typeof part === 'string' ? part : part.text ?? '').join('');
+}
+
+function promptRequestJson(connection: any, systemPrompt: string, messages: Array<{ role: string; content: string }>) {
+  const safe = { model: connection.model, stream: connection.streaming ?? true, temperature: connection.temperature };
+  if (connection.protocol === 'anthropic-messages') {
+    return { protocol: connection.protocol, ...safe, max_tokens: connection.maxTokens, system: systemPrompt, messages };
+  }
+  if (connection.protocol === 'openai-responses') {
+    const systemRole = connection.reasoning !== 'off' ? 'developer' : 'system';
+    return {
+      protocol: connection.protocol,
+      model: connection.model,
+      stream: connection.streaming ?? true,
+      temperature: connection.temperature,
+      max_output_tokens: connection.maxTokens,
+      input: [{ role: systemRole, content: systemPrompt }, ...messages.flatMap((message, index) => message.role === 'assistant'
+        ? [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: message.content, annotations: [] }], status: 'completed', id: `preview-${index}` }]
+        : [{ role: 'user', content: [{ type: 'input_text', text: message.content }] }])],
+    };
+  }
+  return { protocol: connection.protocol, ...safe, max_tokens: connection.maxTokens, messages: [{ role: 'system', content: systemPrompt }, ...messages] };
+}
+
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
   function idleAll() { for (const chat of repo.listConversations()) turns.assertIdle(chat.id); }
@@ -104,6 +131,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const speaker = body.speaker ?? (request.characters[0] ? { kind: 'character', characterId: request.characters[0].id } : { kind: 'narrator' });
     const context = fitRequest({ ...draftRequest, speaker, brief: body.brief } as any, body.brief);
     const writer = buildWriterContext({ ...context, speaker, pendingSpeaker: pendingSelection, brief: body.brief, outputIndex: 0 } as any);
+    const promptMessages = writer.messages.map((message) => ({ role: message.role, content: promptText(message.content) }));
     const prompts = repo.getPromptSettings();
     return {
       segments: [
@@ -111,6 +139,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
         ...(generationMode === 'writer-agent' ? [{ source: 'agent', role: 'system', title: 'Writer Agent 行为指令', content: prompts.writerInstruction }] : generationMode === 'planner' ? [{ source: 'planner', role: 'system', title: 'Planner 指令', content: prompts.plannerInstruction }] : []),
         ...writer.messages.map((message, index) => ({ source: index === writer.messages.length - 1 ? 'latest-anchor' : 'history-or-dynamic', role: message.role, title: `消息 ${index + 1}`, content: typeof message.content === 'string' ? message.content : message.content.map((part: any) => part.text ?? '').join('') })),
       ],
+      requestJson: promptRequestJson({ ...request.connection, streaming: request.streaming }, writer.systemPrompt, promptMessages),
       generationMode,
       speaker: pendingSelection ? null : speaker,
       pendingSelection,

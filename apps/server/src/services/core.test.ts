@@ -75,6 +75,8 @@ it('general settings: old and new stories share preview and generation settings'
     const preview = (await server.app.inject({ method: 'POST', url: `/api/conversations/${id}/prompt-preview`, payload: { inputText: '开门。', speaker: { kind: 'narrator' } } })).json();
     expect(preview.generationMode).toBe('plain');
     expect(preview.segments[0].content).toContain('全局旁白');
+    expect(preview.requestJson.protocol).toBe('openai-responses');
+    expect(preview.requestJson.input?.[0]?.content).toContain('[Main Instruction]');
     const turn = server.turns.start(turnRequestSchema.parse({ conversationId: id, input: { text: '开门。', voice: 'protagonist' }, replyTarget: { mode: 'explicit', speaker: { kind: 'narrator' } } }));
     await server.turns.idle(id);
     expect(repo.getTurn(turn.id)?.status).toBe('completed');

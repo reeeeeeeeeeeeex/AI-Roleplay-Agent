@@ -798,6 +798,7 @@ export default function App() {
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
             <header><h2>发送前提示词预览</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
             <p className="muted">模式：{promptPreview.generationMode} · 身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)}</p>
+            <details className="prompt-json" open><summary>JSON 请求预览（协议形状，不含密钥）</summary><pre>{JSON.stringify(promptPreview.requestJson, null, 2)}</pre></details>
             <div className="prompt-preview-list">{promptPreview.segments?.map((segment: any, index: number) => <details key={index} open={index === 0}><summary>{segment.title} · {segment.role} · {segment.source}</summary><pre>{segment.content}</pre></details>)}</div>
           </section>
         </div>

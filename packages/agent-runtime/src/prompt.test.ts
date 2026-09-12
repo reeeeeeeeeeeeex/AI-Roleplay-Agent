@@ -31,6 +31,7 @@ describe('ReST prompt assembly', () => {
     const history: MessageNode[] = [{ id: 'u', conversationId: 'chat', parentId: null, storyTurnId: 's', role: 'user', authorKind: 'protagonist', speaker: null, content: 'history', providerState: null, legacyPayload: null, createdAt: new Date().toISOString() }];
     const writer = buildWriterContext({ ...base, history, speaker: { kind: 'narrator' }, outputIndex: 0, brief: '', pendingSpeaker: false });
     expect(writer.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'assistant', 'user']);
+    expect(String(writer.messages[0]?.content)).toContain('[P]\nhistory');
     const final = String(writer.messages.at(-1)?.content);
     expect(final.indexOf('[Post-History]')).toBeLessThan(final.indexOf('[Latest User Input]'));
     expect(final.indexOf('[Latest User Input]')).toBeLessThan(final.indexOf('[Current Speaker]'));

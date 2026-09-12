@@ -73,9 +73,10 @@ function syntheticAssistant(node: MessageNode, request: BaseAgentRequest): Messa
 }
 
 export function buildHistoryMessages(request: BaseAgentRequest): Message[] {
+  const userName = request.persona?.name ?? 'Protagonist';
   return request.history.flatMap((node): Message[] => {
     if (node.role === 'user') {
-      const label = node.authorKind === 'user_narrator' ? 'User Narration' : 'Protagonist';
+      const label = node.authorKind === 'user_narrator' ? 'User Narration' : userName;
       return [{ role: 'user', content: `[${label}]\n${node.content}`, timestamp: Date.parse(node.createdAt) }];
     }
     if (node.role === 'assistant') return [syntheticAssistant(node, request)];

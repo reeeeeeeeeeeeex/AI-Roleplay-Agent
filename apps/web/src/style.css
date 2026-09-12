@@ -1326,8 +1326,10 @@ main {
 .trace-card > header { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
 .trace-card > header span { color: var(--text-secondary); text-align: right; }
 .trace-card details { margin-top: 6px; }
-.trace-card pre, .prompt-preview-list pre { white-space: pre-wrap; word-break: break-word; }
+.trace-card pre, .prompt-preview-list pre, .prompt-json pre { white-space: pre-wrap; word-break: break-word; }
 .prompt-preview { width: min(900px, 100%); }
+.prompt-json { margin: 10px 0; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px; }
+.prompt-json pre { max-height: 36dvh; overflow: auto; }
 .prompt-preview-list { max-height: 68dvh; overflow: auto; }
 .prompt-preview-list details { margin: 8px 0; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px; }
 
