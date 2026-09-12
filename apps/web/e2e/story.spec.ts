@@ -110,6 +110,7 @@ test('general settings: all stories share controls and failed drafts survive', a
   await page.getByRole('button', { name: '通用设置', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
   await expect(settings.locator('.settings-nav button')).toHaveText(['模型', '写作', '提示词', '外观']);
+  await expect(settings.getByRole('checkbox', { name: '流式传输' })).toBeChecked();
   await settings.getByLabel('当前模型连接').selectOption('');
   await expect(settings.getByRole('status')).toContainText('模型已保存');
   await settings.getByRole('button', { name: '关闭设置' }).click();
@@ -142,6 +143,7 @@ test('general settings: all stories share controls and failed drafts survive', a
   await expect(page.locator('.cast-strip')).toContainText('共同创作');
   await send(page, text, 2);
   await expect(input).toHaveValue('');
+  await expect(page.locator('.generation-info').last()).toContainText('输入');
   await page.getByRole('button', { name: /灯塔来信 · 单聊/ }).click();
   await expect(page.locator('.cast-strip')).toContainText('记录者');
   await page.reload();

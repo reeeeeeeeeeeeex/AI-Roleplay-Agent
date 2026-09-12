@@ -630,6 +630,10 @@ main {
   line-height: 1.75;
   color: #e4e4e7;
 }
+.message-thinking { margin: 0 0 8px; border-left: 2px solid var(--accent); padding-left: 10px; color: var(--text-secondary); }
+.message-thinking summary { cursor: pointer; font-size: 12px; }
+.message-thinking pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
+.generation-info { display: block; margin-top: 8px; color: var(--text-secondary); }
 
 .narration .prose {
   color: #a1a1aa;

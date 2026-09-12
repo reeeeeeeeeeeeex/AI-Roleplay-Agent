@@ -34,8 +34,12 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [turn, setTurn] = useState<{ id: string; chatId: string } | null>(null);
-  const [draft, setDraft] = useState<{ speaker: SpeakerRef; text: string } | null>(null);
+  type LiveDraft = { speaker: SpeakerRef; outputIndex: number; text: string; thinking: string };
+  const [draft, setDraft] = useState<LiveDraft | null>(null);
+  const pendingDraft = useRef<LiveDraft | null>(null);
+  const draftFrame = useRef<number | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
+  const [agentThinking, setAgentThinking] = useState('');
   const [phase, setPhase] = useState('');
   const [recordsVersion, setRecordsVersion] = useState(0);
   const [session, setSession] = useState<any>(null);
@@ -59,6 +63,12 @@ export default function App() {
 
   const bottom = useRef<HTMLDivElement>(null);
   const streamAbort = useRef<AbortController | null>(null);
+
+  const queueDraft = (next: LiveDraft | null | ((current: LiveDraft | null) => LiveDraft | null)) => {
+    pendingDraft.current = typeof next === 'function' ? next(pendingDraft.current) : next;
+    if (draftFrame.current !== null) return;
+    draftFrame.current = requestAnimationFrame(() => { draftFrame.current = null; setDraft(pendingDraft.current); });
+  };
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
   const cast = chat?.kind === 'group'
@@ -114,14 +124,16 @@ export default function App() {
           ? '页面与服务版本不一致，请按 Ctrl+F5 刷新；若仍失败，请更新后重启。'
           : err.message);
       });
-    return () => streamAbort.current?.abort();
+    return () => { streamAbort.current?.abort(); if (draftFrame.current !== null) cancelAnimationFrame(draftFrame.current); };
   }, []);
 
   useEffect(() => {
     setBranch([]);
     setNodes([]);
     setDraft(null);
+    pendingDraft.current = null;
     setActivity([]);
+    setAgentThinking('');
     setReplyTarget('auto');
     if (chatId) act(refreshMessages(chatId));
   }, [chatId]);
@@ -152,19 +164,28 @@ export default function App() {
       await streamTurn(id, (event) => {
         if (chatRef.current !== currentChat) return;
         const p = event.payload;
-        if (event.type !== 'writer.delta') setActivity((old) => [...old.slice(-79), event]);
-        if (event.type === 'turn.started') setPhase('选择发言者');
+        if (!['writer.delta', 'thinking.delta', 'writer.snapshot'].includes(event.type)) setActivity((old) => [...old.slice(-79), event]);
+        if (event.type === 'turn.started') { setAgentThinking(''); setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 准备上下文' : generalSettings.generationMode === 'planner' ? 'Planner · 规划' : 'Writer Agent · 选择发言者'); }
         if (event.type === 'agent.phase') setPhase(p.phase === 'selection' ? 'Writer Agent · 选择发言者' : 'Writer Agent · 写作');
         if (event.type === 'agent.thinking') setPhase('Writer Agent · 思考');
         if (event.type === 'writer.started') {
           setPhase(`Writer · ${p.outputIndex + 1}`);
-          setDraft({ speaker: p.speaker, text: '' });
+          queueDraft({ speaker: p.speaker, outputIndex: p.outputIndex, text: '', thinking: '' });
         }
         if (event.type === 'writer.delta') {
-          setDraft((old) => ({ speaker: p.speaker, text: (old?.text ?? '') + p.delta }));
+          queueDraft((old) => { const same = old && old.outputIndex === p.outputIndex ? old : null; return { speaker: p.speaker, outputIndex: p.outputIndex, text: (same?.text ?? '') + p.delta, thinking: same?.thinking ?? '' }; });
+        }
+        if (event.type === 'thinking.delta') {
+          if (generalSettings.generationMode === 'plain') queueDraft((old) => old ? { ...old, thinking: old.thinking + p.delta } : old);
+          else setAgentThinking((old) => old + p.delta);
+          setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 思考' : 'Writer Agent · 思考');
+        }
+        if (event.type === 'writer.snapshot') {
+          const latest = [...(p.outputs ?? [])].sort((a, b) => a.outputIndex - b.outputIndex).at(-1);
+          if (latest) queueDraft(latest);
         }
         if (event.type === 'message.completed') {
-          setDraft(null);
+          queueDraft(null);
           act(refreshMessages(currentChat));
         }
         if (event.type === 'turn.failed' || event.type === 'postprocess.failed') {
@@ -178,7 +199,7 @@ export default function App() {
     } finally {
       if (streamAbort.current === controller) {
         setTurn(null);
-        setDraft(null);
+        queueDraft(null);
         setPhase('');
         if (finished || controller.signal.aborted) localStorage.removeItem('active-turn');
       }
@@ -442,6 +463,9 @@ export default function App() {
                 const index = swipes.findIndex((n) => n.id === m.id);
                 const narrator = m.authorKind === 'narrator' || m.authorKind === 'user_narrator';
                 const avatar = avatarFor(m);
+                const info = m.generationInfo;
+                const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
+                const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
                   <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={m.id}>
                     <div
@@ -470,7 +494,14 @@ export default function App() {
                         </strong>
                         <span>{narrator ? '旁白' : m.role === 'user' ? '主角' : 'Writer'}</span>
                       </header>
+                      {m.role === 'assistant' && info?.mode === 'plain' && <details className="message-thinking" open>
+                        <summary>模型思考</summary>
+                        <pre>{info.thinking || '模型未返回可见思考内容。'}</pre>
+                      </details>}
                       <div className="prose">{m.content}</div>
+                      {m.role === 'assistant' && <small className="generation-info">{info
+                        ? `${info.model} · 输入 ${totalInput ?? '未返回'} · 输出 ${info.usage?.output ?? '未返回'} · 缓存 ${info.usage?.cacheRead ?? '未返回'}${info.usage ? ` (${cacheRate}%)` : ''}`
+                        : '生成信息不可用（旧消息）'}</small>}
                       <div className="message-actions">
                         {swipes.length > 1 && (
                           <>
@@ -514,6 +545,9 @@ export default function App() {
                       <strong>{speakerName(draft.speaker)}</strong>
                       <span>Writing</span>
                     </header>
+                    {generalSettings.generationMode === 'plain' && <details className="message-thinking" open>
+                      <summary>模型思考</summary><pre>{draft.thinking || '模型尚未返回可见思考内容。'}</pre>
+                    </details>}
                     <div className="prose">{draft.text}<span className="caret">▍</span></div>
                   </div>
                 </article>
@@ -689,6 +723,7 @@ export default function App() {
           generationMode={generalSettings.generationMode}
           version={recordsVersion}
           activity={activity}
+          liveThinking={agentThinking}
           disabled={!!turn}
           onError={setError}
           onChanged={() => setRecordsVersion((v) => v + 1)}

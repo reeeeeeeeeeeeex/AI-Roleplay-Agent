@@ -3,16 +3,16 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../app.js';
-import { FakeRuntime, type WriterRequest } from '@new-ai-chat/agent-runtime';
+import { FakeRuntime, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, blankState } from '@new-ai-chat/contracts';
 import { settledStoryIds, applyProposal } from './records.js';
 import { StoryContext } from './context.js';
 import { Repository } from '../db/repository.js';
 
 class InspectRuntime extends FakeRuntime {
-  requests: WriterRequest[]=[];
+  requests: BaseAgentRequest[]=[];
   failRoute=false; failWrite=false;
-  override async route(request:Parameters<FakeRuntime['route']>[0]) { if(this.failRoute)throw new Error('Route failed');return super.route(request); }
+  override async writeTurn(request: BaseAgentRequest, options: Parameters<FakeRuntime['writeTurn']>[1]) { this.requests.push(request); if(this.failRoute && options.mode === 'writer-agent' && !options.forcedPlan) throw new Error('Writer Agent did not call select_output_voices with a valid selection.'); return super.writeTurn(request, options); }
   override async write(request:WriterRequest,onDelta:(s:string)=>void) {this.requests.push(request);if(this.failWrite)throw new Error('Write failed');return super.write(request,onDelta);}
 }
 let work:string; let server:Awaited<ReturnType<typeof createApp>>;let runtime:InspectRuntime;let chat:string;let character:string;let connection:string;
@@ -21,7 +21,9 @@ beforeEach(async()=>{
   server=await createApp({host:'127.0.0.1',port:0,databasePath:join(work,'test.db'),assetDir:join(work,'assets'),webDist:join(work,'web'),pairingToken:null,defaultImportPath:work,fakeModel:false},runtime);
   character=server.repository.createCharacter(characterInputSchema.parse({name:'Sina'})).id;
   connection=server.repository.createConnection(connectionInputSchema.parse({name:'Test',protocol:'openai-responses',baseUrl:'https://example.invalid',model:'test',apiKey:'secret-do-not-return',headers:{Authorization:'header-secret'}})).id;
-  server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), connectionId: connection });
+  // Keep the legacy service scenarios exercising the multi-output Agent path;
+  // production defaults remain ordinary writing in the global settings.
+  server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), connectionId: connection, generationMode: 'writer-agent' });
   chat=server.repository.createConversation(conversationInputSchema.parse({title:'Test story',kind:'solo',characterId:character})).id;
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
@@ -50,7 +52,7 @@ it('general settings: migrates old global values and persists updates', async ()
   put.run('defaultConnection', JSON.stringify(connection));
   put.run('narrator', JSON.stringify({ name: '记录者', avatarPath: null, style: 'restrained' }));
   const migrated = new Repository(db).getGeneralSettings();
-  expect(migrated).toMatchObject({ connectionId: connection, generationMode: 'writer-agent', agencyMode: 'protected', narrator: { name: '记录者' }, memoryTurnInterval: 10, stateTurnInterval: 0 });
+  expect(migrated).toMatchObject({ connectionId: connection, generationMode: 'plain', streaming: true, agencyMode: 'protected', narrator: { name: '记录者' }, memoryTurnInterval: 10, stateTurnInterval: 0 });
   const changed = { ...migrated, generationMode: 'plain', agencyMode: 'coauthor', memoryTurnInterval: 3 };
   expect((await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: changed })).statusCode).toBe(200);
   expect((await server.app.inject({ url: '/api/settings/general' })).json()).toEqual(changed);
@@ -84,7 +86,8 @@ describe('native turns and narrator',()=>{
   it('routes to narrator and character, and gives the second writer the first response',async()=>{
     const turn=await normal();expect(turn.status).toBe('completed');const branch=server.repository.getActiveBranch(chat);
     expect(branch.map((m)=>m.authorKind)).toEqual(['protagonist','narrator','character']);expect(new Set(branch.map((m)=>m.storyTurnId)).size).toBe(1);
-    expect(runtime.requests[1]?.history.at(-1)?.authorKind).toBe('narrator');expect(settledStoryIds(server.repository,chat)).toHaveLength(1);
+    const secondWriter = runtime.requests.find((request) => 'speaker' in request && (request as WriterRequest).speaker.kind === 'character') as WriterRequest | undefined;
+    expect(secondWriter?.history.at(-1)?.authorKind).toBe('narrator');expect(settledStoryIds(server.repository,chat)).toHaveLength(1);
   });
   it('preserves user narration as user and AI narration as assistant',async()=>{await normal('narrator',{mode:'explicit',speaker:{kind:'narrator'}});const b=server.repository.getActiveBranch(chat);expect(b[0]?.role).toBe('user');expect(b[0]?.authorKind).toBe('user_narrator');expect(b[1]?.role).toBe('assistant');expect(b[1]?.authorKind).toBe('narrator');});
   it('bypasses routing for explicit characters',async()=>{runtime.failRoute=true;const t=await normal('protagonist',{mode:'explicit',speaker:{kind:'character',characterId:character}});expect(t.plan?.outputs).toHaveLength(1);expect(t.plan?.warnings).toEqual([]);});

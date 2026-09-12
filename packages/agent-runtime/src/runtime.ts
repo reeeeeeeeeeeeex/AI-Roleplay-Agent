@@ -180,7 +180,7 @@ export class PiAgentRuntime implements AgentRuntime {
     });
     agent.subscribe((event) => {
       if (event.type === 'message_update' && event.assistantMessageEvent.type === 'thinking_delta' && activeTrace) {
-        if (!activeFirstThinking) { activeFirstThinking = true; request.trace?.timing(activeTrace, { firstThinkingAt: new Date().toISOString() }); }
+        if (request.streaming !== false && !activeFirstThinking) { activeFirstThinking = true; request.trace?.timing(activeTrace, { firstThinkingAt: new Date().toISOString() }); }
       }
       if (event.type === 'message_end' && activeTrace) {
         const message = event.message as AssistantMessage;
@@ -225,11 +225,11 @@ export class PiAgentRuntime implements AgentRuntime {
         for await (const event of stream) {
           request.signal.throwIfAborted();
           if (event.type === 'thinking_delta') {
-            if (!timing.firstThinkingAt) { timing.firstThinkingAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { firstThinkingAt: timing.firstThinkingAt }); }
+            if (request.streaming !== false && !timing.firstThinkingAt) { timing.firstThinkingAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { firstThinkingAt: timing.firstThinkingAt }); }
             thinking += event.delta; options.onThinkingDelta?.(event.delta, outputIndex);
           }
           if (event.type === 'text_delta') {
-            if (!timing.firstTextAt) { timing.firstTextAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { firstTextAt: timing.firstTextAt }); }
+            if (request.streaming !== false && !timing.firstTextAt) { timing.firstTextAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { firstTextAt: timing.firstTextAt }); }
             text += event.delta; options.onDelta(output.speaker, outputIndex, event.delta);
           }
           if (event.type === 'done') final = event.message;
@@ -265,6 +265,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const fallbackSpeaker = request.characters[0] ? { kind: 'character' as const, characterId: request.characters[0].id } : { kind: 'narrator' as const };
     let selected: TurnPlan | null = options.forcedPlan ?? null;
     let outputIndex = 0;
+    let selectionTurns = 0;
     let finalMessage: AssistantMessage | null = null;
     const results: AgentTurnResult['results'] = [];
     const seen = new Set<string>();
@@ -310,18 +311,18 @@ export class PiAgentRuntime implements AgentRuntime {
         const assistant = message as AssistantMessage;
         const text = visibleText(assistant).trim();
         if (text && selected && !assistant.content.some((item) => item.type === 'toolCall')) return true;
-        return false;
+        return !selected && ++selectionTurns >= 2;
       },
     });
     agent.subscribe((event) => {
       if (event.type === 'message_update') {
         const update = event.assistantMessageEvent as any;
         if (update.type === 'text_delta' && selected) {
-          if (activeTiming && !activeTiming.firstTextAt) { activeTiming.firstTextAt = new Date().toISOString(); if (activeTrace) request.trace?.timing(activeTrace, { firstTextAt: activeTiming.firstTextAt }); }
+          if (request.streaming !== false && activeTiming && !activeTiming.firstTextAt) { activeTiming.firstTextAt = new Date().toISOString(); if (activeTrace) request.trace?.timing(activeTrace, { firstTextAt: activeTiming.firstTextAt }); }
           options.onDelta(selected.outputs[outputIndex]!.speaker, outputIndex, update.delta);
         }
         if (update.type === 'thinking_delta') {
-          if (activeTiming && !activeTiming.firstThinkingAt) { activeTiming.firstThinkingAt = new Date().toISOString(); if (activeTrace) request.trace?.timing(activeTrace, { firstThinkingAt: activeTiming.firstThinkingAt }); }
+          if (request.streaming !== false && activeTiming && !activeTiming.firstThinkingAt) { activeTiming.firstThinkingAt = new Date().toISOString(); if (activeTrace) request.trace?.timing(activeTrace, { firstThinkingAt: activeTiming.firstThinkingAt }); }
           thinking += update.delta; options.onThinkingDelta?.(update.delta, outputIndex);
         }
       }
@@ -376,8 +377,8 @@ export class PiAgentRuntime implements AgentRuntime {
     let thinking = '';
     try {
       for await (const event of stream) {
-        if (event.type === 'thinking_delta') { if (!timing.firstThinkingAt) timing.firstThinkingAt = new Date().toISOString(); thinking += event.delta; }
-        if (event.type === 'text_delta' && !timing.firstTextAt) timing.firstTextAt = new Date().toISOString();
+        if (event.type === 'thinking_delta') { if (request.streaming !== false && !timing.firstThinkingAt) timing.firstThinkingAt = new Date().toISOString(); thinking += event.delta; }
+        if (event.type === 'text_delta' && request.streaming !== false && !timing.firstTextAt) timing.firstTextAt = new Date().toISOString();
         if (event.type === 'done') final = event.message;
         if (event.type === 'error') throw new Error(event.error.errorMessage ?? 'Record generation failed.');
       }
