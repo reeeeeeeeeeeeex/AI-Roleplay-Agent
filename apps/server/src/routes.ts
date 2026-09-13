@@ -132,10 +132,9 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const generationMode = repo.getGeneralSettings().generationMode;
     const pendingSelection = !body.speaker && (generationMode !== 'plain' || chat.kind === 'group');
     const speaker = body.speaker ?? (request.characters[0] ? { kind: 'character', characterId: request.characters[0].id } : { kind: 'narrator' });
-    const forcedSpeaker = Boolean(body.speaker);
     const brief = generationMode === 'plain' ? '' : body.brief;
     const context = fitRequest({ ...draftRequest, speaker, brief } as any, brief);
-    const writer = buildWriterContext({ ...context, speaker, pendingSpeaker: pendingSelection, brief, outputIndex: 0, mode: generationMode, forcedSpeaker } as any);
+    const writer = buildWriterContext({ ...context, speaker, pendingSpeaker: pendingSelection, brief, outputIndex: 0, mode: generationMode } as any);
     const promptMessages = writer.messages.map((message) => ({ role: message.role, content: promptText(message.content) }));
     const prompts = repo.getPromptSettings();
     return {

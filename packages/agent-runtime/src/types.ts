@@ -101,7 +101,6 @@ export interface RouteRequest extends BaseAgentRequest {
 export interface WriterRequest extends BaseAgentRequest {
   speaker: SpeakerRef;
   pendingSpeaker?: boolean;
-  forcedSpeaker?: boolean;
   mode?: GenerationMode;
   brief: string;
   outputIndex: number;
@@ -125,7 +124,6 @@ export interface AgentTurnResult {
 export interface UnifiedWriterOptions {
   mode: 'plain' | 'writer-agent';
   forcedPlan?: TurnPlan;
-  forcedSpeaker?: boolean;
   prefix?: string;
   onDelta: (speaker: SpeakerRef, outputIndex: number, delta: string) => void;
   onTool?: (name: string, args: unknown, outputIndex?: number) => void;

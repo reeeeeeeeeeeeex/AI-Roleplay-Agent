@@ -51,7 +51,6 @@ describe('ReST prompt assembly', () => {
       brief: '待选择回复身份',
       pendingSpeaker: false,
       mode: 'plain',
-      forcedSpeaker: false,
     });
 
     const textOf = (msg: any) => typeof msg?.content === 'string' ? msg.content : (msg?.content ?? []).map((p: any) => p.text ?? '').join('');
@@ -67,21 +66,6 @@ describe('ReST prompt assembly', () => {
     const finalPlain = textOf(plain.messages.at(-1));
     expect(finalPlain).toContain('[Latest User Input]\n我推开门。');
     expect(finalPlain).not.toContain('[Writer Brief]');
-    expect(finalPlain).not.toContain('[Current Speaker]');
-
-    const forced = buildWriterContext({
-      ...base,
-      history,
-      speaker: { kind: 'character', characterId: 'a' },
-      outputIndex: 0,
-      brief: '',
-      pendingSpeaker: false,
-      mode: 'plain',
-      forcedSpeaker: true,
-    });
-    const forcedFinal = String(forced.messages.at(-1)?.content);
-    expect(forcedFinal).toContain('[Current Speaker]\nA');
-    expect(forcedFinal).not.toContain('[Writer Brief]');
+    expect(finalPlain).toContain('[Current Speaker]\nA');
   });
 });
-

@@ -162,9 +162,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
     if (content) messages.push(syntheticContext(content));
   }
   const briefSection = !isPlain ? section('Writer Brief', effectiveBrief) : '';
-  const currentSpeakerSection = isPlain && !input.forcedSpeaker
-    ? ''
-    : section('Current Speaker', request.pendingSpeaker ? 'Pending selection' : speakerName(request.speaker, request.characters, request.narrator.name));
+  const currentSpeakerSection = section('Current Speaker', request.pendingSpeaker ? 'Pending selection' : speakerName(request.speaker, request.characters, request.narrator.name));
 
   const content = [
     ...postHistorySections(request),
