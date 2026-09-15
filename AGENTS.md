@@ -24,6 +24,7 @@
 - 核心是 Planner / Writer、常驻旁白、分支聊天、Lore、Memory 和主角状态。默认 Planner 关闭，Writer 自动路由开启。
 - 请求默认使用普通写作和真实流式传输；关闭流式时上游必须发送 `stream: false`，完整响应到达后一次渲染，不得模拟逐字播放。
 - 普通写作只走一次 `ModelGateway` 正文请求；Agent 的选人、工具和思考过程在右侧 Trace 展示，正文增量只在内存缓冲中合并，完成后一次写入消息。
+- 普通写作的最终请求只能回放历史可见正文，不发送 `reasoning_content`、thinking／reasoning item、签名或加密推理内容；本轮仍按连接设置生成并展示可见思考。Agent 会话可保留供应商要求的推理状态。
 - 统计的总输入包含供应商报告的缓存读取和写入 token；供应商未返回的字段显示不可用。非流式请求不伪造首思考／首正文时间。
 - 提示词预览必须从 Gateway 的真实 fetch 边界捕获首个请求 Body，不得手工重建协议 JSON。流式请求不在 CMD 输出 raw 数据；非流式请求才输出未经字段脱敏的原始 Body。Authorization、API Key、Cookie 等认证 Header 始终不得输出。
 - 普通发送、Swipe 和 regenerate 的最新原始用户输入锚点使用“以下是用户本轮输入：”，放在 Memory、主角状态和后置指令之后、最终 Current Speaker 之前；在历史裁剪前取得原文。空草稿预览为 Auto，不复用旧输入。

@@ -13,6 +13,7 @@ import { estimateTokens } from './prompt.js';
 
 export type GatewayStreamOptions = SimpleStreamOptions & {
   streaming?: boolean;
+  replayReasoning?: boolean;
   tracePayload?: (payload: unknown) => void;
   traceResponse?: (response: unknown) => void;
   onSent?: () => void;
@@ -37,6 +38,27 @@ function normalizePayload(value: unknown, connection: RuntimeConnection, streami
     payload.thinking = { type: connection.reasoning === 'off' ? 'disabled' : 'enabled' };
   }
   return payload;
+}
+
+function visibleHistoryItem(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const item = { ...(value as Record<string, unknown>) };
+  delete item.reasoning_content;
+  delete item.reasoning_text;
+  delete item.reasoning;
+  if (Array.isArray(item.content)) {
+    item.content = item.content.filter((part) => !part || typeof part !== 'object' || !['thinking', 'redacted_thinking', 'reasoning'].includes(String((part as Record<string, unknown>).type)));
+  }
+  return item;
+}
+
+function stripReasoningHistory(payload: Record<string, unknown>): Record<string, unknown> {
+  const clean = { ...payload };
+  if (Array.isArray(clean.messages)) clean.messages = clean.messages.map(visibleHistoryItem);
+  if (Array.isArray(clean.input)) clean.input = clean.input
+    .filter((item) => !item || typeof item !== 'object' || (item as Record<string, unknown>).type !== 'reasoning')
+    .map(visibleHistoryItem);
+  return clean;
 }
 
 function sse(events: unknown[], named = false): string {
@@ -141,7 +163,7 @@ export class PiModelGateway {
   }
 
   private openStream(connection: RuntimeConnection, context: Context, options: GatewayStreamOptions, baseFetch: typeof fetch, terminalLog: boolean): AssistantMessageEventStream {
-    const { streaming = true, tracePayload, traceResponse, onSent, onHeaders, ...providerOptions } = options;
+    const { streaming = true, replayReasoning = true, tracePayload, traceResponse, onSent, onHeaders, ...providerOptions } = options;
     const configuredOptions = Object.fromEntries(Object.entries(providerOptions).filter(([, value]) => value !== undefined));
     if (estimateTokens(JSON.stringify(context)) + (options.maxTokens ?? connection.maxTokens) > (connection.contextWindow ?? 128_000)) throw new Error('Agent context exceeds the configured window after tool results. Reduce history or tool context, or increase the context window.');
     const model = this.createModel(connection);
@@ -152,7 +174,8 @@ export class PiModelGateway {
         : openAIResponsesApi();
     const reasoning = connection.reasoning === 'off' ? {} : { reasoning: connection.reasoning };
     const transportFetch: typeof fetch = async (input, init) => {
-      const payload = normalizePayload(JSON.parse(String(init?.body ?? '{}')), connection, streaming);
+      const normalized = normalizePayload(JSON.parse(String(init?.body ?? '{}')), connection, streaming);
+      const payload = replayReasoning ? normalized : stripReasoningHistory(normalized);
       const requestBody = JSON.stringify(payload);
       const sequence = !streaming && terminalLog ? ++rawRequestSequence : 0;
       if (sequence) logRaw('Input', sequence, requestBody);

@@ -176,7 +176,7 @@ export class PiAgentRuntime implements AgentRuntime {
       const plan = forcedPlan ?? fallbackPlan(request.storyTurnId, request.characters);
       const speaker = plan.outputs[0]!.speaker;
       const writer = buildWriterContext({ ...request, speaker, brief: '', outputIndex: 0, mode: 'plain' });
-      return { phase: 'plain', requestBody: await this.gateway.captureRequestBody(request.connection, writer, { signal: request.signal, streaming: request.streaming ?? true }), speaker, pendingSelection: false, clipped };
+      return { phase: 'plain', requestBody: await this.gateway.captureRequestBody(request.connection, writer, { signal: request.signal, streaming: request.streaming ?? true, replayReasoning: false }), speaker, pendingSelection: false, clipped };
     }
     const start = writerStart(request, forcedPlan ?? null, undefined, () => {});
     return { phase: start.pendingSelection ? 'selection' : 'writing', requestBody: await this.gateway.captureRequestBody(request.connection, start.context, { signal: request.signal, streaming: request.streaming ?? true }), speaker: start.speaker, pendingSelection: start.pendingSelection, clipped };
@@ -262,7 +262,7 @@ export class PiAgentRuntime implements AgentRuntime {
       let text = '';
       try {
         const stream = this.gateway.stream(request.connection, context, {
-          signal: request.signal, streaming: request.streaming ?? true,
+          signal: request.signal, streaming: request.streaming ?? true, replayReasoning: false,
           tracePayload: (payload) => { if (traceId) request.trace?.request(traceId, payload); },
           traceResponse: (response) => { if (traceId) request.trace?.response(traceId, response); },
           onSent: () => { timing.sentAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { sentAt: timing.sentAt }); },
@@ -291,7 +291,7 @@ export class PiAgentRuntime implements AgentRuntime {
           request.trace?.timing(traceId, { completedAt: timing.completedAt });
           request.trace?.finish(traceId, 'completed', usage);
         }
-        results.push({ speaker: output.speaker, text, thinking, timing, usage, requestCount: 1, providerState: { version: 1, connectionId: request.connection.id, messages: final ? [final] : [] } });
+        results.push({ speaker: output.speaker, text, thinking, timing, usage, requestCount: 1, providerState: null });
         history = [...history, { id: `runtime-${outputIndex}`, conversationId: request.conversationId, parentId: null, storyTurnId: request.storyTurnId, role: 'assistant', authorKind: output.speaker.kind, speaker: output.speaker, content: text, providerState: null, generationInfo: null, legacyPayload: null, createdAt: timing.completedAt }];
       } catch (error) {
         timing.completedAt = new Date().toISOString();

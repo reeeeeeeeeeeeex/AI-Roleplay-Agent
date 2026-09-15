@@ -54,7 +54,14 @@ describe('gateway transport contract', () => {
     const connection: RuntimeConnection = { id: 'test', protocol, baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 0.5, maxTokens: 100, reasoning: 'high' };
     const gateway = new PiModelGateway(fetchMock);
     const captured = await gateway.captureRequestBody(connection, context, { streaming: true });
+    const visibleOnly = await gateway.captureRequestBody(connection, context, { streaming: true, replayReasoning: false, onPayload: (value: any) => {
+      if (protocol === 'openai-responses') return { ...value, input: [...value.input, { type: 'reasoning', encrypted_content: 'private-reasoning' }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'visible history' }] }] };
+      if (protocol === 'anthropic-messages') return { ...value, messages: [...value.messages, { role: 'assistant', content: [{ type: 'thinking', thinking: 'private-reasoning', signature: 'signature' }, { type: 'text', text: 'visible history' }] }] };
+      return { ...value, messages: [...value.messages, { role: 'assistant', reasoning_content: 'private-reasoning', content: 'visible history' }] };
+    } });
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(visibleOnly).toContain('visible history');
+    expect(visibleOnly).not.toContain('private-reasoning');
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => { writes.push(String(chunk)); return true; }) as typeof process.stdout.write);
     for (const streaming of [true, false]) {
       let text = '', thinking = '';
