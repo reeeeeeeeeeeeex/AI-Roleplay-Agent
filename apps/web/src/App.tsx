@@ -3,6 +3,7 @@ import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, 
 import { defaultGeneralSettings, defaultPromptSettings, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
+import PersonaPicker from './PersonaPicker.js';
 import Records from './Records.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
 import './branches.css';
@@ -57,6 +58,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showPersona, setShowPersona] = useState(false);
   const [personaSaving, setPersonaSaving] = useState(false);
+  const [personaCreateTarget, setPersonaCreateTarget] = useState<'global' | 'chat' | null>(null);
   const [showBranches, setShowBranches] = useState(false);
 
   // Avatar display preferences
@@ -299,6 +301,15 @@ export default function App() {
     await refresh();
     setEditor(null);
     if (editor.kind === 'conversations') await selectChat(saved.id);
+    if (editor.kind === 'personas' && personaCreateTarget) {
+      if (personaCreateTarget === 'global') {
+        await savePersona(saved.id, true);
+      } else if (personaCreateTarget === 'chat') {
+        await savePersona(saved.id, false);
+      }
+      setPersonaCreateTarget(null);
+      setShowPersona(true);
+    }
   }
 
   async function remove(kind: Collection, value: any) {
@@ -784,7 +795,17 @@ export default function App() {
           kind={editor.kind}
           initial={editor.value}
           data={data}
-          onClose={() => setEditor(null)}
+          defaultPersonaId={generalSettings.defaultPersonaId}
+          onPersonaCreated={(newPersona) => {
+            setData((old) => ({ ...old, personas: [...(old.personas ?? []), newPersona] }));
+          }}
+          onClose={() => {
+            setEditor(null);
+            if (personaCreateTarget) {
+              setPersonaCreateTarget(null);
+              setShowPersona(true);
+            }
+          }}
           onSave={save}
         />
       )}
@@ -823,19 +844,35 @@ export default function App() {
           <header><h2>主角身份</h2><button aria-label="关闭主角身份" onClick={() => setShowPersona(false)}>✕</button></header>
           <div className="settings-content settings-section">
             <label>全局默认主角
-              <select value={generalSettings.defaultPersonaId ?? ''} disabled={!!turn || sending || personaSaving} onChange={e => act(savePersona(e.target.value || null, true))}>
-                <option value="">未选择</option>
-                {data.personas?.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <PersonaPicker
+                value={generalSettings.defaultPersonaId ?? null}
+                personas={data.personas ?? []}
+                emptyLabel="未选择"
+                disabled={!!turn || sending || personaSaving}
+                onChange={(id) => act(savePersona(id, true))}
+                onCreatePersona={() => {
+                  setShowPersona(false);
+                  setPersonaCreateTarget('global');
+                  edit('personas');
+                }}
+              />
             </label>
             {chat && <label>当前故事：{chat.title}
-              <select value={chat.personaId ?? ''} disabled={!!turn || sending || personaSaving} onChange={e => act(savePersona(e.target.value || null, false))}>
-                <option value="">跟随全局默认</option>
-                {data.personas?.map(p => <option key={p.id} value={p.id}>{p.name}（绑定此故事）</option>)}
-              </select>
+              <PersonaPicker
+                value={chat.personaId ?? null}
+                personas={data.personas ?? []}
+                emptyLabel="跟随全局默认"
+                defaultPersonaId={generalSettings.defaultPersonaId ?? null}
+                disabled={!!turn || sending || personaSaving}
+                onChange={(id) => act(savePersona(id, false))}
+                onCreatePersona={() => {
+                  setShowPersona(false);
+                  setPersonaCreateTarget('chat');
+                  edit('personas');
+                }}
+              />
             </label>}
             <p className="muted">新故事和未绑定的故事使用全局默认主角；绑定后切换故事会恢复各自的身份。</p>
-            {!data.personas?.length && <button onClick={() => { setShowPersona(false); setPage('personas'); }}>创建主角身份</button>}
             {error && <p className="banner error" role="alert">{error}</p>}
           </div>
         </section>

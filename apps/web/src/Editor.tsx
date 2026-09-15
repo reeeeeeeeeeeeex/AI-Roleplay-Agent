@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import AvatarField from './AvatarField';
+import PersonaPicker from './PersonaPicker';
 
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
@@ -47,16 +48,23 @@ export default function Editor({
   data,
   onClose,
   onSave,
+  defaultPersonaId,
+  onPersonaCreated,
+  zIndex = 120,
 }: {
   kind: Collection;
-  initial: any;
-  data: Record<string, any[]>;
+  initial?: any;
+  data: Partial<Record<Collection, any[]>>;
   onClose: () => void;
   onSave: (value: any) => Promise<void>;
+  defaultPersonaId?: string | null;
+  onPersonaCreated?: (persona: any) => void;
+  zIndex?: number;
 }) {
   const [value, setValue] = useState<any>(() => ({ ...defaults[kind], ...initial }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [creatingPersona, setCreatingPersona] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelsBusy, setModelsBusy] = useState(false);
   const [modelsNotice, setModelsNotice] = useState('');
@@ -157,43 +165,55 @@ export default function Editor({
   );
 
   return (
-    <div className="modal-shade" style={{ zIndex: 120 }}>
-      <section className="modal" role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
-        <header>
-          <h2>{initial?.id ? '编辑' : '创建'}{titles[kind]}</h2>
-          <button onClick={onClose} aria-label="关闭">✕</button>
-        </header>
+    <>
+      <div className="modal-shade" style={{ zIndex }}>
+        <section className="modal" role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
+          <header>
+            <h2>{initial?.id ? '编辑' : '创建'}{titles[kind]}</h2>
+            <button onClick={onClose} aria-label="关闭">✕</button>
+          </header>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setBusy(true);
-            setError('');
-            void onSave(value)
-              .catch((error: Error) => setError(error.message))
-              .finally(() => setBusy(false));
-          }}
-        >
-          {kind === 'conversations' ? (
-            <>
-              {field('title', '故事标题')}
-              {select('kind', '聊天类型', [
-                ['solo', '单聊'],
-                ['group', '群聊'],
-              ])}
-              {select(
-                value.kind === 'solo' ? 'characterId' : 'groupId',
-                value.kind === 'solo' ? '角色' : '群组',
-                (data[value.kind === 'solo' ? 'characters' : 'groups'] ?? []).map((v) => [v.id, v.name]),
-                true
-              )}
-              {select('personaId', '绑定主角（留空跟随全局默认）', (data.personas ?? []).map((v) => [v.id, v.name]), true)}
-              {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
-              {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
-            </>
-          ) : (
-            field('name', '名称')
-          )}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setBusy(true);
+              setError('');
+              void onSave(value)
+                .catch((error: Error) => setError(error.message))
+                .finally(() => setBusy(false));
+            }}
+          >
+            {kind === 'conversations' ? (
+              <>
+                {field('title', '故事标题')}
+                {select('kind', '聊天类型', [
+                  ['solo', '单聊'],
+                  ['group', '群聊'],
+                ])}
+                {select(
+                  value.kind === 'solo' ? 'characterId' : 'groupId',
+                  value.kind === 'solo' ? '角色' : '群组',
+                  (data[value.kind === 'solo' ? 'characters' : 'groups'] ?? []).map((v) => [v.id, v.name]),
+                  true
+                )}
+                <label>
+                  绑定主角（留空跟随全局默认）
+                  <PersonaPicker
+                    value={value.personaId ?? null}
+                    personas={data.personas ?? []}
+                    emptyLabel="跟随全局默认"
+                    defaultPersonaId={defaultPersonaId}
+                    disabled={busy}
+                    onChange={(id) => set('personaId', id)}
+                    onCreatePersona={() => setCreatingPersona(true)}
+                  />
+                </label>
+                {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
+                {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
+              </>
+            ) : (
+              field('name', '名称')
+            )}
 
           {(kind === 'characters' || kind === 'personas') && (
             <AvatarField
@@ -283,6 +303,25 @@ export default function Editor({
         </form>
       </section>
     </div>
+
+    {creatingPersona && (
+      <Editor
+        kind="personas"
+        data={data}
+        zIndex={zIndex + 20}
+        onClose={() => setCreatingPersona(false)}
+        onSave={async (newPersona) => {
+          const saved = await api('/personas', 'POST', newPersona);
+          if (data.personas) {
+            data.personas.push(saved);
+          }
+          onPersonaCreated?.(saved);
+          set('personaId', saved.id);
+          setCreatingPersona(false);
+        }}
+      />
+    )}
+  </>
   );
 }
 
