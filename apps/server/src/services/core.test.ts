@@ -102,6 +102,45 @@ it('general settings: old and new stories share preview and generation settings'
   expect(repo.listMessages(chat)).toHaveLength(messageCount);
   expect(network).not.toHaveBeenCalled();
 });
+it('default persona and story binding keep previews, generation and the latest input consistent', async () => {
+  const repo = server.repository;
+  const first = repo.createPersona({ name: 'tree', description: 'first persona', avatarPath: null });
+  const second = repo.createPersona({ name: 'River', description: 'second persona', avatarPath: null });
+  const settings = { ...repo.getGeneralSettings(), generationMode: 'plain', defaultPersonaId: first.id };
+  expect((await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: settings })).statusCode).toBe(200);
+  expect(new Repository(repo.database).getGeneralSettings().defaultPersonaId).toBe(first.id);
+  const newChat = repo.createConversation(conversationInputSchema.parse({ title: 'New', kind: 'solo', characterId: character }));
+  expect(repo.resolvePersona(newChat.personaId)?.id).toBe(first.id);
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'old memory' });
+  repo.createState(chat, null, blankState());
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'normal', input: { text: '打开窗户。', voice: 'protagonist' } } });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().personaName).toBe('tree');
+  const body = JSON.parse(response.json().requestBody);
+  const payload = JSON.stringify(body);
+  const last = JSON.stringify(body.input.at(-1));
+  expect(last).toContain('以下是用户本轮输入：');
+  expect(last).toContain('打开窗户。');
+  expect(payload.indexOf('[Memory:')).toBeLessThan(payload.lastIndexOf('以下是用户本轮输入：'));
+  expect(payload.indexOf('[Protagonist State]')).toBeLessThan(payload.lastIndexOf('以下是用户本轮输入：'));
+  expect(repo.listMessages(chat)).toHaveLength(0);
+  await normal();
+  expect(runtime.requests[0]?.persona?.name).toBe('tree');
+  const saved = repo.getConversation(chat)!;
+  expect((await server.app.inject({ method: 'PUT', url: `/api/conversations/${chat}`, payload: { ...saved, personaId: first.id } })).statusCode).toBe(200);
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), defaultPersonaId: second.id });
+  expect(repo.resolvePersona(repo.getConversation(chat)!.personaId)?.id).toBe(first.id);
+  expect(repo.resolvePersona(newChat.personaId)?.id).toBe(second.id);
+  repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.getRuntimeConnection(connection), name: 'Test', historyMessageLimit: 1 }));
+  const request = await server.turns.request(chat, 'preview', new AbortController().signal);
+  expect(request.history).toHaveLength(1);
+  expect(request.history[0]?.role).toBe('assistant');
+  expect(request.latestUserText).toBe('推开门。');
+  expect((await server.turns.request(chat, 'auto', new AbortController().signal, true)).latestUserText).toBe('');
+  repo.deletePersona(second.id);
+  expect(repo.getGeneralSettings().defaultPersonaId).toBeNull();
+});
+
 describe('native turns and narrator',()=>{
   it('routes to narrator and character, and gives the second writer the first response',async()=>{
     const turn=await normal();expect(turn.status).toBe('completed');const branch=server.repository.getActiveBranch(chat);

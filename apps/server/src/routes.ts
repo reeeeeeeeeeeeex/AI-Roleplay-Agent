@@ -27,7 +27,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       const chat = repo.createConversation(v);
       const character = chat.kind === 'solo' && chat.characterId ? repo.getCharacter(chat.characterId) : null;
       if (character?.firstMessage.trim()) {
-        const persona = chat.personaId ? repo.getPersona(chat.personaId) : null;
+        const persona = repo.resolvePersona(chat.personaId);
         const message = repo.createMessage({ conversationId: chat.id, parentId: null, storyTurnId: null, role: 'assistant', authorKind: 'character', speaker: { kind: 'character', characterId: character.id }, content: expandStoryMacros(character.firstMessage, persona?.name ?? '主角', character.name), providerState: null, legacyPayload: null });
         repo.setHead(chat.id, message.id);
       }

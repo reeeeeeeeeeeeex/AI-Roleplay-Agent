@@ -187,7 +187,7 @@ export default function Editor({
                 (data[value.kind === 'solo' ? 'characters' : 'groups'] ?? []).map((v) => [v.id, v.name]),
                 true
               )}
-              {select('personaId', '主角', (data.personas ?? []).map((v) => [v.id, v.name]), true)}
+              {select('personaId', '绑定主角（留空跟随全局默认）', (data.personas ?? []).map((v) => [v.id, v.name]), true)}
               {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
               {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
             </>

@@ -113,6 +113,7 @@ export class Repository {
   setGeneralSettings(value: GeneralSettings): GeneralSettings {
     const settings = generalSettingsSchema.parse(value);
     if (settings.connectionId && !this.getRuntimeConnection(settings.connectionId)) throw new Error('Connection not found.');
+    if (settings.defaultPersonaId && !this.getPersona(settings.defaultPersonaId)) throw new Error('Persona not found.');
     this.database.db.insert(appSettings).values({ key: 'general', value: settings })
       .onConflictDoUpdate({ target: appSettings.key, set: { value: settings } }).run();
     return settings;
@@ -207,7 +208,17 @@ export class Repository {
     if (!this.getPersona(personaId)) return null;
     this.database.db.update(personas).set({ ...input, updatedAt: now() }).where(eq(personas.id, personaId)).run(); return this.getPersona(personaId);
   }
-  deletePersona(personaId: string): boolean { return this.database.db.delete(personas).where(eq(personas.id, personaId)).run().changes > 0; }
+  resolvePersona(personaId: string | null): Persona | null {
+    const selected = personaId ?? this.getGeneralSettings().defaultPersonaId;
+    return selected ? this.getPersona(selected) : null;
+  }
+  deletePersona(personaId: string): boolean {
+    return this.database.sqlite.transaction(() => {
+      const settings = this.getGeneralSettings();
+      if (settings.defaultPersonaId === personaId) this.setGeneralSettings({ ...settings, defaultPersonaId: null });
+      return this.database.db.delete(personas).where(eq(personas.id, personaId)).run().changes > 0;
+    })();
+  }
 
   listGroups(): Group[] { return this.database.db.select().from(groups).orderBy(asc(groups.name)).all() as Group[]; }
   getGroup(groupId: string): Group | null { return this.database.db.select().from(groups).where(eq(groups.id, groupId)).get() as Group | undefined ?? null; }

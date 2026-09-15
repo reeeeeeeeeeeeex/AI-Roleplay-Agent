@@ -55,6 +55,8 @@ export default function App() {
   const [promptSettings, setPromptSettings] = useState<PromptSettings>(defaultPromptSettings);
   const [promptPreview, setPromptPreview] = useState<any | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showPersona, setShowPersona] = useState(false);
+  const [personaSaving, setPersonaSaving] = useState(false);
   const [showBranches, setShowBranches] = useState(false);
 
   // Avatar display preferences
@@ -72,6 +74,7 @@ export default function App() {
   };
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
+  const activePersona = data.personas?.find(p => p.id === (chat?.personaId ?? generalSettings.defaultPersonaId));
   const cast = chat?.kind === 'group'
     ? (data.groups ?? []).find((v) => v.id === chat.groupId)?.memberIds ?? []
     : chat?.characterId ? [chat.characterId] : [];
@@ -88,7 +91,7 @@ export default function App() {
 
   const avatarFor = (message: MessageNode): string | undefined =>
     message.role === 'user'
-      ? data.personas?.find((p) => p.id === chat?.personaId)?.avatarPath ?? undefined
+      ? activePersona?.avatarPath ?? undefined
       : message.speaker?.kind === 'narrator'
       ? generalSettings.narrator.avatarPath ?? undefined
       : data.characters?.find((c) => c.id === (message.speaker?.kind === 'character' ? message.speaker.characterId : null))?.avatarPath ?? undefined;
@@ -110,6 +113,18 @@ export default function App() {
       setBranch(value.branch);
       setNodes(value.nodes);
     }
+  }
+
+  async function savePersona(personaId: string | null, global: boolean) {
+    setPersonaSaving(true);
+    try {
+      if (global) setGeneralSettings(await api('/settings/general', 'PUT', { ...generalSettings, defaultPersonaId: personaId }));
+      else if (chat) {
+        const updated = await api(`/conversations/${chat.id}`, 'PUT', { ...chat, personaId });
+        setData(old => ({ ...old, conversations: old.conversations!.map(c => c.id === updated.id ? updated : c) }));
+      }
+      setPromptPreview(null);
+    } finally { setPersonaSaving(false); }
   }
 
   useEffect(() => {
@@ -383,6 +398,9 @@ export default function App() {
           <button onClick={() => { setShowSettings(true); setMobileNav(false); }}>
             <Settings2 size={14} />通用设置
           </button>
+          <button onClick={() => { setShowPersona(true); setMobileNav(false); }}>
+            <Users size={14} />主角：{activePersona?.name ?? '未选择'}
+          </button>
           <button className={page === 'import' ? 'selected' : ''} onClick={() => { setPage('import'); setMobileNav(false); }}>
             <Upload size={14} />导入 SillyTavern
           </button>
@@ -496,7 +514,7 @@ export default function App() {
                           {m.role === 'user'
                             ? m.authorKind === 'user_narrator'
                               ? '你 · 旁白'
-                              : data.personas?.find((p) => p.id === chat.personaId)?.name ?? '你'
+                              : activePersona?.name ?? '你'
                             : speakerName(m.speaker)}
                         </strong>
                         <span>{narrator ? '旁白' : m.role === 'user' ? '主角' : 'Writer'}</span>
@@ -800,11 +818,35 @@ export default function App() {
           <img className="lightbox-content" src={previewImage} alt="角色大图立绘" />
         </div>
       )}
+      {showPersona && <div className="modal-shade" onClick={() => setShowPersona(false)}>
+        <section className="modal" role="dialog" aria-modal="true" aria-label="主角身份" onClick={e => e.stopPropagation()}>
+          <header><h2>主角身份</h2><button aria-label="关闭主角身份" onClick={() => setShowPersona(false)}>✕</button></header>
+          <div className="settings-content settings-section">
+            <label>全局默认主角
+              <select value={generalSettings.defaultPersonaId ?? ''} disabled={!!turn || sending || personaSaving} onChange={e => act(savePersona(e.target.value || null, true))}>
+                <option value="">未选择</option>
+                {data.personas?.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+            {chat && <label>当前故事：{chat.title}
+              <select value={chat.personaId ?? ''} disabled={!!turn || sending || personaSaving} onChange={e => act(savePersona(e.target.value || null, false))}>
+                <option value="">跟随全局默认</option>
+                {data.personas?.map(p => <option key={p.id} value={p.id}>{p.name}（绑定此故事）</option>)}
+              </select>
+            </label>}
+            <p className="muted">新故事和未绑定的故事使用全局默认主角；绑定后切换故事会恢复各自的身份。</p>
+            {!data.personas?.length && <button onClick={() => { setShowPersona(false); setPage('personas'); }}>创建主角身份</button>}
+            {error && <p className="banner error" role="alert">{error}</p>}
+          </div>
+        </section>
+      </div>}
+
       {promptPreview && (
         <div className="modal-shade" style={{ zIndex: 130 }} onClick={() => setPromptPreview(null)}>
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
             <header><h2>发送前提示词预览</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
             <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
+            {promptPreview.action === 'auto' && <p className="muted">草稿为空，正在预览自动继续；自动继续不重复上一轮用户输入。输入草稿后预览可查看本轮输入锚点。</p>}
             <p className="muted">身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)} · 主角：{promptPreview.personaName ?? '未选择（请求使用 Protagonist）'}{promptPreview.clipped ? ' · 已按上下文预算裁剪' : ''}</p>
             <details className="prompt-json" open><summary>实际首请求 Body（未发送）</summary><pre>{prettyJson(promptPreview.requestBody)}</pre></details>
           </section>

@@ -237,6 +237,7 @@ export const narratorProfileSchema = z.object({
 
 export const generalSettingsSchema = z.object({
   connectionId: z.string().min(1).nullable().default(null),
+  defaultPersonaId: z.string().min(1).nullable().default(null),
   generationMode: generationModeSchema.default('plain'),
   streaming: z.boolean().default(true),
   agencyMode: protagonistAgencyModeSchema.default('protected'),

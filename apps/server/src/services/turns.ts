@@ -64,8 +64,8 @@ export class TurnService {
       authorKind: virtualInput.voice === 'narrator' ? 'user_narrator' as const : 'protagonist' as const, speaker: null, content: virtualInput.text,
       providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() } : undefined;
     const source = new StoryContext(this.repository, chatId, virtualMessage);
-    const latest = [...source.history].reverse().find((m) => m.role === 'user');
-    const persona = chat.personaId ? this.repository.getPersona(chat.personaId) : null;
+    const latest = virtualMessage ?? [...this.repository.getActiveBranch(chatId)].reverse().find((m) => m.role === 'user');
+    const persona = this.repository.resolvePersona(chat.personaId);
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
       conversationKind: chat.kind, scenario: chat.scenario, streaming: settings.streaming,
       agencyMode: settings.agencyMode, narrator: settings.narrator, characters: source.cast, persona,
