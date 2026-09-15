@@ -27,9 +27,8 @@ const apiNames = {
 
 let rawRequestSequence = 0;
 
-function logRaw(direction: 'Input' | 'Output', sequence: number, value: unknown): void {
-  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  process.stdout.write(`\n[AI Raw ${direction} #${sequence}]\n${text ?? ''}\n`);
+function logRaw(direction: 'Input' | 'Output', sequence: number, body: string): void {
+  process.stdout.write(`\n[AI Raw ${direction} #${sequence}]\n${body}\n`);
 }
 
 function normalizePayload(value: unknown, connection: RuntimeConnection, streaming: boolean): Record<string, unknown> {
@@ -126,6 +125,22 @@ export class PiModelGateway {
   }
 
   stream(connection: RuntimeConnection, context: Context, options: GatewayStreamOptions = {}): AssistantMessageEventStream {
+    return this.openStream(connection, context, options, this.fetchOverride ?? globalThis.fetch, true);
+  }
+
+  async captureRequestBody(connection: RuntimeConnection, context: Context, options: GatewayStreamOptions = {}): Promise<string> {
+    let body: string | null = null;
+    const captureFetch: typeof fetch = async (_input, init) => {
+      body = String(init?.body ?? '');
+      throw new Error('Request preview captured.');
+    };
+    const stream = this.openStream(connection, context, options, captureFetch, false);
+    for await (const _event of stream) { /* consume the expected capture error */ }
+    if (body === null) throw new Error('Unable to capture the model request body.');
+    return body;
+  }
+
+  private openStream(connection: RuntimeConnection, context: Context, options: GatewayStreamOptions, baseFetch: typeof fetch, terminalLog: boolean): AssistantMessageEventStream {
     const { streaming = true, tracePayload, traceResponse, onSent, onHeaders, ...providerOptions } = options;
     const configuredOptions = Object.fromEntries(Object.entries(providerOptions).filter(([, value]) => value !== undefined));
     if (estimateTokens(JSON.stringify(context)) + (options.maxTokens ?? connection.maxTokens) > (connection.contextWindow ?? 128_000)) throw new Error('Agent context exceeds the configured window after tool results. Reduce history or tool context, or increase the context window.');
@@ -136,22 +151,20 @@ export class PiModelGateway {
         ? anthropicMessagesApi()
         : openAIResponsesApi();
     const reasoning = connection.reasoning === 'off' ? {} : { reasoning: connection.reasoning };
-    const baseFetch = this.fetchOverride ?? globalThis.fetch;
     const transportFetch: typeof fetch = async (input, init) => {
       const payload = normalizePayload(JSON.parse(String(init?.body ?? '{}')), connection, streaming);
-      const sequence = ++rawRequestSequence;
-      logRaw('Input', sequence, payload);
-      tracePayload?.(payload); onSent?.();
-      const response = await baseFetch(input, { ...init, body: JSON.stringify(payload) });
+      const requestBody = JSON.stringify(payload);
+      const sequence = !streaming && terminalLog ? ++rawRequestSequence : 0;
+      if (sequence) logRaw('Input', sequence, requestBody);
+      tracePayload?.(requestBody); onSent?.();
+      const response = await baseFetch(input, { ...init, body: requestBody });
       onHeaders?.();
-      try {
-        void response.clone().text().then((text) => logRaw('Output', sequence, text)).catch((error) => logRaw('Output', sequence, `[unavailable: ${String(error)}]`));
-      } catch (error) {
-        logRaw('Output', sequence, `[unavailable: ${String(error)}]`);
-      }
-      if (streaming || !response.ok) return response;
-      const body = await response.json();
-      return new Response(convertNonStreamingResponse(connection.protocol, body), {
+      if (streaming) return response;
+      const responseBody = await response.text();
+      if (sequence) logRaw('Output', sequence, responseBody);
+      traceResponse?.(responseBody);
+      if (!response.ok) return new Response(responseBody, { status: response.status, statusText: response.statusText, headers: response.headers });
+      return new Response(convertNonStreamingResponse(connection.protocol, JSON.parse(responseBody)), {
         status: response.status,
         statusText: response.statusText,
         headers: { ...Object.fromEntries(response.headers.entries()), 'content-type': 'text/event-stream; charset=utf-8' },
@@ -172,7 +185,6 @@ export class PiModelGateway {
         return (await providerOptions.onPayload?.(adjusted, model)) ?? adjusted;
       },
       onResponse: async (response: unknown, model: Model<Api>) => {
-        traceResponse?.(response);
         await providerOptions.onResponse?.(response as never, model);
       },
       // Pi's loop includes apiKey: undefined; it must not erase our scoped connection key.

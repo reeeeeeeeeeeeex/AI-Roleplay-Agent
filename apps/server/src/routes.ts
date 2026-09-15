@@ -3,43 +3,16 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { characterInputSchema, connectionInputSchema, conversationInputSchema, groupInputSchema, lorebookInputSchema, personaInputSchema, normalizeState, applyStateOperations, blankState, turnRequestSchema, promptSettingsSchema, speakerRefSchema } from '@new-ai-chat/contracts';
+import { characterInputSchema, connectionInputSchema, conversationInputSchema, groupInputSchema, lorebookInputSchema, personaInputSchema, normalizeState, applyStateOperations, blankState, turnRequestSchema, promptSettingsSchema } from '@new-ai-chat/contracts';
 import type { Repository } from './db/repository.js';
 import type { TurnService } from './services/turns.js';
 import { RecordService, applyProposal, settledStoryIds } from './services/records.js';
 import { scanImport } from './services/import-scan.js';
 import { executeImport } from './services/importer.js';
-import { buildWriterContext, expandStoryMacros, fitRequest } from '@new-ai-chat/agent-runtime';
+import { expandStoryMacros } from '@new-ai-chat/agent-runtime';
 import { generalSettingsSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
-
-function promptText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.map((part: any) => typeof part === 'string' ? part : part.text ?? '').join('');
-}
-
-function promptRequestJson(connection: any, systemPrompt: string, messages: Array<{ role: string; content: string }>) {
-  const safe = { model: connection.model, stream: connection.streaming ?? true, temperature: connection.temperature };
-  if (connection.protocol === 'anthropic-messages') {
-    return { protocol: connection.protocol, ...safe, max_tokens: connection.maxTokens, system: systemPrompt, messages };
-  }
-  if (connection.protocol === 'openai-responses') {
-    const systemRole = connection.reasoning !== 'off' ? 'developer' : 'system';
-    return {
-      protocol: connection.protocol,
-      model: connection.model,
-      stream: connection.streaming ?? true,
-      temperature: connection.temperature,
-      max_output_tokens: connection.maxTokens,
-      input: [{ role: systemRole, content: systemPrompt }, ...messages.flatMap((message, index) => message.role === 'assistant'
-        ? [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: message.content, annotations: [] }], status: 'completed', id: `preview-${index}` }]
-        : [{ role: 'user', content: [{ type: 'input_text', text: message.content }] }])],
-    };
-  }
-  return { protocol: connection.protocol, ...safe, max_tokens: connection.maxTokens, messages: [{ role: 'system', content: systemPrompt }, ...messages] };
-}
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
@@ -125,30 +98,8 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.get('/api/conversations/:id/traces', async req => repo.listConversationTraces(idOf(req)));
   app.post('/api/conversations/:id/prompt-preview', async (req) => {
     const chatId = idOf(req);
-    const body = z.object({ speaker: speakerRefSchema.optional(), brief: z.string().max(4_000).default('待选择回复身份'), inputText: z.string().max(100_000).optional(), inputVoice: z.enum(['protagonist', 'narrator']).optional() }).parse(req.body ?? {});
-    const request = await turns.request(chatId, `preview-${Date.now()}`, AbortSignal.timeout(5_000));
-    const draftRequest = { ...request, latestUserText: body.inputText ?? request.latestUserText, latestUserIsNarration: body.inputVoice ? body.inputVoice === 'narrator' : request.latestUserIsNarration };
-    const chat = repo.getConversation(chatId)!;
-    const generationMode = repo.getGeneralSettings().generationMode;
-    const pendingSelection = !body.speaker && (generationMode !== 'plain' || chat.kind === 'group');
-    const speaker = body.speaker ?? (request.characters[0] ? { kind: 'character', characterId: request.characters[0].id } : { kind: 'narrator' });
-    const brief = generationMode === 'plain' ? '' : body.brief;
-    const context = fitRequest({ ...draftRequest, speaker, brief } as any, brief);
-    const writer = buildWriterContext({ ...context, speaker, pendingSpeaker: pendingSelection, brief, outputIndex: 0, mode: generationMode } as any);
-    const promptMessages = writer.messages.map((message) => ({ role: message.role, content: promptText(message.content) }));
-    const prompts = repo.getPromptSettings();
-    return {
-      segments: [
-        { source: 'system', role: 'system', title: '稳定提示词', content: writer.systemPrompt },
-        ...(generationMode === 'writer-agent' ? [{ source: 'agent', role: 'system', title: 'Writer Agent 行为指令', content: prompts.writerInstruction }] : generationMode === 'planner' ? [{ source: 'planner', role: 'system', title: 'Planner 指令', content: prompts.plannerInstruction }] : []),
-        ...writer.messages.map((message, index) => ({ source: index === writer.messages.length - 1 ? 'latest-anchor' : 'history-or-dynamic', role: message.role, title: `消息 ${index + 1}`, content: typeof message.content === 'string' ? message.content : message.content.map((part: any) => part.text ?? '').join('') })),
-      ],
-      requestJson: promptRequestJson({ ...request.connection, streaming: request.streaming }, writer.systemPrompt, promptMessages),
-      generationMode,
-      speaker: pendingSelection ? null : speaker,
-      pendingSelection,
-      clipped: context.history.length < request.history.length || context.dynamicContext.length < request.dynamicContext.length,
-    };
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    return turns.preview(turnRequestSchema.parse({ ...body, conversationId: chatId }), AbortSignal.timeout(5_000));
   });
   app.post('/api/turns/:id/cancel', async (req) => ({ cancelled: turns.cancel(idOf(req)) }));
   app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));

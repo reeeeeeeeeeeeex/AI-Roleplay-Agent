@@ -9,6 +9,7 @@ import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
 const studioCollections: Collection[] = ['characters', 'personas', 'groups', 'lorebooks'];
+const prettyJson = (body: string) => { try { return JSON.stringify(JSON.parse(body), null, 2); } catch { return body; } };
 
 export default function App() {
   const [data, setData] = useState<Record<string, any[]>>({});
@@ -220,23 +221,27 @@ export default function App() {
     }
   }, [Object.keys(data).length]);
 
-  async function send(trigger = 'normal', targetMessageId?: string) {
+  function turnPayload(trigger: 'normal' | 'auto' | 'regenerate' | 'continue', targetMessageId?: string) {
+    const replyTargetValue = replyTarget === 'auto'
+      ? { mode: 'auto' as const }
+      : { mode: 'explicit' as const, speaker: replyTarget === 'narrator' ? { kind: 'narrator' as const } : { kind: 'character' as const, characterId: replyTarget } };
+    return {
+      conversationId: chat!.id,
+      trigger,
+      replyTarget: replyTargetValue,
+      ...(targetMessageId ? { targetMessageId } : {}),
+      ...(trigger === 'normal' ? { input: { voice, text } } : {}),
+    };
+  }
+
+  async function send(trigger: 'normal' | 'auto' | 'regenerate' | 'continue' = 'normal', targetMessageId?: string) {
     if (!chat || turn || sendPending.current) return;
     sendPending.current = true;
     setSending(true);
     setError('');
     setNotice('');
-    const target = replyTarget === 'auto'
-      ? { mode: 'auto' }
-      : { mode: 'explicit', speaker: replyTarget === 'narrator' ? { kind: 'narrator' } : { kind: 'character', characterId: replyTarget } };
     try {
-      const result = await api('/turns', 'POST', {
-        conversationId: chat.id,
-        trigger,
-        replyTarget: target,
-        ...(targetMessageId ? { targetMessageId } : {}),
-        ...(trigger === 'normal' ? { input: { voice, text } } : {}),
-      });
+      const result = await api('/turns', 'POST', turnPayload(trigger, targetMessageId));
       // Clear only the accepted draft, never newer typing or another chat's input.
       if (trigger === 'normal') setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
       if (chatRef.current !== chat.id) return;
@@ -262,7 +267,9 @@ export default function App() {
 
   async function showPromptPreview() {
     if (!chat) return;
-    try { setPromptPreview(await api(`/conversations/${chat.id}/prompt-preview`, 'POST', { speaker: replyTarget === 'auto' ? undefined : replyTarget === 'narrator' ? { kind: 'narrator' } : { kind: 'character', characterId: replyTarget }, brief: replyTarget === 'auto' ? '待选择回复身份' : '当前回复身份', inputText: text, inputVoice: voice })); }
+    const trigger = text.trim() ? 'normal' : 'auto';
+    const { conversationId: _conversationId, ...payload } = turnPayload(trigger);
+    try { setPromptPreview(await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload)); }
     catch (err: any) { setError(err.message || '预览失败'); }
   }
 
@@ -797,9 +804,9 @@ export default function App() {
         <div className="modal-shade" style={{ zIndex: 130 }} onClick={() => setPromptPreview(null)}>
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
             <header><h2>发送前提示词预览</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
-            <p className="muted">模式：{promptPreview.generationMode} · 身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)}</p>
-            <details className="prompt-json" open><summary>JSON 请求预览（协议形状，不含密钥）</summary><pre>{JSON.stringify(promptPreview.requestJson, null, 2)}</pre></details>
-            <div className="prompt-preview-list">{promptPreview.segments?.map((segment: any, index: number) => <details key={index} open={index === 0}><summary>{segment.title} · {segment.role} · {segment.source}</summary><pre>{segment.content}</pre></details>)}</div>
+            <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
+            <p className="muted">身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)} · 主角：{promptPreview.personaName ?? '未选择（请求使用 Protagonist）'}{promptPreview.clipped ? ' · 已按上下文预算裁剪' : ''}</p>
+            <details className="prompt-json" open><summary>实际首请求 Body（未发送）</summary><pre>{prettyJson(promptPreview.requestBody)}</pre></details>
           </section>
         </div>
       )}

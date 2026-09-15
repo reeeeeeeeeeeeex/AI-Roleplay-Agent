@@ -131,7 +131,16 @@ export interface UnifiedWriterOptions {
   onThinkingDelta?: (text: string, outputIndex: number) => void;
 }
 
+export interface FirstRequestPreview {
+  phase: TracePhase;
+  requestBody: string;
+  speaker: SpeakerRef | null;
+  pendingSelection: boolean;
+  clipped: boolean;
+}
+
 export interface AgentRuntime {
+  previewFirstRequest(request: BaseAgentRequest, mode: GenerationMode, forcedPlan?: TurnPlan): Promise<FirstRequestPreview>;
   maintain(request: BaseAgentRequest, instruction: string): Promise<string>;
   plan(request: RouteRequest, onTool?: (name: string, args: unknown) => void): Promise<TurnPlan>;
   writeTurn(request: BaseAgentRequest, options: UnifiedWriterOptions): Promise<AgentTurnResult>;

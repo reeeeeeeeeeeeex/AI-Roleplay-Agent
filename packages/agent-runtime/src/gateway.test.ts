@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Context } from '@earendil-works/pi-ai';
 import { PiModelGateway } from './pi-gateway.js';
 import type { RuntimeConnection } from './types.js';
@@ -45,21 +45,32 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
 
 describe('gateway transport contract', () => {
   it.each(['openai-chat-completions', 'anthropic-messages', 'openai-responses'] as const)('%s sends real stream values', async (protocol) => {
-    const sent: boolean[] = [];
-    const fetchMock: typeof fetch = async (_input, init) => {
-      const streaming = Boolean(JSON.parse(String(init?.body)).stream);
-      sent.push(streaming);
-      return response(protocol, streaming);
-    };
+    const sent: boolean[] = [], sentBodies: string[] = [], rawResponses: string[] = [], writes: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = String(init?.body), streaming = Boolean(JSON.parse(body).stream);
+      sent.push(streaming); sentBodies.push(body);
+      const value = response(protocol, streaming); rawResponses.push(await value.clone().text()); return value;
+    });
     const connection: RuntimeConnection = { id: 'test', protocol, baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 0.5, maxTokens: 100, reasoning: 'high' };
+    const gateway = new PiModelGateway(fetchMock);
+    const captured = await gateway.captureRequestBody(connection, context, { streaming: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => { writes.push(String(chunk)); return true; }) as typeof process.stdout.write);
     for (const streaming of [true, false]) {
       let text = '', thinking = '';
-      for await (const event of new PiModelGateway(fetchMock).stream(connection, context, { streaming })) {
+      const requests: unknown[] = [], responses: unknown[] = [];
+      writes.length = 0;
+      for await (const event of gateway.stream(connection, context, { streaming, tracePayload: value => requests.push(value), traceResponse: value => responses.push(value) })) {
         if (event.type === 'text_delta') text += event.delta;
         if (event.type === 'thinking_delta') thinking += event.delta;
       }
       expect(text).toBe('OK'); expect(thinking).toBe('think');
+      expect(requests).toEqual([sentBodies.at(-1)]);
+      if (streaming) { expect(writes).toEqual([]); expect(responses).toEqual([]); }
+      else { expect(writes.join('')).toContain(sentBodies.at(-1)); expect(writes.join('')).toContain(rawResponses.at(-1)); expect(responses).toEqual([rawResponses.at(-1)]); }
     }
+    write.mockRestore();
+    expect(captured).toBe(sentBodies[0]);
     expect(sent).toEqual([true, false]);
   });
 });

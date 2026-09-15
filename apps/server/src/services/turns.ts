@@ -55,13 +55,16 @@ export class TurnService {
     return turn;
   }
 
-  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false): Promise<BaseAgentRequest> {
+  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input']): Promise<BaseAgentRequest> {
     const chat = this.repository.getConversation(chatId)!;
     const settings = this.repository.getGeneralSettings();
     const connection = this.repository.resolveConnection();
     if (!connection) throw new Error('请在左下角通用设置中选择模型连接。');
-    const source = new StoryContext(this.repository, chatId);
-    const latest = [...this.repository.getActiveBranch(chatId)].reverse().find((m) => m.role === 'user');
+    const virtualMessage = virtualInput ? { id: `preview-${storyTurnId}`, conversationId: chatId, parentId: chat.headMessageId, storyTurnId, role: 'user' as const,
+      authorKind: virtualInput.voice === 'narrator' ? 'user_narrator' as const : 'protagonist' as const, speaker: null, content: virtualInput.text,
+      providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() } : undefined;
+    const source = new StoryContext(this.repository, chatId, virtualMessage);
+    const latest = [...source.history].reverse().find((m) => m.role === 'user');
     const persona = chat.personaId ? this.repository.getPersona(chat.personaId) : null;
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
       conversationKind: chat.kind, scenario: chat.scenario, streaming: settings.streaming,
@@ -70,6 +73,21 @@ export class TurnService {
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal,
       promptSettings: this.repository.getPromptSettings() };
     return this.plugins ? this.plugins.enrich(request) : request;
+  }
+
+  async preview(input: TurnRequest, signal: AbortSignal) {
+    if (input.trigger !== 'normal' && input.trigger !== 'auto') throw new Error('Prompt preview supports normal send and auto continue only.');
+    const chat = this.repository.getConversation(input.conversationId);
+    if (!chat) throw new Error('Conversation not found.');
+    this.assertIdle(chat.id);
+    const request = await this.request(chat.id, `preview-${Date.now()}`, signal, input.trigger === 'auto', input.trigger === 'normal' ? input.input : undefined);
+    const forced = input.replyTarget.mode === 'explicit' ? input.replyTarget.speaker : null;
+    if (forced?.kind === 'character' && !request.characters.some((character) => character.id === forced.characterId)) throw new Error('Speaker is not in this conversation.');
+    const mode = this.repository.getGeneralSettings().generationMode;
+    if (mode === 'plain' && !forced && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
+    const plan = forced ? { ...fallbackPlan(request.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : undefined;
+    const preview = await this.runtime.previewFirstRequest(request, mode, plan);
+    return { action: input.trigger, generationMode: mode, protocol: request.connection.protocol, personaName: request.persona?.name ?? null, ...preview };
   }
 
   private async run(turn: TurnRecord, input: TurnRequest, parent: string | null, forced: SpeakerRef | null, prefix: string, swipe: boolean, oldHead: string | null, signal: AbortSignal) {

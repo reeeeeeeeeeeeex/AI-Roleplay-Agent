@@ -72,17 +72,35 @@ it('general settings: old and new stories share preview and generation settings'
     const story = (await server.app.inject({ url: `/api/conversations/${id}` })).json();
     expect(story).not.toHaveProperty('connectionId');
     expect(story).not.toHaveProperty('generationMode');
-    const preview = (await server.app.inject({ method: 'POST', url: `/api/conversations/${id}/prompt-preview`, payload: { inputText: '开门。', speaker: { kind: 'narrator' } } })).json();
+    const preview = (await server.app.inject({ method: 'POST', url: `/api/conversations/${id}/prompt-preview`, payload: { trigger: 'normal', input: { text: '开门。', voice: 'protagonist' }, replyTarget: { mode: 'explicit', speaker: { kind: 'narrator' } } } })).json();
     expect(preview.generationMode).toBe('plain');
-    expect(preview.segments[0].content).toContain('全局旁白');
-    expect(preview.requestJson.protocol).toBe('openai-responses');
-    expect(preview.requestJson.input?.[0]?.content).toContain('[Main Instruction]');
+    expect(preview.protocol).toBe('openai-responses');
+    expect(preview.requestBody).toContain('[Main Instruction]');
+    expect(preview.requestBody).toContain('全局旁白');
     const turn = server.turns.start(turnRequestSchema.parse({ conversationId: id, input: { text: '开门。', voice: 'protagonist' }, replyTarget: { mode: 'explicit', speaker: { kind: 'narrator' } } }));
     await server.turns.idle(id);
     expect(repo.getTurn(turn.id)?.status).toBe('completed');
     expect(runtime.requests.at(-1)).toMatchObject({ connection: { id: selected.id }, agencyMode: 'coauthor', narrator: settings.narrator });
   }
   expect(writeTurn.mock.calls.map(([, options]) => options.mode)).toEqual(['plain', 'plain']);
+  const network = vi.fn(() => { throw new Error('preview must not use the network'); });
+  vi.stubGlobal('fetch', network);
+  const messageCount = repo.listMessages(chat).length;
+  for (const [generationMode, phase, tool] of [['plain', 'plain', null], ['writer-agent', 'selection', 'select_output_voices'], ['planner', 'planning', 'submit_turn_plan']] as const) {
+    repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode });
+    const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'normal', input: { text: '推开门。', voice: 'protagonist' }, replyTarget: { mode: 'auto' } } });
+    expect(response.statusCode).toBe(200);
+    const preview = response.json();
+    expect(preview).toMatchObject({ action: 'normal', generationMode, phase, protocol: 'openai-responses', personaName: null });
+    expect(preview.requestBody).toContain('推开门。');
+    if (tool) expect(preview.requestBody).toContain(tool);
+  }
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain' });
+  const auto = (await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'auto', replyTarget: { mode: 'auto' } } })).json();
+  expect(auto.action).toBe('auto');
+  expect(auto.requestBody).not.toContain('[Latest User Input]');
+  expect(repo.listMessages(chat)).toHaveLength(messageCount);
+  expect(network).not.toHaveBeenCalled();
 });
 describe('native turns and narrator',()=>{
   it('routes to narrator and character, and gives the second writer the first response',async()=>{

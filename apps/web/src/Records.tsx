@@ -13,6 +13,10 @@ const tableNames: Record<string, string> = {
   quests_events: '任务与事件',
   options: '选项',
 };
+const formatBody = (value: unknown) => {
+  if (typeof value !== 'string') return JSON.stringify(value, null, 2);
+  try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
+};
 
 export default function Records({
   chat,
@@ -229,7 +233,8 @@ export default function Records({
                     <small className="muted">工具 {trace.tools?.length ?? 0} · 总输入 {totalInput ?? '未返回'} · 输出 {usage?.output ?? '未返回'} · 缓存命中 {usage?.cacheRead ?? '未返回'} / {cacheRate}{usage?.cacheWrite ? ` · 缓存写入 ${usage.cacheWrite}` : ''}{usage?.reasoning !== undefined ? ` · 思考 ${usage.reasoning}` : ''}</small>
                     <small className="muted">准备 {elapsed(timing?.preparedAt, timing?.sentAt)} · 响应头 {elapsed(timing?.sentAt, timing?.headersAt)} · 首次思考 {elapsed(timing?.sentAt, timing?.firstThinkingAt)} · 首次正文 {elapsed(timing?.sentAt, timing?.firstTextAt)} · 总耗时 {elapsed(timing?.sentAt, timing?.completedAt)}</small>
                     {trace.speaker && <small className="muted">输出身份：{trace.speaker.kind === 'narrator' ? '旁白' : trace.speaker.characterId}</small>}
-                    <details><summary>实际请求 payload</summary><pre>{trace.request ? JSON.stringify(trace.request, null, 2) : '不可用（旧回合未捕获）'}</pre></details>
+                    <details><summary>实际请求 Body</summary><pre>{trace.request ? formatBody(trace.request) : '不可用（旧回合未捕获）'}</pre></details>
+                    {trace.response && <details><summary>原始响应 Body</summary><pre>{formatBody(trace.response)}</pre></details>}
                     <details><summary>工具调用与结果</summary><pre>{trace.tools?.length ? JSON.stringify(trace.tools, null, 2) : '无工具调用'}</pre></details>
                     <details open><summary>可见思考</summary><pre>{trace.thinking || '模型未返回可见思考内容。'}</pre></details>
                     {trace.error && <p className="warning">{trace.error}</p>}

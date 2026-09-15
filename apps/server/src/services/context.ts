@@ -9,9 +9,9 @@ export class StoryContext implements StoryContextSource {
   readonly state;
   readonly memory: RetrievedContext[];
   readonly lore;
-  constructor(repository: Repository, conversationId: string) {
+  constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode) {
     const chat = repository.getConversation(conversationId)!;
-    const history = repository.getActiveBranch(conversationId).filter((m) => m.role !== 'system');
+    const history = [...repository.getActiveBranch(conversationId).filter((m) => m.role !== 'system'), ...(virtualMessage ? [virtualMessage] : [])];
     const ceiling = repository.resolveConnection()?.historyMessageLimit ?? 0;
     this.history = ceiling > 0 ? history.slice(-ceiling) : history;
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
