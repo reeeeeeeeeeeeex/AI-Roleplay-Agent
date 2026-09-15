@@ -99,11 +99,10 @@ export function buildDynamicAnchor(request: BaseAgentRequest, brief: string, spe
   const context = [...request.dynamicContext]
     .sort((left, right) => right.priority - left.priority)
     .map((item) => dynamicSection(item, request));
-  const latestLabel = request.latestUserIsNarration ? 'User Narration' : 'Latest User Input';
   return [
     ...context,
     section('Writer Brief', brief),
-    section(latestLabel, request.latestUserText),
+    latestUserAnchor(request),
     section('Current Speaker', speakerName(speaker, request.characters, request.narrator.name)),
   ].filter(Boolean).join('\n\n');
 }
@@ -113,6 +112,11 @@ export function buildDynamicContext(request: BaseAgentRequest): string {
     .sort((left, right) => right.priority - left.priority)
     .map((item) => dynamicSection(item, request))
     .filter(Boolean).join('\n\n');
+}
+
+export function latestUserAnchor(request: BaseAgentRequest): string {
+  if (!request.latestUserText.trim()) return '';
+  return section(request.latestUserIsNarration ? 'User Narration' : 'Latest User Input', `以下是用户本轮输入：\n“${request.latestUserText}”`);
 }
 
 function syntheticContext(text: string): Message {
@@ -167,7 +171,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
   const content = [
     ...postHistorySections(request),
     briefSection,
-    section(request.latestUserIsNarration ? 'User Narration' : 'Latest User Input', request.latestUserText),
+    latestUserAnchor(request),
     currentSpeakerSection,
   ].filter(Boolean).join('\n\n');
 

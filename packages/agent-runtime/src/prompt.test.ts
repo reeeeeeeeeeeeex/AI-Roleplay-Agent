@@ -64,7 +64,7 @@ describe('ReST prompt assembly', () => {
     expect(memoryMsg).toContain('old events');
 
     const finalPlain = textOf(plain.messages.at(-1));
-    expect(finalPlain).toContain('[Latest User Input]\n我推开门。');
+    expect(finalPlain).toContain('[Latest User Input]\n以下是用户本轮输入：\n“我推开门。”');
     expect(finalPlain).not.toContain('[Writer Brief]');
     expect(finalPlain).toContain('[Current Speaker]\nA');
   });

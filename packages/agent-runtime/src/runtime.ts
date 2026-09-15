@@ -1,7 +1,7 @@
 import { Agent, type AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type AssistantMessage, type Context, type Message } from '@earendil-works/pi-ai';
 import type { RequestTiming, SpeakerRef, TurnPlan } from '@new-ai-chat/contracts';
-import { buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest } from './prompt.js';
+import { buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest, latestUserAnchor } from './prompt.js';
 import { fallbackPlan, validatePlan } from './plan.js';
 import { PiModelGateway } from './pi-gateway.js';
 import type {
@@ -130,7 +130,7 @@ function routingPrompt(request: RouteRequest, fullPlanner: boolean): string {
   const mode = fullPlanner
     ? 'Plan the next story turn. You may inspect context with read-only tools, then you MUST call submit_turn_plan. Include proposals only when supported by story evidence.'
     : 'Choose the most natural visible response voice or two-voice sequence, then you MUST call select_output_voices. Do not propose state changes.';
-  return `${mode}\n\nAvailable character IDs:\n${cast || '(none)'}\n\nThe narrator is always available as {"kind":"narrator"}.\nLatest user input:\n${request.latestUserText}`;
+  return `${mode}\n\nAvailable character IDs:\n${cast || '(none)'}\n\nThe narrator is always available as {"kind":"narrator"}.\n${latestUserAnchor(request)}`;
 }
 
 function routingStart(request: RouteRequest, fullPlanner: boolean, capture: (plan: TurnPlan) => void) {
