@@ -10,7 +10,7 @@ export function parseModelJson(text: string): unknown {
 export function settledStoryIds(repository: Repository, chat: string): string[] {
   const branch = repository.getActiveBranch(chat);
   const ids = new Set(branch.map((message) => message.id));
-  return [...new Set(repository.events(chat).filter((event) => event.type === 'story.settled' && ids.has((event.payload as { head: string }).head) && (!event.turnId || !['failed', 'cancelled'].includes(repository.getTurn(event.turnId)?.status ?? 'failed'))).map((event) => (event.payload as { storyTurnId: string }).storyTurnId))];
+  return [...new Set(repository.events(chat).filter((event) => event.type === 'story.settled' && ids.has((event.payload as { head: string }).head)).map((event) => (event.payload as { storyTurnId: string }).storyTurnId))];
 }
 export class RecordService {
   private pending = new Set<string>();

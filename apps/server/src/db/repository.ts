@@ -87,6 +87,8 @@ function mapTurn(row: TurnRow): TurnRecord {
     status: row.status as TurnRecord['status'],
     trigger: row.trigger as TurnRecord['trigger'],
     plan: row.plan,
+    progress: row.progress,
+    recordsStatus: row.recordsStatus as TurnRecord['recordsStatus'],
     error: row.error,
     createdAt: row.createdAt,
     completedAt: row.completedAt,
@@ -321,7 +323,7 @@ export class Repository {
     this.database.db.insert(turns).values(row).run(); return this.getTurn(row.id)!;
   }
   getTurn(turnId: string): TurnRecord | null { const row = this.database.db.select().from(turns).where(eq(turns.id, turnId)).get(); return row ? mapTurn(row) : null; }
-  updateTurn(turnId: string, values: { status?: TurnRecord['status']; plan?: TurnPlan | null; error?: string | null; completedAt?: string | null }): TurnRecord {
+  updateTurn(turnId: string, values: Partial<Pick<TurnRecord, 'status' | 'plan' | 'progress' | 'recordsStatus' | 'error' | 'completedAt'>>): TurnRecord {
     this.database.db.update(turns).set(values).where(eq(turns.id, turnId)).run(); return this.getTurn(turnId)!;
   }
 
@@ -460,8 +462,13 @@ export class Repository {
   }
   recoverInterruptedTurns(): void {
     for (const turn of this.database.db.select().from(turns).where(inArray(turns.status, ['queued', 'running'])).all()) {
-      this.updateTurn(turn.id, { status: 'failed', error: 'Server restarted during generation.', completedAt: now() });
-      this.addEvent(turn.conversationId, turn.id, 'turn.failed', { turnId: turn.id, error: 'Server restarted during generation.' });
+      const status = turn.progress?.completedMessageIds.length ? 'partial' : 'failed';
+      this.updateTurn(turn.id, { status, error: 'Server restarted during generation.', completedAt: now() });
+      this.addEvent(turn.conversationId, turn.id, `turn.${status}`, { turnId: turn.id, error: 'Server restarted during generation.' });
+    }
+    for (const turn of this.database.db.select().from(turns).where(eq(turns.recordsStatus, 'running')).all()) {
+      this.updateTurn(turn.id, { recordsStatus: 'cancelled' });
+      this.addEvent(turn.conversationId, turn.id, 'turn.completed', { turnId: turn.id, recordsStatus: 'cancelled' });
     }
   }
   recordImport(sourcePath: string, sourceHash: string, report: unknown): void {

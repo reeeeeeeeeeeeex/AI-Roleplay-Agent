@@ -5,6 +5,7 @@ import type {
   ProtagonistTables,
   SpeakerRef,
   TurnPlan,
+  TurnProgress,
 } from '@new-ai-chat/contracts';
 
 const timestamps = {
@@ -122,6 +123,8 @@ export const turns = sqliteTable('turns', {
   status: text('status').notNull(),
   trigger: text('trigger').notNull(),
   plan: text('plan', { mode: 'json' }).$type<TurnPlan | null>(),
+  progress: text('progress', { mode: 'json' }).$type<TurnProgress | null>(),
+  recordsStatus: text('records_status').notNull().default('idle'),
   error: text('error'),
   createdAt: text('created_at').notNull(),
   completedAt: text('completed_at'),

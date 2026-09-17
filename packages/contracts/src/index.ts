@@ -383,13 +383,33 @@ export interface ProtagonistStateSnapshot {
   createdAt: string;
 }
 
+export interface InterruptedOutput {
+  outputIndex: number;
+  speaker: SpeakerRef;
+  text: string;
+  thinking: string;
+}
+
+export interface TurnProgress {
+  request: TurnRequest;
+  head: string | null;
+  parent: string | null;
+  oldHead: string | null;
+  prefix: string;
+  swipe: boolean;
+  completedMessageIds: string[];
+  interruptedOutputs: InterruptedOutput[];
+}
+
 export interface TurnRecord {
   id: string;
   conversationId: string;
   storyTurnId: string;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'partial' | 'completed' | 'failed' | 'cancelled';
   trigger: 'normal' | 'regenerate' | 'continue' | 'auto';
   plan: TurnPlan | null;
+  progress: TurnProgress | null;
+  recordsStatus: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   error: string | null;
   createdAt: string;
   completedAt: string | null;

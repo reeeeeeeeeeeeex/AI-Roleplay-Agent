@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { fallbackPlan, validatePlan, type AgentRuntime, type BaseAgentRequest, type TracePhase } from '@new-ai-chat/agent-runtime';
-import type { TurnRequest, TurnRecord, TurnPlan, SpeakerRef } from '@new-ai-chat/contracts';
+import type { TurnRequest, TurnRecord, TurnPlan, SpeakerRef, TurnProgress, InterruptedOutput } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 import { EventBroker } from './events.js';
 import { StoryContext } from './context.js';
@@ -47,11 +47,36 @@ export class TurnService {
       }
       this.repository.setHead(chat.id, request.trigger === 'continue' ? target!.id : parent);
     })();
+    const progress: TurnProgress = { request, head: this.repository.getConversation(chat.id)!.headMessageId, parent, oldHead: chat.headMessageId,
+      prefix: continueText, swipe, completedMessageIds: [], interruptedOutputs: [] };
+    return this.launch(this.repository.updateTurn(turn.id, { progress }));
+  }
+
+  retry(id: string): TurnRecord {
+    const previous = this.repository.getTurn(id);
+    if (!previous?.progress || !['partial', 'failed', 'cancelled'].includes(previous.status)) throw new Error('此回合没有可重试的输出。');
+    this.assertIdle(previous.conversationId);
+    if (!this.repository.resolveConnection()) throw new Error('请在左下角通用设置中选择模型连接。');
+    const progress = structuredClone(previous.progress);
+    if (this.repository.getConversation(previous.conversationId)?.headMessageId !== progress.head) throw new Error('当前分支已变化，请返回原分支后重试。');
+    if (previous.plan) validatePlan(previous.plan, previous.storyTurnId, new StoryContext(this.repository, previous.conversationId).cast);
+    const turn = this.repository.database.sqlite.transaction(() => {
+      const next = this.repository.createTurn(previous.conversationId, previous.storyTurnId, previous.trigger);
+      if (!progress.completedMessageIds.length && previous.trigger !== 'continue') {
+        progress.head = progress.parent; this.repository.setHead(previous.conversationId, progress.head);
+      }
+      progress.interruptedOutputs = [];
+      return this.repository.updateTurn(next.id, { plan: previous.plan, progress });
+    })();
+    return this.launch(turn);
+  }
+
+  private launch(turn: TurnRecord): TurnRecord {
     const controller = new AbortController();
     const task = { id: turn.id, controller, done: Promise.resolve() };
-    this.active.set(chat.id, task);
+    this.active.set(turn.conversationId, task);
     // Defer work until after registration, so sync fake providers follow the same lifecycle.
-    task.done = Promise.resolve().then(() => this.run(turn, request, parent, forced, continueText, swipe, chat.headMessageId, controller.signal)).finally(() => this.active.delete(chat.id));
+    task.done = Promise.resolve().then(() => this.run(turn, controller.signal)).finally(() => this.active.delete(turn.conversationId));
     return turn;
   }
 
@@ -90,9 +115,16 @@ export class TurnService {
     return { action: input.trigger, generationMode: mode, protocol: request.connection.protocol, personaName: request.persona?.name ?? null, ...preview };
   }
 
-  private async run(turn: TurnRecord, input: TurnRequest, parent: string | null, forced: SpeakerRef | null, prefix: string, swipe: boolean, oldHead: string | null, signal: AbortSignal) {
-    let expectedHead = this.repository.getConversation(turn.conversationId)!.headMessageId;
-    let wrote = false;
+  private async run(turn: TurnRecord, signal: AbortSignal) {
+    const progress = turn.progress!;
+    const { request: input, prefix, swipe, oldHead } = progress;
+    const target = input.targetMessageId ? this.repository.getMessage(input.targetMessageId) : null;
+    const forced = input.replyTarget.mode === 'explicit' ? input.replyTarget.speaker : (swipe || input.trigger === 'continue') ? target?.speaker ?? null : null;
+    let parent = progress.parent;
+    let expectedHead = progress.head;
+    const offset = progress.completedMessageIds.length;
+    let settled = false;
+    const live = new Map<number, Omit<InterruptedOutput, 'outputIndex'>>();
     const emit = (type: string, data: unknown = {}) => this.events.publish(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
     const emitVolatile = (type: string, data: unknown = {}) => this.events.publishVolatile(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
     const fresh = () => { signal.throwIfAborted(); if (this.repository.getConversation(turn.conversationId)?.headMessageId !== expectedHead) throw new Error('Branch changed; discarded stale generation.'); };
@@ -102,7 +134,7 @@ export class TurnService {
       const chat = this.repository.getConversation(turn.conversationId)!;
       const mode = this.repository.getGeneralSettings().generationMode;
       let actualMode = mode;
-      let plan: TurnPlan | null = forced ? { ...fallbackPlan(turn.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : null;
+      let plan: TurnPlan | null = turn.plan ?? (forced ? { ...fallbackPlan(turn.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : null);
       let requestIndex = 0;
       const traceSink = {
         start: (phase: TracePhase, model: string, speaker?: SpeakerRef) => {
@@ -130,7 +162,7 @@ export class TurnService {
       };
       if (mode === 'plain' && !forced && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
       if (mode === 'plain' && !plan) { plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = []; }
-      if (mode === 'planner' && !forced) {
+      if (mode === 'planner' && !forced && !plan) {
         try {
           const routed = { ...request, trace: traceSink, signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]), plannerEnabled: true };
           const onTool = (name: string, args: unknown) => emit('tool.called', { phase: 'planner', name, args });
@@ -140,42 +172,16 @@ export class TurnService {
           fresh(); plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = ['Planner failed; used the current character.']; emit('planner.fallback', { reason: this.repository.redactError(error) });
         }
       }
-      let started = new Set<number>();
-      const live = new Map<number, { speaker: SpeakerRef; text: string; thinking: string }>();
+      const started = new Set<number>();
       const snapshot = () => this.events.setSnapshot(turn.id, { outputs: [...live.entries()].map(([outputIndex, value]) => ({ outputIndex, ...value })) });
       const startOutput = (speaker: SpeakerRef, outputIndex: number) => { if (started.has(outputIndex)) return; started.add(outputIndex); live.set(outputIndex, { speaker, text: '', thinking: '' }); snapshot(); emit('writer.started', { speaker, outputIndex }); };
-      const runWriter = async (writerMode: 'plain' | 'writer-agent', forcedPlan?: TurnPlan) => {
-        const writerOptions: Parameters<AgentRuntime['writeTurn']>[1] = {
-          mode: writerMode, prefix,
-          onPhase: (phase, detail) => {
-            emit('agent.phase', { phase, detail });
-            if (phase === 'writing' && detail && typeof detail === 'object' && 'outputs' in detail) {
-              plan = detail as TurnPlan; startOutput(plan.outputs[0]!.speaker, 0);
-            }
-          },
-          onDelta: (speaker, outputIndex, delta) => { fresh(); startOutput(speaker, outputIndex); const value = live.get(outputIndex)!; value.text += delta; snapshot(); emitVolatile('writer.delta', { speaker, outputIndex, delta }); },
-          onTool: (name, args, outputIndex) => emit('tool.called', { phase: 'writer', outputIndex, name, args }),
-          onThinkingDelta: (delta, outputIndex) => { const value = live.get(outputIndex); if (value) { value.thinking += delta; snapshot(); } emitVolatile('thinking.delta', { outputIndex, delta }); },
-        };
-        if (forcedPlan) writerOptions.forcedPlan = forcedPlan;
-        return this.runtime.writeTurn({ ...request, trace: traceSink, signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]) }, writerOptions);
-      };
-      let generated;
-      try {
-        generated = await runWriter(mode === 'plain' ? 'plain' : 'writer-agent', plan ?? undefined);
-      } catch (error) {
-        const reason = this.repository.redactError(error);
-        if (!forced && mode === 'writer-agent' && !plan && /select_output_voices|valid selection/iu.test(reason)) {
-          fresh(); plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = ['Writer Agent selection failed; used plain writing with the current character.']; emit('routing.fallback', { reason });
-          actualMode = 'plain'; generated = await runWriter('plain', plan);
-        } else throw error;
-      }
-      const finalPlan = validatePlan(generated.plan, turn.storyTurnId, request.characters);
-      plan = finalPlan;
-      this.repository.updateTurn(turn.id, { plan: finalPlan });
-      if (mode !== 'planner' && !forced) emit(mode === 'plain' ? 'plain.completed' : 'routing.completed', { plan: finalPlan });
-      for (const [outputIndex, result] of generated.results.entries()) {
-        const output = finalPlan.outputs[outputIndex] ?? { speaker: result.speaker, objective: '', brief: '' };
+      const savePlan = (value: TurnPlan) => { plan = validatePlan(value, turn.storyTurnId, request.characters); this.repository.updateTurn(turn.id, { plan }); };
+      if (plan) savePlan(plan);
+      const saveOutput = (result: Awaited<ReturnType<AgentRuntime['writeTurn']>>['results'][number], localIndex: number) => {
+        const outputIndex = offset + localIndex;
+        if (progress.completedMessageIds[outputIndex]) return;
+        if (!plan || outputIndex !== progress.completedMessageIds.length) throw new Error('Invalid output sequence.');
+        const output = plan.outputs[outputIndex]!;
         fresh(); startOutput(output.speaker, outputIndex);
         this.repository.database.sqlite.transaction(() => {
           const message = this.repository.createMessage({ conversationId: turn.conversationId, parentId: parent, storyTurnId: turn.storyTurnId,
@@ -184,30 +190,80 @@ export class TurnService {
             generationInfo: { mode: actualMode, model: request.connection.model, streaming: request.streaming ?? true, thinking: result.thinking || null,
               usage: [result.usage.input, result.usage.output, result.usage.cacheRead, result.usage.cacheWrite, result.usage.totalTokens].some(value => value > 0) ? result.usage : null,
               timing: result.timing, requestCount: result.requestCount }, legacyPayload: null });
-          parent = expectedHead = message.id; this.repository.setHead(turn.conversationId, message.id);
+          parent = expectedHead = progress.parent = progress.head = message.id;
+          progress.completedMessageIds.push(message.id);
+          this.repository.setHead(turn.conversationId, message.id);
+          this.repository.updateTurn(turn.id, { progress });
           emit('message.completed', { message: { ...message, providerState: null }, outputIndex, usage: result.usage });
           live.delete(outputIndex); snapshot();
-        })(); wrote = true;
+        })();
+      };
+      const runWriter = async (writerMode: 'plain' | 'writer-agent', forcedPlan?: TurnPlan) => {
+        const writerOptions: Parameters<AgentRuntime['writeTurn']>[1] = {
+          mode: writerMode, prefix: offset ? '' : prefix,
+          onPhase: (phase, detail) => {
+            emit('agent.phase', { phase, detail });
+            if (phase === 'writing' && detail && typeof detail === 'object' && 'outputs' in detail) {
+              if (!offset) savePlan(detail as TurnPlan);
+              startOutput(plan!.outputs[offset]!.speaker, offset);
+            }
+          },
+          onDelta: (speaker, index, delta) => { const outputIndex = offset + index; fresh(); startOutput(speaker, outputIndex); const value = live.get(outputIndex)!; value.text += delta; snapshot(); emitVolatile('writer.delta', { speaker, outputIndex, delta }); },
+          onTool: (name, args, outputIndex) => emit('tool.called', { phase: 'writer', outputIndex, name, args }),
+          onThinkingDelta: (delta, index) => { const outputIndex = offset + index; const value = live.get(outputIndex); if (value) { value.thinking += delta; snapshot(); } emitVolatile('thinking.delta', { outputIndex, delta }); },
+          onOutputComplete: saveOutput,
+        };
+        if (forcedPlan) writerOptions.forcedPlan = { ...forcedPlan, outputs: forcedPlan.outputs.slice(offset) };
+        return this.runtime.writeTurn({ ...request, trace: traceSink, signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]) }, writerOptions);
+      };
+      let generated;
+      try {
+        generated = plan && offset === plan.outputs.length ? { plan, results: [] } : await runWriter(mode === 'plain' ? 'plain' : 'writer-agent', plan ?? undefined);
+      } catch (error) {
+        const reason = this.repository.redactError(error);
+        if (!forced && mode === 'writer-agent' && !plan && /select_output_voices|valid selection/iu.test(reason)) {
+          fresh(); plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = ['Writer Agent selection failed; used plain writing with the current character.']; emit('routing.fallback', { reason });
+          actualMode = 'plain'; generated = await runWriter('plain', plan);
+        } else throw error;
       }
+      const finalPlan = validatePlan(offset ? plan : generated.plan, turn.storyTurnId, request.characters);
+      plan = finalPlan;
+      this.repository.updateTurn(turn.id, { plan: finalPlan });
+      if (mode !== 'planner' && !forced) emit(mode === 'plain' ? 'plain.completed' : 'routing.completed', { plan: finalPlan });
+      for (const [index, result] of generated.results.entries()) saveOutput(result, index);
       fresh();
       this.repository.database.sqlite.transaction(() => {
         this.repository.createProposals(turn.conversationId, finalPlan);
         if (finalPlan.protagonistStateProposals.length || finalPlan.worldEventProposals.length) emit('proposals.ready', { plan: finalPlan });
         emit('story.settled', { head: expectedHead, variant: input.trigger === 'continue' || swipe });
+        this.repository.updateTurn(turn.id, { status: 'completed', completedAt: new Date().toISOString() });
       })();
+      settled = true;
       if (input.trigger !== 'continue' && !swipe) {
-        try { await this.postprocess(turn.conversationId, signal, traceSink); } catch { emit('postprocess.failed', { error: 'Memory/state update failed; the same turns remain eligible.' }); }
-        await this.plugins?.settled(turn.conversationId);
+        this.repository.updateTurn(turn.id, { recordsStatus: 'running' }); emit('records.started');
+        try {
+          await this.postprocess(turn.conversationId, signal, traceSink);
+          signal.throwIfAborted(); await this.plugins?.settled(turn.conversationId);
+          this.repository.updateTurn(turn.id, { recordsStatus: 'completed' }); emit('records.completed');
+        } catch (error) {
+          const recordsStatus = signal.aborted ? 'cancelled' : 'failed';
+          this.repository.updateTurn(turn.id, { recordsStatus });
+          emit(`records.${recordsStatus}`, { error: signal.aborted ? null : this.repository.redactError(error) });
+        }
       }
-      fresh(); this.repository.updateTurn(turn.id, { status: 'completed', completedAt: new Date().toISOString() });
       this.repository.pruneTraces(turn.conversationId, 20);
       emit('turn.completed');
     } catch (error) {
-      if (!wrote && input.trigger !== 'normal' && this.repository.getConversation(turn.conversationId)?.headMessageId === expectedHead) this.repository.setHead(turn.conversationId, oldHead);
+      if (settled) { emit('turn.completed'); return; }
+      if (!progress.completedMessageIds.length && input.trigger !== 'normal' && this.repository.getConversation(turn.conversationId)?.headMessageId === expectedHead) {
+        this.repository.setHead(turn.conversationId, oldHead); progress.head = oldHead;
+      }
+      progress.interruptedOutputs = [...live.entries()].filter(([, value]) => value.text || value.thinking).map(([outputIndex, value]) => ({ outputIndex, ...value }));
       const message = signal.aborted ? null : this.repository.redactError(error);
-      this.repository.updateTurn(turn.id, { status: signal.aborted ? 'cancelled' : 'failed', error: message, completedAt: new Date().toISOString() });
+      const status = progress.completedMessageIds.length ? 'partial' : signal.aborted ? 'cancelled' : 'failed';
+      this.repository.updateTurn(turn.id, { status, progress, error: message, completedAt: new Date().toISOString() });
       this.repository.pruneTraces(turn.conversationId, 20);
-      emit(signal.aborted ? 'turn.cancelled' : 'turn.failed', { error: message });
+      emit(`turn.${status}`, { error: message });
     } finally { this.events.clearSnapshot(turn.id); }
   }
 }

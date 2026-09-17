@@ -292,6 +292,8 @@ export class PiAgentRuntime implements AgentRuntime {
           request.trace?.finish(traceId, 'completed', usage);
         }
         results.push({ speaker: output.speaker, text, thinking, timing, usage, requestCount: 1, providerState: null });
+        request.signal.throwIfAborted();
+        options.onOutputComplete?.(results.at(-1)!, outputIndex);
         history = [...history, { id: `runtime-${outputIndex}`, conversationId: request.conversationId, parentId: null, storyTurnId: request.storyTurnId, role: 'assistant', authorKind: output.speaker.kind, speaker: output.speaker, content: text, providerState: null, generationInfo: null, legacyPayload: null, createdAt: timing.completedAt }];
       } catch (error) {
         timing.completedAt = new Date().toISOString();
@@ -306,7 +308,7 @@ export class PiAgentRuntime implements AgentRuntime {
    * deliberately non-terminal: Pi continues the same session and writes the
    * selected voice, then receives a small control message for voice two. */
   async writeTurn(request: BaseAgentRequest, options: UnifiedWriterOptions): Promise<AgentTurnResult> {
-    request = fitRequest(request, options.prefix ?? '');
+    request = fitRequest({ ...request, continuation: Boolean(options.prefix) });
     if (options.mode === 'plain') return this.writePlain(request, options);
     let selected: TurnPlan | null = options.forcedPlan ?? null;
     let outputIndex = 0;
@@ -341,6 +343,7 @@ export class PiAgentRuntime implements AgentRuntime {
       },
       toolExecution: 'sequential',
       beforeToolCall: async ({ toolCall }) => {
+        request.signal.throwIfAborted();
         options.onTool?.(toolCall.name, toolCall.arguments, outputIndex);
         if (toolCall.name === 'select_output_voices' && selected) return { block: true, terminate: true, reason: 'Speaker selection is already complete.' };
         const key = JSON.stringify([toolCall.name, toolCall.arguments]);
@@ -377,7 +380,7 @@ export class PiAgentRuntime implements AgentRuntime {
         if (thinking && activeTrace) request.trace?.thinking(activeTrace, thinking);
         if (activeTiming) activeTiming.completedAt = new Date().toISOString();
         if (activeTrace) { request.trace?.timing(activeTrace, { completedAt: activeTiming?.completedAt ?? new Date().toISOString() }); request.trace?.finish(activeTrace, finalMessage.stopReason === 'aborted' ? 'cancelled' : finalMessage.stopReason === 'error' ? 'failed' : 'completed', step, finalMessage.errorMessage); activeTrace = null; }
-        if (text && selected && !finalMessage.content.some((item) => item.type === 'toolCall')) {
+        if (text && selected && !['error', 'aborted'].includes(finalMessage.stopReason) && !finalMessage.content.some((item) => item.type === 'toolCall')) {
           results[outputIndex] = { speaker: selected.outputs[outputIndex]!.speaker, text, thinking, timing: activeTiming!, requestCount: requestCounts[outputIndex]!, providerState: { version: 1, connectionId: request.connection.id, messages: agent.state.messages.slice(context.messages.length) }, usage: step };
         }
         thinking = ''; activeTiming = null;
@@ -390,12 +393,15 @@ export class PiAgentRuntime implements AgentRuntime {
       await agent.continue();
       request.signal.throwIfAborted();
       if (!selected) throw new Error('Writer Agent did not call select_output_voices with a valid selection.');
-      if (!results[0]) throw new Error('Writer Agent returned no visible text.');
+      if (!results[0]) throw new Error(agent.state.error || 'Writer Agent returned no visible text.');
+      options.onOutputComplete?.(results[0], 0);
       if (selected.outputs.length > 1) {
         outputIndex = 1;
         options.onPhase?.('writing', selected.outputs[1]);
         await agent.prompt(`[Writer Control]\nWrite only the second selected voice now. Do not select another voice or explain the process.\n[Current Speaker]\n${selected.outputs[1]!.speaker.kind === 'narrator' ? request.narrator.name : request.characters.find((c) => c.id === (selected!.outputs[1]!.speaker as { characterId: string }).characterId)?.name ?? 'Character'}\n[Writer Brief]\n${selected.outputs[1]!.brief}`);
-        if (!results[1]) throw new Error('Writer Agent returned no visible text for the second voice.');
+        request.signal.throwIfAborted();
+        if (!results[1]) throw new Error(agent.state.error || 'Writer Agent returned no visible text for the second voice.');
+        options.onOutputComplete?.(results[1], 1);
       }
     } catch (error) {
       if (activeTrace) request.trace?.finish(activeTrace, request.signal.aborted ? 'cancelled' : 'failed', undefined, error instanceof Error ? error.message : String(error));

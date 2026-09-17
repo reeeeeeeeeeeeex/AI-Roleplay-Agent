@@ -80,6 +80,7 @@ export interface BaseAgentRequest {
   source: StoryContextSource;
   signal: AbortSignal;
   promptSettings?: PromptSettings;
+  continuation?: boolean;
   trace?: RuntimeTraceSink;
 }
 
@@ -129,6 +130,7 @@ export interface UnifiedWriterOptions {
   onTool?: (name: string, args: unknown, outputIndex?: number) => void;
   onPhase?: (phase: 'selection' | 'writing', detail?: unknown) => void;
   onThinkingDelta?: (text: string, outputIndex: number) => void;
+  onOutputComplete?: (result: AgentTurnResult['results'][number], outputIndex: number) => void;
 }
 
 export interface FirstRequestPreview {

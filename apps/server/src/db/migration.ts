@@ -112,6 +112,8 @@ export function migrateDatabase(database: Database.Database): void {
     ['messages', 'generation_info', 'TEXT'],
     ['turn_traces', 'speaker', 'TEXT'],
     ['turn_traces', 'timing', 'TEXT'],
+    ['turns', 'progress', 'TEXT'],
+    ['turns', 'records_status', "TEXT NOT NULL DEFAULT 'idle'"],
   ]) {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some((item) => item.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);

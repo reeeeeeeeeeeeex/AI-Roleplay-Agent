@@ -23,11 +23,13 @@ export class FakeRuntime implements AgentRuntime {
   }
   async writeTurn(request: BaseAgentRequest, options: UnifiedWriterOptions) {
     const plan = options.forcedPlan ?? await this.route({ ...request, plannerEnabled: false });
+    options.onPhase?.('writing', plan);
     const results = [];
     let history = request.history;
     for (const [outputIndex, output] of plan.outputs.entries()) {
       const result = await this.write({ ...request, history, speaker: output.speaker, outputIndex, brief: output.brief, signal: request.signal }, (delta) => options.onDelta(output.speaker, outputIndex, delta), (name, args) => options.onTool?.(name, args, outputIndex));
       results.push({ speaker: output.speaker, ...result, requestCount: 1 });
+      options.onOutputComplete?.(results.at(-1)!, outputIndex);
       const generated = { id: `fake-${outputIndex}`, conversationId: request.conversationId, parentId: null, storyTurnId: request.storyTurnId, role: 'assistant' as const, authorKind: output.speaker.kind, speaker: output.speaker, content: result.text, providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() };
       history = request.connection.historyMessageLimit ? [generated] : [...history, generated];
     }

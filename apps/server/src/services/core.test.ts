@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../app.js';
-import { FakeRuntime, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
+import { FakeRuntime, PiAgentRuntime, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, blankState } from '@new-ai-chat/contracts';
 import { settledStoryIds, applyProposal } from './records.js';
 import { StoryContext } from './context.js';
@@ -142,25 +142,75 @@ it('default persona and story binding keep previews, generation and the latest i
 });
 
 describe('native turns and narrator',()=>{
-  it('routes to narrator and character, and gives the second writer the first response',async()=>{
-    const turn=await normal();expect(turn.status).toBe('completed');const branch=server.repository.getActiveBranch(chat);
-    expect(branch.map((m)=>m.authorKind)).toEqual(['protagonist','narrator','character']);expect(new Set(branch.map((m)=>m.storyTurnId)).size).toBe(1);
-    const secondWriter = runtime.requests.find((request) => 'speaker' in request && (request as WriterRequest).speaker.kind === 'character') as WriterRequest | undefined;
-    expect(secondWriter?.history.at(-1)?.authorKind).toBe('narrator');expect(settledStoryIds(server.repository,chat)).toHaveLength(1);
+  it('v0.2 retains the first output and retries only the interrupted second voice', async () => {
+    const original = runtime.write.bind(runtime);
+    runtime.write = async (request, delta) => {
+      if (request.outputIndex === 1) { delta('unfinished'); throw new Error('second voice failed'); }
+      return original(request, delta);
+    };
+    const route = vi.spyOn(runtime, 'route');
+    const turn = await normal();
+    expect(turn.status).toBe('partial');
+    const first = server.repository.getActiveBranch(chat);
+    expect(first.map(m => m.authorKind)).toEqual(['protagonist', 'narrator']);
+    expect(turn.progress?.interruptedOutputs[0]?.text).toBe('unfinished');
+    expect(settledStoryIds(server.repository, chat)).toEqual([]);
+    server.repository.setHead(chat, first[0]!.id);
+    expect(() => server.turns.retry(turn.id)).toThrow(/分支/);
+    server.repository.setHead(chat, first[1]!.id);
+    runtime.write = original;
+    const retry = server.turns.retry(turn.id); await server.turns.idle(chat);
+    const branch = server.repository.getActiveBranch(chat);
+    expect(server.repository.getTurn(retry.id)?.status).toBe('completed');
+    expect(branch.map(m => m.authorKind)).toEqual(['protagonist', 'narrator', 'character']);
+    expect(branch.slice(0, 2)).toEqual(first);
+    expect(branch.at(-1)?.storyTurnId).toBe(turn.storyTurnId);
+    expect(route).toHaveBeenCalledTimes(1);
+    expect(settledStoryIds(server.repository, chat)).toEqual([turn.storyTurnId]);
   });
   it('preserves user narration as user and AI narration as assistant',async()=>{await normal('narrator',{mode:'explicit',speaker:{kind:'narrator'}});const b=server.repository.getActiveBranch(chat);expect(b[0]?.role).toBe('user');expect(b[0]?.authorKind).toBe('user_narrator');expect(b[1]?.role).toBe('assistant');expect(b[1]?.authorKind).toBe('narrator');});
   it('bypasses routing for explicit characters',async()=>{runtime.failRoute=true;const t=await normal('protagonist',{mode:'explicit',speaker:{kind:'character',characterId:character}});expect(t.plan?.outputs).toHaveLength(1);expect(t.plan?.warnings).toEqual([]);});
   it('falls back after routing failure without losing user input',async()=>{runtime.failRoute=true;const t=await normal();expect(t.status).toBe('completed');expect(server.repository.getActiveBranch(chat)).toHaveLength(2);expect(t.plan?.outputs[0]?.speaker.kind).toBe('character');});
   it('preserves user input after writer failure and does not settle',async()=>{runtime.failWrite=true;expect((await normal()).status).toBe('failed');expect(server.repository.getActiveBranch(chat)).toHaveLength(1);expect(settledStoryIds(server.repository,chat)).toEqual([]);});
   it('prevents concurrent generation in the same chat',async()=>{const req=turnRequestSchema.parse({conversationId:chat,input:{text:'one',voice:'protagonist'}});const t=server.turns.start(req);expect(()=>server.turns.start(req)).toThrow(/active/);server.turns.cancel(t.id);await server.turns.idle(chat);});
-  it('cancels before any generation commits',async()=>{const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'hello',voice:'protagonist'}}));server.turns.cancel(t.id);await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('cancelled');expect(server.repository.getActiveBranch(chat)).toHaveLength(1);});
+  it('v0.2 cancellation during records preserves completed prose and settlement', async () => {
+    server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), memoryTurnInterval: 1 });
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    runtime.maintain = async request => { entered(); await new Promise<void>(resolve => request.signal.addEventListener('abort', () => resolve(), { once: true })); request.signal.throwIfAborted(); return ''; };
+    const turn = server.turns.start(turnRequestSchema.parse({ conversationId: chat, input: { text: 'hello', voice: 'protagonist' } }));
+    await ready; server.turns.cancel(turn.id); await server.turns.idle(chat);
+    expect(server.repository.getTurn(turn.id)).toMatchObject({ status: 'completed', recordsStatus: 'cancelled' });
+    expect(server.repository.getActiveBranch(chat).filter(m => m.role === 'assistant')).toHaveLength(2);
+    expect(settledStoryIds(server.repository, chat)).toEqual([turn.storyTurnId]);
+    expect(server.repository.listMemories(chat)).toEqual([]);
+  });
   it('discards a stale writer when the branch changes',async()=>{let entered!:()=>void;const ready=new Promise<void>((r)=>entered=r);let release!:()=>void;const gate=new Promise<void>((r)=>release=r);const original=runtime.write.bind(runtime);runtime.write=async(req,cb)=>{entered();await gate;return original(req,cb);};const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'one',voice:'protagonist'},replyTarget:{mode:'explicit',speaker:{kind:'narrator'}}}));await ready;server.repository.setHead(chat,null);release();await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('failed');expect(server.repository.getConversation(chat)?.headMessageId).toBeNull();});
   it('auto turns do not re-anchor stale user input',async()=>{await normal();const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'auto'}));await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('completed');expect(runtime.requests.at(-1)?.latestUserText).toBe('');});
 });
 describe('branches and records',()=>{
   it('swiping the first output leaves the second output on the old branch',async()=>{await normal();const old=server.repository.getActiveBranch(chat);const first=old[1]!;const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'regenerate',targetMessageId:first.id}),true);await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('completed');const b=server.repository.getActiveBranch(chat);expect(b).toHaveLength(2);expect(b.some((m)=>m.id===old[2]!.id)).toBe(false);expect(server.repository.getMessage(old[2]!.id)).not.toBeNull();});
   it('regenerate replaces the whole logical turn and does not inflate counters',async()=>{await normal();const old=server.repository.getActiveBranch(chat);server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'regenerate',targetMessageId:old[2]!.id}));await server.turns.idle(chat);const b=server.repository.getActiveBranch(chat);expect(b).toHaveLength(3);expect(b[0]?.id).toBe(old[0]?.id);expect(settledStoryIds(server.repository,chat)).toHaveLength(1);});
-  it('continue retains speaker, creates an immutable alternative, and skips settlement',async()=>{await normal();const last=server.repository.getActiveBranch(chat).at(-1)!;server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'continue',targetMessageId:last.id}));await server.turns.idle(chat);const next=server.repository.getActiveBranch(chat).at(-1)!;expect(next.id).not.toBe(last.id);expect(next.speaker).toEqual(last.speaker);expect(next.content.startsWith(last.content)).toBe(true);expect(server.repository.getMessage(last.id)?.content).toBe(last.content);});
+  it('v0.2 plain Continue explicitly continues the selected immutable reply without an old input anchor', async () => {
+    await normal();
+    const last = server.repository.getActiveBranch(chat).at(-1)!;
+    server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), generationMode: 'plain' });
+    let context: any;
+    const plain = new PiAgentRuntime({ stream: (_connection: unknown, next: unknown) => {
+      context = next;
+      return (async function* () { yield { type: 'done', message: { content: [{ type: 'text', text: '接着她打开了信。' }], usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20 } } }; })();
+    } } as never);
+    runtime.writeTurn = plain.writeTurn.bind(plain);
+    const turn = server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'continue', targetMessageId: last.id })); await server.turns.idle(chat);
+    expect(server.repository.getTurn(turn.id)?.status).toBe('completed');
+    expect(context.messages.at(-1).content).toContain('[Continue Writing]');
+    expect(context.messages.at(-1).content).not.toContain('以下是用户本轮输入');
+    const next = server.repository.getActiveBranch(chat).at(-1)!;
+    expect(next.speaker).toEqual(last.speaker);
+    expect(next.content).toBe(last.content + '接着她打开了信。');
+    expect(server.repository.getMessage(last.id)?.content).toBe(last.content);
+    expect(settledStoryIds(server.repository, chat)).toHaveLength(1);
+  });
   it('keeps state snapshots scoped to the chosen branch',async()=>{await normal();const b=server.repository.getActiveBranch(chat);const state=blankState();state.global_state[0]!.current_location='room';server.repository.createState(chat,b.at(-1)!.storyTurnId,state);expect(server.repository.latestState(chat)?.tables.global_state[0]?.current_location).toBe('room');server.repository.setHead(chat,b[0]!.id);expect(server.repository.latestState(chat)).toBeNull();});
   it('keeps memory scoped to the chosen branch',async()=>{await normal();const b=server.repository.getActiveBranch(chat);server.repository.createMemory({conversationId:chat,stage:1,storyTurnId:b.at(-1)!.storyTurnId,content:'one',source:'generated'});server.repository.setHead(chat,b[0]!.id);expect(server.repository.listMemories(chat)).toEqual([]);});
   it('rejects a head from a different conversation',async()=>{await normal();const other=server.repository.createConversation(conversationInputSchema.parse({title:'Other',kind:'solo',characterId:character}));expect(()=>server.repository.setHead(other.id,server.repository.getActiveBranch(chat)[0]!.id)).toThrow(/Invalid branch/);});

@@ -171,6 +171,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
   const content = [
     ...postHistorySections(request),
     briefSection,
+    request.continuation ? section('Continue Writing', 'Continue directly from the end of the selected assistant reply in the history. Output only the new continuation; do not repeat existing text, restart the scene, or change the speaker. All protagonist agency and narrator constraints still apply.') : '',
     latestUserAnchor(request),
     currentSpeakerSection,
   ].filter(Boolean).join('\n\n');

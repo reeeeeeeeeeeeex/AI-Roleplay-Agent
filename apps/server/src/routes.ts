@@ -102,6 +102,11 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return turns.preview(turnRequestSchema.parse({ ...body, conversationId: chatId }), AbortSignal.timeout(5_000));
   });
   app.post('/api/turns/:id/cancel', async (req) => ({ cancelled: turns.cancel(idOf(req)) }));
+  app.post('/api/turns/:id/retry', async (req, reply) => reply.code(202).send(turns.retry(idOf(req))));
+  app.get('/api/conversations/:id/last-turn', async req => {
+    const row = repo.database.sqlite.prepare('SELECT id FROM turns WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1').get(idOf(req)) as { id: string } | undefined;
+    return row ? repo.getTurn(row.id) : null;
+  });
   app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));
   app.post('/api/conversations/:id/memory', async (req) => {
     const chat = idOf(req); turns.assertIdle(chat); const { content, mode } = z.object({ content: z.string().max(200_000), mode: z.enum(['append', 'replace']).default('append') }).parse(req.body);
