@@ -22,11 +22,11 @@ export async function streamTurn(id:string,onEvent:(event:any)=>void,signal:Abor
             const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);
             const data=block.split('\n').filter((line)=>line.startsWith('data:')).map((line)=>line.slice(5).trimStart()).join('\n');
             if(!data)continue;const event=JSON.parse(data);if(event.id>0&&event.id<=after)continue;if(event.id>0)after=event.id;onEvent(event);
-            if(['turn.completed','turn.failed','turn.cancelled'].includes(event.type))return;
+            if(['turn.completed','turn.partial','turn.failed','turn.cancelled'].includes(event.type))return;
           }
         }
       } finally {reader.releaseLock();}
-      const turn=await api(`/turns/${id}`);if(['completed','failed','cancelled'].includes(turn.status))return;
+      const turn=await api(`/turns/${id}`);if(['partial','failed','cancelled'].includes(turn.status)||(turn.status==='completed'&&turn.recordsStatus!=='running'))return;
     } catch(error) {if(signal.aborted||attempt===3)throw error;}
     await new Promise((resolve)=>setTimeout(resolve,500*(attempt+1)));
   }

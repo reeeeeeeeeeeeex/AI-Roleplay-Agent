@@ -563,11 +563,20 @@ main {
 }
 
 /* Messages Stream */
+.turn-recovery {
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.turn-recovery pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.turn-recovery button { margin: 6px; }
+
 .messages {
   flex: 1;
   overflow-y: auto;
   padding: 20px 24px;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 
 .scene-start {

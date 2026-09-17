@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitBranch, PanelLeftClose, PanelLeft, Library } from 'lucide-react';
-import { defaultGeneralSettings, defaultPromptSettings, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings } from '@new-ai-chat/contracts';
+import { defaultGeneralSettings, defaultPromptSettings, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';
@@ -14,7 +14,7 @@ const prettyJson = (body: string) => { try { return JSON.stringify(JSON.parse(bo
 
 export default function App() {
   const [data, setData] = useState<Record<string, any[]>>({});
-  const [chatId, setChatId] = useState<string | null>(null);
+  const [chatId, setChatId] = useState<string | null>(() => localStorage.getItem('selected-chat'));
   const chatRef = useRef(chatId);
   chatRef.current = chatId;
 
@@ -22,7 +22,10 @@ export default function App() {
   const [branch, setBranch] = useState<MessageNode[]>([]);
   const [nodes, setNodes] = useState<MessageNode[]>([]);
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
-  const [inputDrafts, setInputDrafts] = useState<Record<string, string>>({});
+  const [inputDrafts, setInputDrafts] = useState<Record<string, string>>(() => {
+    try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('story-drafts') ?? '{}')).filter(([, value]) => typeof value === 'string')) as Record<string, string>; }
+    catch { return {}; }
+  });
   const text = chatId ? inputDrafts[chatId] ?? '' : '';
   const setText = (value: string) => { if (chatId) setInputDrafts(old => ({ ...old, [chatId]: value })); };
   const [sending, setSending] = useState(false);
@@ -37,8 +40,9 @@ export default function App() {
 
   const [turn, setTurn] = useState<{ id: string; chatId: string } | null>(null);
   type LiveDraft = { speaker: SpeakerRef; outputIndex: number; text: string; thinking: string };
-  const [draft, setDraft] = useState<LiveDraft | null>(null);
-  const pendingDraft = useRef<LiveDraft | null>(null);
+  const [drafts, setDrafts] = useState<Record<number, LiveDraft>>({});
+  const pendingDraft = useRef<Record<number, LiveDraft>>({});
+  const [lastTurn, setLastTurn] = useState<TurnRecord | null>(null);
   const draftFrame = useRef<number | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
   const [agentThinking, setAgentThinking] = useState('');
@@ -67,13 +71,27 @@ export default function App() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const bottom = useRef<HTMLDivElement>(null);
+  const followBottom = useRef(true);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const streamAbort = useRef<AbortController | null>(null);
 
-  const queueDraft = (next: LiveDraft | null | ((current: LiveDraft | null) => LiveDraft | null)) => {
+  const queueDraft = (next: Record<number, LiveDraft> | ((current: Record<number, LiveDraft>) => Record<number, LiveDraft>)) => {
     pendingDraft.current = typeof next === 'function' ? next(pendingDraft.current) : next;
     if (draftFrame.current !== null) return;
-    draftFrame.current = requestAnimationFrame(() => { draftFrame.current = null; setDraft(pendingDraft.current); });
+    draftFrame.current = requestAnimationFrame(() => { draftFrame.current = null; setDrafts(pendingDraft.current); });
   };
+
+  const messageIndex = useMemo(() => {
+    const siblings = new Map<string, MessageNode[]>();
+    const parents = new Set(nodes.map(node => node.parentId));
+    for (const node of nodes) {
+      const key = `${node.parentId}:${node.role}`;
+      const items = siblings.get(key) ?? []; items.push(node); siblings.set(key, items);
+    }
+    return { siblings, leaves: nodes.filter(node => !parents.has(node.id)) };
+  }, [nodes]);
+
+  const scrollToLatest = () => { followBottom.current = true; setAwayFromBottom(false); bottom.current?.scrollIntoView({ behavior: 'auto' }); };
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
   const activePersona = data.personas?.find(p => p.id === (chat?.personaId ?? generalSettings.defaultPersonaId));
@@ -110,10 +128,11 @@ export default function App() {
   }
 
   async function refreshMessages(id: string) {
-    const value = await api(`/conversations/${id}/messages`);
+    const [value, latest] = await Promise.all([api(`/conversations/${id}/messages`), api(`/conversations/${id}/last-turn`)]);
     if (chatRef.current === id) {
       setBranch(value.branch);
       setNodes(value.nodes);
+      setLastTurn(latest);
     }
   }
 
@@ -148,17 +167,24 @@ export default function App() {
   useEffect(() => {
     setBranch([]);
     setNodes([]);
-    setDraft(null);
-    pendingDraft.current = null;
+    setDrafts({});
+    pendingDraft.current = {};
+    setLastTurn(null);
+    followBottom.current = true; setAwayFromBottom(false);
     setActivity([]);
     setAgentThinking('');
     setReplyTarget('auto');
-    if (chatId) act(refreshMessages(chatId));
+    if (chatId) { localStorage.setItem('selected-chat', chatId); act(refreshMessages(chatId)); }
   }, [chatId]);
 
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [branch.length, draft?.text]);
+    if (followBottom.current) bottom.current?.scrollIntoView({ behavior: 'auto' });
+  }, [branch.length, drafts]);
+
+  useEffect(() => {
+    try { localStorage.setItem('story-drafts', JSON.stringify(inputDrafts)); }
+    catch { setNotice('浏览器无法保存草稿，请在关闭页面前复制输入。'); }
+  }, [inputDrafts]);
 
   async function selectChat(id: string) {
     if (turn) {
@@ -188,25 +214,27 @@ export default function App() {
         if (event.type === 'agent.thinking') setPhase('Writer Agent · 思考');
         if (event.type === 'writer.started') {
           setPhase(`Writer · ${p.outputIndex + 1}`);
-          queueDraft({ speaker: p.speaker, outputIndex: p.outputIndex, text: '', thinking: '' });
+          queueDraft(old => ({ ...old, [p.outputIndex]: { speaker: p.speaker, outputIndex: p.outputIndex, text: '', thinking: '' } }));
         }
         if (event.type === 'writer.delta') {
-          queueDraft((old) => { const same = old && old.outputIndex === p.outputIndex ? old : null; return { speaker: p.speaker, outputIndex: p.outputIndex, text: (same?.text ?? '') + p.delta, thinking: same?.thinking ?? '' }; });
+          queueDraft(old => ({ ...old, [p.outputIndex]: { speaker: p.speaker, outputIndex: p.outputIndex, text: (old[p.outputIndex]?.text ?? '') + p.delta, thinking: old[p.outputIndex]?.thinking ?? '' } }));
         }
         if (event.type === 'thinking.delta') {
-          if (generalSettings.generationMode === 'plain') queueDraft((old) => old ? { ...old, thinking: old.thinking + p.delta } : old);
+          if (generalSettings.generationMode === 'plain') queueDraft(old => old[p.outputIndex] ? { ...old, [p.outputIndex]: { ...old[p.outputIndex]!, thinking: old[p.outputIndex]!.thinking + p.delta } } : old);
           else setAgentThinking((old) => old + p.delta);
           setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 思考' : 'Writer Agent · 思考');
         }
         if (event.type === 'writer.snapshot') {
-          const latest = [...(p.outputs ?? [])].sort((a, b) => a.outputIndex - b.outputIndex).at(-1);
-          if (latest) queueDraft(latest);
+          queueDraft(Object.fromEntries((p.outputs ?? []).map((output: LiveDraft) => [output.outputIndex, output])));
         }
         if (event.type === 'message.completed') {
-          queueDraft(null);
-          act(refreshMessages(currentChat));
+          queueDraft(old => { const next = { ...old }; delete next[p.outputIndex]; return next; });
+          const message = p.message as MessageNode;
+          setBranch(old => old.some(node => node.id === message.id) ? old : [...old.slice(0, old.findIndex(node => node.id === message.parentId) + 1), message]);
+          setNodes(old => old.some(node => node.id === message.id) ? old : [...old, message]);
         }
-        if (event.type === 'turn.failed' || event.type === 'postprocess.failed') {
+        if (event.type === 'records.started') setPhase('正文已完成 · 更新记录');
+        if (event.type === 'turn.failed' || event.type === 'turn.partial' || event.type === 'records.failed') {
           setError(p.error ?? '生成失败');
         }
       }, controller.signal);
@@ -217,7 +245,7 @@ export default function App() {
     } finally {
       if (streamAbort.current === controller) {
         setTurn(null);
-        queueDraft(null);
+        queueDraft({});
         setPhase('');
         if (finished || controller.signal.aborted) localStorage.removeItem('active-turn');
       }
@@ -273,6 +301,13 @@ export default function App() {
   async function swipe(message: MessageNode) {
     const result = await api(`/messages/${message.id}/swipe`, 'POST', {});
     await follow(result.id, message.conversationId);
+  }
+
+  async function retryRemaining() {
+    if (!lastTurn || turn || sendPending.current) return;
+    sendPending.current = true; setSending(true); setError('');
+    try { const next = await api(`/turns/${lastTurn.id}/retry`, 'POST', {}); await follow(next.id, lastTurn.conversationId); }
+    finally { sendPending.current = false; setSending(false); }
   }
 
   async function setHead(messageId: string | null) {
@@ -488,14 +523,18 @@ export default function App() {
               <small>{generalSettings.agencyMode === 'protected' ? '主角保护' : '共同创作'}</small>
             </div>
 
-            <section className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录">
+            <section className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录" onScroll={event => {
+              const element = event.currentTarget;
+              followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
+              setAwayFromBottom(!followBottom.current);
+            }}>
               {!branch.length && (
                 <div className="scene-start">
                   <p>输入第一条消息开始对话。</p>
                 </div>
               )}
               {branch.map((m) => {
-                const swipes = nodes.filter((n) => n.parentId === m.parentId && n.role === m.role);
+                const swipes = messageIndex.siblings.get(`${m.parentId}:${m.role}`) ?? [];
                 const index = swipes.findIndex((n) => n.id === m.id);
                 const narrator = m.authorKind === 'narrator' || m.authorKind === 'user_narrator';
                 const avatar = avatarFor(m);
@@ -573,8 +612,8 @@ export default function App() {
                   </article>
                 );
               })}
-              {draft && (
-                <article className="message streaming">
+              {Object.values(drafts).map(draft => (
+                <article className="message streaming" key={draft.outputIndex}>
                   <div className="avatar">...</div>
                   <div className="message-body">
                     <header>
@@ -587,11 +626,23 @@ export default function App() {
                     <div className="prose">{draft.text}<span className="caret">▍</span></div>
                   </div>
                 </article>
-              )}
+              ))}
               <div ref={bottom} />
             </section>
 
             <div className="composer-wrap">
+              {awayFromBottom && <button onClick={scrollToLatest}>回到最新 ↓</button>}
+              {!turn && lastTurn && ['partial', 'failed', 'cancelled'].includes(lastTurn.status) && <div className="turn-recovery">
+                <strong>{lastTurn.status === 'partial' ? '本轮部分完成，已完成回复已保留。' : '本轮未完成，用户消息已保留。'}</strong>
+                {lastTurn.progress && <button disabled={sending} onClick={() => act(retryRemaining())}>重试剩余回复</button>}
+                {lastTurn.progress?.interruptedOutputs.map(output => <details key={output.outputIndex}>
+                  <summary>{speakerName(output.speaker)} · 未完成片段（不参与剧情）</summary>
+                  <pre>{output.text}</pre>
+                  {output.thinking && <details><summary>已返回的思考</summary><pre>{output.thinking}</pre></details>}
+                  <button onClick={() => act(navigator.clipboard.writeText(output.text))}>复制片段</button>
+                </details>)}
+              </div>}
+              {!turn && lastTurn?.status === 'completed' && ['failed', 'cancelled'].includes(lastTurn.recordsStatus) && <small>正文已完成；记录更新{lastTurn.recordsStatus === 'failed' ? '失败' : '已取消'}，可在 Memory／状态面板重试。</small>}
               {turn && <div className="generation-status"><i />{phase || '正在生成…'}</div>}
               <form className="composer" onSubmit={(e) => {
                 e.preventDefault();
@@ -819,7 +870,7 @@ export default function App() {
             </header>
             <div className="branch-picker">
               <p className="muted" style={{ marginBottom: 12 }}>切换到旧分支会同时恢复该分支的消息与状态记录。</p>
-              {nodes.filter((node) => !nodes.some((child) => child.parentId === node.id)).map((node) => (
+              {messageIndex.leaves.map((node) => (
                 <button key={node.id} disabled={!!turn} onClick={() => act(setHead(node.id).then(() => setShowBranches(false)))}>
                   <GitBranch size={15} />
                   <span>

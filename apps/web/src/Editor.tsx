@@ -312,9 +312,6 @@ export default function Editor({
         onClose={() => setCreatingPersona(false)}
         onSave={async (newPersona) => {
           const saved = await api('/personas', 'POST', newPersona);
-          if (data.personas) {
-            data.personas.push(saved);
-          }
           onPersonaCreated?.(saved);
           set('personaId', saved.id);
           setCreatingPersona(false);
