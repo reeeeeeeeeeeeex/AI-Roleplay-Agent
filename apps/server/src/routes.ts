@@ -13,6 +13,7 @@ import { expandStoryMacros } from '@new-ai-chat/agent-runtime';
 import { generalSettingsSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
+import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
@@ -155,6 +156,16 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.get('/api/conversations/:id/proposals', async (req) => repo.listProposals(idOf(req)));
   app.post('/api/proposals/:id/:action', async (req) => { const value = z.object({ id:z.string(), action:z.enum(['apply','reject','undo']) }).parse(req.params); const proposal=repo.getProposal(value.id); if (!proposal) throw new Error('Proposal not found.'); turns.assertIdle(proposal.conversationId); return applyProposal(repo,value.id,value.action); });
   app.get('/api/imports', async () => repo.listImports());
+  app.get('/api/conversations/:id/export', async (req, reply) => {
+    const id = idOf(req); turns.assertIdle(id);
+    const { format } = z.object({ format: z.enum(['markdown', 'native']).default('native') }).parse(req.query);
+    const result = exportStory(repo, id, config.assetDir, format);
+    return format === 'markdown' ? reply.type('text/markdown; charset=utf-8').send(result) : result;
+  });
+  app.post('/api/imports/story/preview', { bodyLimit: 50 * 1024 * 1024 }, async req => previewStoryArchive(req.body));
+  app.post('/api/imports/story/execute', { bodyLimit: 50 * 1024 * 1024 }, async (req, reply) => {
+    idleAll(); return reply.code(201).send(importStory(repo, req.body, config.assetDir));
+  });
   app.post('/api/imports/preview', async (req) => { const input=z.object({ sourcePath:z.string().default(config.defaultImportPath) }).parse(req.body); return (await scanImport(input.sourcePath)).preview; });
   app.post('/api/imports/execute', async (req) => { idleAll(); const input=z.object({ sourcePath:z.string(), sourceHash:z.string().length(64) }).parse(req.body); return executeImport(repo,input.sourcePath,input.sourceHash,config.assetDir); });
   app.post('/api/assets/upload', async (req, reply) => {

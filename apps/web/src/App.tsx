@@ -7,6 +7,7 @@ import PersonaPicker from './PersonaPicker.js';
 import Records from './Records.js';
 import ContextReport from './ContextReport.js';
 import StoryNavigation from './StoryNavigation.js';
+import StoryImport from './StoryImport.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
 import './branches.css';
 
@@ -450,12 +451,12 @@ export default function App() {
             <Users size={14} />主角：{activePersona?.name ?? '未选择'}
           </button>
           <button className={page === 'import' ? 'selected' : ''} onClick={() => { setPage('import'); setMobileNav(false); }}>
-            <Upload size={14} />导入 SillyTavern
+            <Upload size={14} />导入故事
           </button>
         </nav>
 
         <div className="local-status">
-          <i /> 本地 {session?.fakeModel ? '离线演示' : 'v0.1'}
+          <i /> 本地 {session?.fakeModel ? '离线演示' : 'v0.2'}
         </div>
       </aside>
 
@@ -468,7 +469,7 @@ export default function App() {
               </button>
             )}
             <button className="mobile-only" aria-label="打开导航" onClick={() => setMobileNav(true)}>☰</button>
-            <h1>{page === 'chat' ? chat?.title ?? '新故事' : page === 'import' ? '导入 SillyTavern' : titles[page]}</h1>
+            <h1>{page === 'chat' ? chat?.title ?? '新故事' : page === 'import' ? '导入故事' : titles[page]}</h1>
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
@@ -793,6 +794,7 @@ export default function App() {
 
         {page === 'import' && (
           <section className="import-page">
+            <StoryImport disabled={!!turn || sending || importBusy} onError={setError} onImported={async id => { await refresh(); await selectChat(id); }} />
             <h2>导入 SillyTavern 数据</h2>
             <p className="muted">扫描角色卡、世界书、聊天、群组、Memory 与主角状态。不会修改源文件。</p>
             <label>
