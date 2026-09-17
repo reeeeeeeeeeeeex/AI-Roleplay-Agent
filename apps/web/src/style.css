@@ -563,6 +563,8 @@ main {
 }
 
 /* Messages Stream */
+.story-navigation { padding: 6px 24px; border-bottom: 1px solid var(--border); max-height: 220px; overflow: auto; }
+.story-navigation button { margin: 4px; }
 .context-report { margin: 10px 0; }
 .context-report ol { max-height: 360px; overflow: auto; padding-left: 24px; }
 .context-report li { margin: 10px 0; overflow-wrap: anywhere; }

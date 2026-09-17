@@ -11,6 +11,8 @@ import type {
   Lorebook,
   MemoryEntry,
   PinnedFact,
+  StoryBookmark,
+  StoryNavigation,
   MessageNode,
   Persona,
   ProtagonistStateSnapshot,
@@ -459,6 +461,34 @@ export class Repository {
   removePinnedFact(conversationId: string, factId: string): void {
     if (!this.listPinnedFacts(conversationId).some(fact => fact.id === factId)) throw new Error('Fact is not on the current branch.');
     this.addEvent(conversationId, null, 'fact.removed', { id: factId, head: this.getConversation(conversationId)!.headMessageId });
+  }
+  listBookmarks(conversationId: string): StoryBookmark[] {
+    const bookmarks = new Map<string, StoryBookmark>();
+    for (const event of this.events(conversationId)) {
+      const value = event.payload as StoryBookmark;
+      if (event.type === 'bookmark.saved') bookmarks.set(value.id, value);
+      if (event.type === 'bookmark.removed') bookmarks.delete(value.id);
+    }
+    return [...bookmarks.values()];
+  }
+  saveBookmark(conversationId: string, name: string, messageId: string, bookmarkId?: string): StoryBookmark {
+    if (this.getMessage(messageId)?.conversationId !== conversationId) throw new Error('Bookmark target is not in this story.');
+    if (bookmarkId && !this.listBookmarks(conversationId).some(bookmark => bookmark.id === bookmarkId)) throw new Error('Bookmark not found.');
+    const bookmark = { id: bookmarkId ?? id(), name, messageId };
+    this.addEvent(conversationId, null, 'bookmark.saved', bookmark); return bookmark;
+  }
+  removeBookmark(conversationId: string, bookmarkId: string): void {
+    if (!this.listBookmarks(conversationId).some(bookmark => bookmark.id === bookmarkId)) throw new Error('Bookmark not found.');
+    this.addEvent(conversationId, null, 'bookmark.removed', { id: bookmarkId });
+  }
+  navigation(conversationId: string): StoryNavigation {
+    const chat = this.getConversation(conversationId); if (!chat) throw new Error('Conversation not found.');
+    const state = this.latestState(conversationId)?.tables;
+    return { bookmarks: this.listBookmarks(conversationId), scene: {
+      scenario: chat.scenario || (chat.groupId ? this.getGroup(chat.groupId)?.scenario : chat.characterId ? this.getCharacter(chat.characterId)?.scenario : '') || '',
+      time: String(state?.global_state[0]?.cur_time ?? ''), location: String(state?.global_state[0]?.current_location ?? ''),
+      presentCharacters: (state?.important_characters ?? []).filter(row => row.is_absent === '否').map(row => String(row.name ?? '')).filter(Boolean),
+    } };
   }
   private checkpointFilter(conversationId: string) {
     const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));

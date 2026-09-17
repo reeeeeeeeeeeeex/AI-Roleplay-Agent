@@ -110,6 +110,16 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   });
   app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));
   app.get('/api/conversations/:id/facts', async req => repo.listPinnedFacts(idOf(req)));
+  app.get('/api/conversations/:id/navigation', async req => repo.navigation(idOf(req)));
+  app.post('/api/conversations/:id/bookmarks', async req => {
+    const chat = idOf(req); turns.assertIdle(chat);
+    const value = z.object({ id: z.string().optional(), name: z.string().trim().min(1).max(100), messageId: z.string() }).parse(req.body);
+    return repo.saveBookmark(chat, value.name, value.messageId, value.id);
+  });
+  app.delete('/api/conversations/:id/bookmarks/:bookmarkId', async req => {
+    const { id, bookmarkId } = z.object({ id: z.string(), bookmarkId: z.string() }).parse(req.params); turns.assertIdle(id);
+    repo.removeBookmark(id, bookmarkId); return { removed: true };
+  });
   app.post('/api/conversations/:id/facts', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
     const value = z.object({ id: z.string().optional(), content: z.string().trim().min(1).max(10_000), sourceMessageId: z.string().nullable().default(null) }).parse(req.body);

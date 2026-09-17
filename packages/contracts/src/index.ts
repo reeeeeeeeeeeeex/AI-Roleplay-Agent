@@ -379,6 +379,12 @@ export interface PinnedFact {
   head: string | null;
 }
 
+export interface StoryBookmark { id: string; name: string; messageId: string }
+export interface StoryNavigation {
+  bookmarks: StoryBookmark[];
+  scene: { scenario: string; time: string; location: string; presentCharacters: string[] };
+}
+
 export interface MemoryEntry {
   id: string;
   conversationId: string;

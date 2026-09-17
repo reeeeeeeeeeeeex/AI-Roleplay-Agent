@@ -6,6 +6,7 @@ import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';
 import Records from './Records.js';
 import ContextReport from './ContextReport.js';
+import StoryNavigation from './StoryNavigation.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
 import './branches.css';
 
@@ -524,6 +525,7 @@ export default function App() {
               <small>{generalSettings.agencyMode === 'protected' ? '主角保护' : '共同创作'}</small>
             </div>
 
+            <StoryNavigation key={chat.id} chatId={chat.id} version={recordsVersion} disabled={!!turn || sending} onHead={setHead} onChanged={() => setRecordsVersion(value => value + 1)} onError={setError} />
             <section className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录" onScroll={event => {
               const element = event.currentTarget;
               followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
@@ -607,12 +609,16 @@ export default function App() {
                             }}>按要求改写</button>
                           </>
                         )}
+                        <button disabled={!!turn} onClick={() => {
+                          const name = window.prompt('添加故事书签', m.content.slice(0, 16));
+                          if (name?.trim()) act(api(`/conversations/${chat.id}/bookmarks`, 'POST', { name, messageId: m.id }).then(() => setRecordsVersion(value => value + 1)));
+                        }}>书签</button>
                         <button disabled={!!turn} title="从此处分支" onClick={() => act(setHead(m.id))}>
                           <GitBranch size={12} />
                         </button>
                         <button disabled={!!turn} onClick={() => {
                           const content = window.prompt('编辑内容（创建新分支版本）', m.content);
-                          if (content !== null) act(api(`/messages/${m.id}/edit`, 'POST', { content }).then(() => refreshMessages(chat.id)));
+                          if (content !== null) act(api(`/messages/${m.id}/edit`, 'POST', { content }).then(async () => { await refreshMessages(chat.id); await refresh(); setRecordsVersion(value => value + 1); }));
                         }}>
                           编辑
                         </button>
