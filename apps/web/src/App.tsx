@@ -542,7 +542,7 @@ export default function App() {
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
-                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={m.id}>
+                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={m.id} id={`message-${m.id}`}>
                     <div
                       className={`avatar ${avatar ? 'clickable' : ''}`}
                       onClick={() => { if (avatar) setPreviewImage(avatar); }}
@@ -578,6 +578,10 @@ export default function App() {
                         ? `${info.model} · 输入 ${totalInput ?? '未返回'} · 输出 ${info.usage?.output ?? '未返回'} · 缓存 ${info.usage?.cacheRead ?? '未返回'}${info.usage ? ` (${cacheRate}%)` : ''}`
                         : '生成信息不可用（旧消息）'}</small>}
                       <div className="message-actions">
+                        <button disabled={!!turn} onClick={() => {
+                          const content = window.prompt('摘录为固定事实（仅当前分支）', window.getSelection()?.toString().trim() || m.content);
+                          if (content?.trim()) act(api(`/conversations/${chat.id}/facts`, 'POST', { content, sourceMessageId: m.id }).then(() => setRecordsVersion(value => value + 1)));
+                        }}>固定事实</button>
                         {swipes.length > 1 && (
                           <>
                             <button title="上一个版本" disabled={!!turn || index <= 0} onClick={() => act(setHead(swipes[index - 1]!.id))}>
@@ -808,7 +812,8 @@ export default function App() {
       </main>
 
       {page === 'chat' && chat && panel && (
-        <Records
+            <Records
+              onSource={messageId => { followBottom.current = false; setAwayFromBottom(true); document.getElementById(`message-${messageId}`)?.scrollIntoView({ block: 'center', behavior: 'auto' }); }}
           chat={chat}
           generationMode={generalSettings.generationMode}
           version={recordsVersion}

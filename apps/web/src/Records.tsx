@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import type { Conversation, GenerationMode } from '@new-ai-chat/contracts';
+import type { Conversation, GenerationMode, PinnedFact } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
 
@@ -28,6 +28,7 @@ export default function Records({
   onError,
   onChanged,
   onClose,
+  onSource,
 }: {
   chat: Conversation;
   generationMode: GenerationMode;
@@ -38,6 +39,7 @@ export default function Records({
   onError: (text: string) => void;
   onChanged: () => void;
   onClose: () => void;
+  onSource: (messageId: string) => void;
 }) {
   const [tab, setTab] = useState('memory');
   const [memory, setMemory] = useState<any[]>([]);
@@ -49,6 +51,8 @@ export default function Records({
   const [busy, setBusy] = useState(false);
   const [baselineMemory, setBaselineMemory] = useState('');
   const [traces, setTraces] = useState<any[]>([]);
+  const [facts, setFacts] = useState<PinnedFact[]>([]);
+  const [newFact, setNewFact] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -57,14 +61,16 @@ export default function Records({
       api(`/conversations/${chat.id}/state`),
       api(`/conversations/${chat.id}/proposals`),
       api(`/conversations/${chat.id}/traces`),
+      api(`/conversations/${chat.id}/facts`),
     ])
-      .then(([m, s, p, t]) => {
+      .then(([m, s, p, t, f]) => {
         if (active) {
           setMemory(m);
           setState(s);
           setStateText(JSON.stringify(s.tables, null, 2));
           setProposals(p);
           setTraces(t);
+          setFacts(f);
         }
       })
       .catch((error: Error) => {
@@ -75,13 +81,15 @@ export default function Records({
     };
   }, [chat.id, version]);
 
-  async function run(path: string, value: unknown = {}) {
+  async function run(path: string, value: unknown = {}, method = 'POST') {
     setBusy(true);
     try {
-      await api(path, 'POST', value);
+      await api(path, method, value);
       onChanged();
+      return true;
     } catch (error) {
       onError((error as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -111,19 +119,35 @@ export default function Records({
       <div className="records-content">
         {tab === 'memory' && (
           <>
+            <details open>
+              <summary>固定事实 · 仅由你修改</summary>
+              {facts.map(fact => <article className="memory-entry" key={fact.id}>
+                <pre>{fact.content}</pre>
+                {fact.sourceMessageId && <button onClick={() => onSource(fact.sourceMessageId!)}>查看来源</button>}
+                <button disabled={disabled || busy} onClick={() => {
+                  const content = window.prompt('修改固定事实（仅当前分支）', fact.content);
+                  if (content?.trim()) void run(`/conversations/${chat.id}/facts`, { id: fact.id, content });
+                }}>修改</button>
+                <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/facts/${fact.id}`, {}, 'DELETE')}>取消固定</button>
+              </article>)}
+              <textarea aria-label="固定事实" rows={2} value={newFact} onChange={event => setNewFact(event.target.value)} />
+              <button disabled={disabled || busy || !newFact.trim()} onClick={() => void run(`/conversations/${chat.id}/facts`, { content: newFact }).then(saved => { if (saved) setNewFact(''); })}>固定事实</button>
+            </details>
             <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory/generate`)}>
               {busy ? '更新中…' : '立即生成 Memory'}
             </button>
             {[...memory].reverse().map((entry) => (
               <article className="memory-entry" key={entry.id}>
                 <div className="memory-stage">Stage {entry.stage}</div>
+                <small className="muted">{entry.coverage ? `覆盖 ${entry.coverage.storyTurnIds.length} 个完整回合` : '覆盖范围：历史记录未提供'}</small>
+                {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>起点</button><button onClick={() => onSource(entry.coverage.endMessageId)}>终点</button></div>}
                 <pre>{entry.content || '（空记忆标记）'}</pre>
               </article>
             ))}
             <details>
               <summary>手动添加记录</summary>
               <textarea aria-label="手动记忆" rows={4} value={newMemory} onChange={(e) => setNewMemory(e.target.value)} />
-              <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory`, { content: newMemory }).then(() => setNewMemory(''))}>
+              <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory`, { content: newMemory }).then(saved => { if (saved) setNewMemory(''); })}>
                 保存记录
               </button>
             </details>

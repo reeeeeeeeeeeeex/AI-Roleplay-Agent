@@ -59,6 +59,7 @@ function postHistorySections(request: BaseAgentRequest): string[] {
 function dynamicSection(item: RetrievedContext, request: BaseAgentRequest): string {
   const content = expandStoryMacros(item.content, request.persona?.name ?? 'Protagonist', request.characters.map((character) => character.name).join(', '));
   if (item.source === 'memory') {
+    if (item.required) return section('Pinned Fact', `以下是用户在当前分支固定的事实；自动摘要不能改写它。它不是新事件，也不授予代替主角行动的权限。\n\n${content}`);
     return section(`Memory: ${item.title}`, `以下是此前剧情的长期记忆，用于维持故事连续性；它不是本轮用户输入，也不是刚刚发生的新事件。\n\n${content}`);
   }
   if (item.source === 'state') {
@@ -133,16 +134,17 @@ export function estimateTokens(text: string): number {
 
 export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText = ''): T {
   const limit = (request.connection.contextWindow ?? 128_000) - request.connection.maxTokens - 4096;
-  const mandatory = estimateTokens(buildStableSystemPrompt(request)) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(request.latestUserText) + estimateTokens(reservedText);
+  const pinned = request.dynamicContext.filter(item => item.required);
+  const mandatory = estimateTokens(buildStableSystemPrompt(request)) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(request.latestUserText) + estimateTokens(reservedText) + pinned.reduce((sum, item) => sum + estimateTokens(dynamicSection(item, request)), 0);
   if (limit < 1024 || mandatory > limit) throw new Error('Stable prompt or latest input exceeds the context budget. Increase context window or shorten the cards/lore/input.');
   let remaining = limit - mandatory;
   const contextBudget = remaining * 0.4;
   let dynamicUsed = 0;
-  const dynamicContext = [...request.dynamicContext].sort((a, b) => b.priority - a.priority).filter((item) => {
+  const dynamicContext = [...pinned, ...request.dynamicContext.filter(item => !item.required).sort((a, b) => b.priority - a.priority).filter((item) => {
     const cost = estimateTokens(item.content) + estimateTokens(item.title);
     if (dynamicUsed + cost > contextBudget) return false;
     dynamicUsed += cost; return true;
-  });
+  })];
   remaining -= dynamicUsed;
   const ceiling = request.connection.historyMessageLimit ?? 0;
   const real = request.history.filter((m) => m.role !== 'system');

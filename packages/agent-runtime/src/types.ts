@@ -45,6 +45,9 @@ export interface RetrievedContext {
   title: string;
   content: string;
   priority: number;
+  sourceId?: string;
+  messageIds?: string[];
+  required?: boolean;
 }
 
 export interface RuntimeNarrator {
@@ -56,6 +59,7 @@ export interface StoryContextSource {
   readRecentStory(limit: number): Promise<MessageNode[]>;
   searchLore(query: string, limit: number): Promise<RetrievedContext[]>;
   readMemory(limit: number): Promise<RetrievedContext[]>;
+  searchMemory(query: string, limit: number): Promise<RetrievedContext[]>;
   readState(): Promise<ProtagonistStateSnapshot | null>;
   readCast(): Promise<RuntimeCharacter[]>;
 }

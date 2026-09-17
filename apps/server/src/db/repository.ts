@@ -10,6 +10,7 @@ import type {
   Group,
   Lorebook,
   MemoryEntry,
+  PinnedFact,
   MessageNode,
   Persona,
   ProtagonistStateSnapshot,
@@ -387,7 +388,7 @@ export class Repository {
     return (this.database.db.select().from(memories).where(eq(memories.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all() as MemoryEntry[]).filter((row) => active(row.id)).slice(0, limit);
   }
   createMemory(input: Omit<MemoryEntry, 'id' | 'createdAt'>): MemoryEntry {
-    const row = { ...input, id: id(), createdAt: now() }; this.database.db.insert(memories).values(row).run();
+    const row = { ...input, coverage: input.coverage ?? null, id: id(), createdAt: now() }; this.database.db.insert(memories).values(row).run();
     this.addEvent(input.conversationId, null, 'checkpoint', { id: row.id, head: this.getConversation(input.conversationId)?.headMessageId ?? null }); return row;
   }
   latestState(conversationId: string): ProtagonistStateSnapshot | null {
@@ -433,6 +434,30 @@ export class Repository {
   }
   checkpointActive(conversationId: string, checkpointId: string): boolean {
     return this.checkpointFilter(conversationId)(checkpointId);
+  }
+  listPinnedFacts(conversationId: string): PinnedFact[] {
+    const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
+    const facts = new Map<string, PinnedFact>();
+    for (const event of this.events(conversationId)) {
+      if (event.type !== 'fact.saved' && event.type !== 'fact.removed') continue;
+      const value = event.payload as PinnedFact;
+      if (value.head && !heads.has(value.head)) continue;
+      if (event.type === 'fact.removed') facts.delete(value.id);
+      else facts.set(value.id, value);
+    }
+    return [...facts.values()];
+  }
+  savePinnedFact(conversationId: string, content: string, sourceMessageId: string | null = null, factId?: string): PinnedFact {
+    const chat = this.getConversation(conversationId); if (!chat) throw new Error('Conversation not found.');
+    const previous = factId ? this.listPinnedFacts(conversationId).find(fact => fact.id === factId) : null;
+    if (factId && !previous) throw new Error('Fact is not on the current branch.');
+    if (sourceMessageId && !this.getActiveBranch(conversationId).some(message => message.id === sourceMessageId)) throw new Error('Fact source is not on the current branch.');
+    const fact = { id: factId ?? id(), content, sourceMessageId: previous?.sourceMessageId ?? sourceMessageId, head: chat.headMessageId };
+    this.addEvent(conversationId, null, 'fact.saved', fact); return fact;
+  }
+  removePinnedFact(conversationId: string, factId: string): void {
+    if (!this.listPinnedFacts(conversationId).some(fact => fact.id === factId)) throw new Error('Fact is not on the current branch.');
+    this.addEvent(conversationId, null, 'fact.removed', { id: factId, head: this.getConversation(conversationId)!.headMessageId });
   }
   private checkpointFilter(conversationId: string) {
     const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));

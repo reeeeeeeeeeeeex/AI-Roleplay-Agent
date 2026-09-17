@@ -108,6 +108,16 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return row ? repo.getTurn(row.id) : null;
   });
   app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));
+  app.get('/api/conversations/:id/facts', async req => repo.listPinnedFacts(idOf(req)));
+  app.post('/api/conversations/:id/facts', async req => {
+    const chat = idOf(req); turns.assertIdle(chat);
+    const value = z.object({ id: z.string().optional(), content: z.string().trim().min(1).max(10_000), sourceMessageId: z.string().nullable().default(null) }).parse(req.body);
+    return repo.savePinnedFact(chat, value.content, value.sourceMessageId, value.id);
+  });
+  app.delete('/api/conversations/:id/facts/:factId', async req => {
+    const { id, factId } = z.object({ id: z.string(), factId: z.string() }).parse(req.params); turns.assertIdle(id);
+    repo.removePinnedFact(id, factId); return { removed: true };
+  });
   app.post('/api/conversations/:id/memory', async (req) => {
     const chat = idOf(req); turns.assertIdle(chat); const { content, mode } = z.object({ content: z.string().max(200_000), mode: z.enum(['append', 'replace']).default('append') }).parse(req.body);
     return repo.createMemory({ conversationId: chat, content, source: mode === 'replace' ? 'manual' : 'generated', stage: (repo.listMemories(chat,1)[0]?.stage ?? 0)+1, storyTurnId: settledStoryIds(repo,chat).at(-1) ?? null });

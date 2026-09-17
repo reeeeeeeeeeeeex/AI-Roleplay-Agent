@@ -6,6 +6,7 @@ import type {
   SpeakerRef,
   TurnPlan,
   TurnProgress,
+  MemoryCoverage,
 } from '@new-ai-chat/contracts';
 
 const timestamps = {
@@ -166,6 +167,7 @@ export const memories = sqliteTable('memories', {
   storyTurnId: text('story_turn_id'),
   content: text('content').notNull(),
   source: text('source').notNull(),
+  coverage: text('coverage', { mode: 'json' }).$type<MemoryCoverage | null>(),
   createdAt: text('created_at').notNull(),
 });
 

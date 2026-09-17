@@ -351,6 +351,19 @@ export interface TurnTrace {
   completedAt: string | null;
 }
 
+export interface MemoryCoverage {
+  startMessageId: string;
+  endMessageId: string;
+  storyTurnIds: string[];
+}
+
+export interface PinnedFact {
+  id: string;
+  content: string;
+  sourceMessageId: string | null;
+  head: string | null;
+}
+
 export interface MemoryEntry {
   id: string;
   conversationId: string;
@@ -358,6 +371,7 @@ export interface MemoryEntry {
   storyTurnId: string | null;
   content: string;
   source: 'generated' | 'imported' | 'manual';
+  coverage?: MemoryCoverage | null;
   createdAt: string;
 }
 

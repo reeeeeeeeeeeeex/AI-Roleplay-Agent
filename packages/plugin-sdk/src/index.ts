@@ -39,7 +39,7 @@ export class TrustedPluginRegistry implements PluginRegistry {
   readonly uiPanels = new Map<string, { id: string; title: string; moduleUrl: string }>();
 
   registerTool(tool: RegisteredTool): void {
-    if (!['read_recent_story', 'search_lore', 'read_memory', 'read_state', 'read_cast'].includes(tool.name) || tool.readOnly !== true) throw new Error('v0.1 tools are restricted to the five read-only story capabilities.');
+    if (!['read_recent_story', 'search_lore', 'read_memory', 'search_memory', 'read_state', 'read_cast'].includes(tool.name) || tool.readOnly !== true) throw new Error('Tools are restricted to the read-only story capabilities.');
     if (this.tools.has(tool.name)) throw new Error(`Tool already registered: ${tool.name}`);
     this.tools.set(tool.name, tool);
   }

@@ -61,6 +61,12 @@ function domainTools(source: StoryContextSource, overrides: BaseAgentRequest['to
       execute: async () => textResult(await source.readState()),
     },
     {
+      name: 'search_memory', label: 'Search story memory',
+      description: 'Find relevant earlier memories on this branch. Results include source IDs and evidence messages; no new story facts are created.',
+      parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 500 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })) }),
+      execute: async (_id, args) => textResult(await source.searchMemory((args as { query: string }).query, (args as { limit?: number }).limit ?? 5)),
+    },
+    {
       name: 'read_cast', label: 'Read cast',
       description: 'Read the available character identities for this conversation.',
       parameters: Type.Object({}),

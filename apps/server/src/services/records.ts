@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { applyStateOperations, blankState, stateColumns, type ProtagonistTables } from '@new-ai-chat/contracts';
-import type { AgentRuntime, BaseAgentRequest } from '@new-ai-chat/agent-runtime';
+import { applyStateOperations, blankState, stateColumns, type ProtagonistTables, type MemoryCoverage, type MessageNode } from '@new-ai-chat/contracts';
+import { fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
 import type { Repository } from '../db/repository.js';
 
 const chronicle = z.object({ timeSpan: z.string(), location: z.string(), chronicle: z.string().min(1), dialogue: z.array(z.string()).max(3), overview: z.string().max(40) }).strict();
@@ -32,19 +32,41 @@ export class RecordService {
       const head = this.repository.getConversation(chat)?.headMessageId;
       const beforeState = this.repository.latestState(chat);
       const beforeMemory = this.repository.listMemories(chat, 1)[0];
-      const storyTurnId = settledStoryIds(this.repository, chat).at(-1) ?? null;
+      const completed = settledStoryIds(this.repository, chat);
+      let storyTurnId = completed.at(-1) ?? null;
       const request = await this.request(chat, storyTurnId ?? 'manual', AbortSignal.any([signal, AbortSignal.timeout(120_000)]));
       if (trace) request.trace = trace;
       const instruction = kind === 'memory'
         ? 'Return only a JSON object with timeSpan, location, chronicle (objective chronology, target 400 Chinese characters), dialogue (up to 3 strings), overview (at most 40 characters). Append a new stage, preserve earlier memory, and avoid repeating details already summarized. No AM codes. Do not invent events.'
         : `Return only a JSON array of state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Never use SQL. Fields: ${JSON.stringify(stateColumns)}. global_state/protagonist_info/options are update-only row 1. Do not delete important_characters. Maintain current facts and compact long-term conclusions; chronology belongs in Memory. Required insert identities: name+gender_age, skill_name+skill_type, item_name+quantity+category, quest_name+quest_type. Inventory quantity is a positive integer; is_absent is 是 or 否. Empty array if no evidenced change.`;
+      let coverage: MemoryCoverage | null = null;
+      if (kind === 'memory') {
+        const branch = this.repository.getActiveBranch(chat);
+        const marker = beforeMemory?.coverage?.endMessageId;
+        const after = marker ? branch.findIndex(message => message.id === marker) : beforeMemory?.storyTurnId ? branch.findLastIndex(message => message.storyTurnId === beforeMemory.storyTurnId) : -1;
+        const remaining = branch.slice(after + 1).filter(message => message.role !== 'system' && message.storyTurnId && completed.includes(message.storyTurnId));
+        if (!remaining.length) return { unchanged: true };
+        const storyIds = [...new Set(remaining.map(message => message.storyTurnId!))];
+        let selected: MessageNode[] = [];
+        // Cover only whole turns actually sent. A clipped prefix remains eligible later.
+        for (const id of storyIds) {
+          const candidate = [...selected, ...remaining.filter(message => message.storyTurnId === id)];
+          const fitted = fitRequest({ ...request, history: candidate, latestUserText: '' }, instruction);
+          if (fitted.history.length !== candidate.length) break;
+          selected = candidate;
+        }
+        if (!selected.length) throw new Error('Memory 无法容纳一个完整回合，请增大历史消息上限或上下文窗口。');
+        request.history = selected; request.latestUserText = '';
+        storyTurnId = selected.at(-1)!.storyTurnId;
+        coverage = { startMessageId: selected[0]!.id, endMessageId: selected.at(-1)!.id, storyTurnIds: [...new Set(selected.map(message => message.storyTurnId!))] };
+      }
       const answer = parseModelJson(await this.runtime.maintain(request, instruction));
       signal.throwIfAborted();
       if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new Error('Records changed; discarded stale update.');
       return this.repository.database.sqlite.transaction(() => {
         if (kind === 'memory') {
           const record = chronicle.parse(answer);
-          return this.repository.createMemory({ conversationId: chat, stage: (beforeMemory?.stage ?? 0) + 1, storyTurnId, source: 'generated', content: JSON.stringify(record, null, 2) });
+          return this.repository.createMemory({ conversationId: chat, stage: (beforeMemory?.stage ?? 0) + 1, storyTurnId, source: 'generated', coverage, content: JSON.stringify(record, null, 2) });
         }
         const result = applyStateOperations(beforeState?.tables ?? blankState(), answer);
         return result.changed ? this.repository.createState(chat, storyTurnId, result.tables) : { unchanged: true };
