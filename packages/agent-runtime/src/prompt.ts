@@ -1,5 +1,5 @@
 import type { Message } from '@earendil-works/pi-ai';
-import type { MessageNode, SpeakerRef } from '@new-ai-chat/contracts';
+import type { MessageNode, SpeakerRef, ContextReport, ContextReportItem } from '@new-ai-chat/contracts';
 import { defaultPromptSettings } from '@new-ai-chat/contracts';
 import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterRequest } from './types.js';
 
@@ -135,13 +135,13 @@ export function estimateTokens(text: string): number {
 export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText = ''): T {
   const limit = (request.connection.contextWindow ?? 128_000) - request.connection.maxTokens - 4096;
   const pinned = request.dynamicContext.filter(item => item.required);
-  const mandatory = estimateTokens(buildStableSystemPrompt(request)) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(request.latestUserText) + estimateTokens(reservedText) + pinned.reduce((sum, item) => sum + estimateTokens(dynamicSection(item, request)), 0);
+  const mandatory = estimateTokens(buildStableSystemPrompt(request, request.promptMode ?? 'writer')) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(latestUserAnchor(request)) + estimateTokens(reservedText) + pinned.reduce((sum, item) => sum + estimateTokens(dynamicSection(item, request)), 0);
   if (limit < 1024 || mandatory > limit) throw new Error('Stable prompt or latest input exceeds the context budget. Increase context window or shorten the cards/lore/input.');
   let remaining = limit - mandatory;
   const contextBudget = remaining * 0.4;
   let dynamicUsed = 0;
   const dynamicContext = [...pinned, ...request.dynamicContext.filter(item => !item.required).sort((a, b) => b.priority - a.priority).filter((item) => {
-    const cost = estimateTokens(item.content) + estimateTokens(item.title);
+    const cost = estimateTokens(dynamicSection(item, request));
     if (dynamicUsed + cost > contextBudget) return false;
     dynamicUsed += cost; return true;
   })];
@@ -155,10 +155,18 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
     if (cost > remaining) break;
     history.unshift(node); remaining -= cost;
   }
-  return { ...request, history, dynamicContext };
+  const items: ContextReportItem[] = [
+    { id: 'system', source: 'system', title: '固定指令、身份与主角权限', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(buildStableSystemPrompt({ ...request, stableLore: [] }, request.promptMode ?? 'writer')) },
+    ...request.stableLore.map(item => ({ id: item.sourceId ?? item.title, source: 'lore' as const, title: item.title, role: 'system' as const, included: true, reason: '常驻资料', estimatedTokens: estimateTokens(item.content) })),
+    ...real.map(node => ({ id: node.id, source: 'history' as const, title: `${node.role} · ${node.id.slice(0, 8)}`, role: node.role, included: history.includes(node), reason: history.includes(node) ? '当前分支' : candidates.includes(node) ? '上下文预算' : '历史消息上限', estimatedTokens: estimateTokens(node.content) + 32, messageIds: [node.id] })),
+    ...[...request.dynamicContext].sort((a, b) => b.priority - a.priority).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),
+  ];
+  const keys = new Set(items.map(item => `${item.source}:${item.id}`));
+  items.push(...(request.contextReport?.items ?? []).filter(item => !item.included && !keys.has(`${item.source}:${item.id}`)));
+  return { ...request, history, dynamicContext, contextReport: { items } };
 }
 
-export function buildWriterContext(input: WriterRequest): { systemPrompt: string; messages: Message[] } {
+export function buildWriterContext(input: WriterRequest): { systemPrompt: string; messages: Message[]; contextReport: ContextReport } {
   const isPlain = input.mode === 'plain';
   const effectiveBrief = isPlain ? '' : input.brief;
   const request = fitRequest(input, effectiveBrief);
@@ -183,5 +191,6 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
     content: content || (request.latestUserText?.trim() ? request.latestUserText.trim() : '请继续推进剧情。'),
     timestamp: Date.now(),
   });
-  return { systemPrompt: buildStableSystemPrompt(request), messages };
+  const contextReport: ContextReport = { items: [...request.contextReport!.items, { id: 'writer-control', source: 'control', title: '后置指令、最新用户输入与 Current Speaker', role: 'user', included: true, reason: '最后的写作控制', estimatedTokens: estimateTokens(content) }] };
+  return { systemPrompt: buildStableSystemPrompt(request), messages, contextReport };
 }

@@ -340,10 +340,35 @@ describe('record truth and logical-turn safeguards', () => {
     applyProposal(repo, repo.listProposals(chat)[0]!.id, 'apply'); repo.setHead(chat, repo.getActiveBranch(chat)[0]!.id);
     expect(new StoryContext(repo, chat).world).toEqual([]);
   });
-  it('keeps latest user anchor even when a small ceiling removes it for writer two', async () => {
-    const input = server.repository.listConnections()[0]!;
-    server.repository.updateConnection(connection, connectionInputSchema.parse({ ...input, historyMessageLimit: 1 }));
-    await normal(); expect(runtime.requests[1]?.history).toHaveLength(1); expect(runtime.requests[1]?.latestUserText).toBe('推开门。');
+  it('v0.2 context report matches clipping and the preview equals the actual request body', async () => {
+    await normal(); const repo = server.repository;
+    repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false });
+    repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.listConnections()[0]!, historyMessageLimit: 1 }));
+    repo.savePinnedFact(chat, '灯塔属于路易斯'); repo.createState(chat, null, blankState());
+    const huge = repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'oversized-memory '.repeat(20_000) });
+    const recent = repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: null, source: 'generated', content: '昨夜拜访灯塔' });
+    const fetchMock = vi.fn(async () => Response.json({ id: 'r', model: 'test', status: 'completed', output: [{ id: 'm', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '灯塔还在。', annotations: [] }] }], usage: { input_tokens: 10, input_tokens_details: { cached_tokens: 0 }, output_tokens: 4, total_tokens: 14 } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const input = turnRequestSchema.parse({ conversationId: chat, input: { voice: 'protagonist', text: '走向灯塔。' } });
+      const preview = await server.turns.preview(input, new AbortController().signal);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(preview.contextReport.items.find(item => item.id === huge.id)).toMatchObject({ included: false, reason: '上下文预算' });
+      expect(preview.contextReport.items.find(item => item.id === recent.id)?.included).toBe(true);
+      expect(preview.requestBody).not.toContain('oversized-memory');
+      expect(preview.requestBody).toContain('昨夜拜访灯塔');
+      const body = JSON.parse(preview.requestBody);
+      expect(JSON.stringify(body.input.at(-1))).toContain('以下是用户本轮输入：');
+      expect(JSON.stringify(body.input.at(-1))).toContain('[Current Speaker]');
+      runtime.writeTurn = new PiAgentRuntime().writeTurn.bind(new PiAgentRuntime());
+      const turn = server.turns.start(input); await server.turns.idle(chat);
+      expect(repo.getTurn(turn.id)?.status).toBe('completed');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const trace = repo.listTraces(turn.id)[0]!;
+      expect(trace.request).toBe(preview.requestBody);
+      expect(trace.contextReport?.items.find(item => item.id === huge.id)?.included).toBe(false);
+    } finally { log.mockRestore(); }
   });
   it('never exposes legacy cast metadata to native tools', async () => {
     server.repository.updateCharacter(character, characterInputSchema.parse({ name: 'Sina', legacyPayload: { script: 'not-runtime' } }));

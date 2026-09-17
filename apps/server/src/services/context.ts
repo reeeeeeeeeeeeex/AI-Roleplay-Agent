@@ -1,5 +1,5 @@
-import type { RetrievedContext, StoryContextSource, RuntimeCharacter } from '@new-ai-chat/agent-runtime';
-import type { MessageNode } from '@new-ai-chat/contracts';
+import { estimateTokens, type RetrievedContext, type StoryContextSource, type RuntimeCharacter } from '@new-ai-chat/agent-runtime';
+import type { MessageNode, ContextReport } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 
 // Tools read this immutable request snapshot, never a newly selected chat or branch.
@@ -9,12 +9,14 @@ export class StoryContext implements StoryContextSource {
   readonly state;
   readonly memory: RetrievedContext[];
   readonly facts: RetrievedContext[];
+  readonly contextReport: ContextReport = { items: [] };
   readonly lore;
   constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode) {
     const chat = repository.getConversation(conversationId)!;
     const history = [...repository.getActiveBranch(conversationId).filter((m) => m.role !== 'system'), ...(virtualMessage ? [virtualMessage] : [])];
     const ceiling = repository.resolveConnection()?.historyMessageLimit ?? 0;
     this.history = ceiling > 0 ? history.slice(-ceiling) : history;
+    this.contextReport.items.push(...history.filter(message => !this.history.includes(message)).map(message => ({ id: message.id, source: 'history' as const, title: `${message.role} · ${message.id.slice(0, 8)}`, role: message.role, included: false, reason: '历史消息上限', estimatedTokens: estimateTokens(message.content) + 32, messageIds: [message.id] })));
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
       .map(({ id, name, description, personality, scenario, exampleDialogue, systemPrompt, postHistoryInstructions }) => ({ id, name, description, personality, scenario: group || chat.scenario ? '' : scenario, exampleDialogue, systemPrompt, postHistoryInstructions }));
@@ -54,6 +56,9 @@ export class StoryContext implements StoryContextSource {
   async dynamic(query: string): Promise<RetrievedContext[]> {
     const recent = this.memory.slice(-2);
     const older = (await this.searchMemory(query, this.memory.length)).filter(item => !recent.includes(item)).slice(0, 3);
-    return [...this.facts, ...await this.searchLore(query, 12), ...recent, ...older, ...(this.world.length ? [{ source: 'lore' as const, title: 'Applied world facts', content: JSON.stringify(this.world), priority: 1100 }] : []), ...(this.state ? [{ source: 'state' as const, title: 'Current state', content: JSON.stringify(this.state.tables), priority: 500, sourceId: this.state.id }] : [])];
+    const lore = await this.searchLore(query, 12);
+    const excluded: RetrievedContext[] = [...this.memory.filter(item => !recent.includes(item) && !older.includes(item)), ...this.lore.filter(item => !item.constant && !lore.some(match => match.sourceId === item.id)).map(item => ({ source: 'lore' as const, title: item.title, content: item.content, sourceId: item.id, priority: 0 }))];
+    this.contextReport.items.push(...excluded.map(item => ({ id: item.sourceId!, source: item.source, title: item.title, role: 'assistant' as const, included: false, reason: item.source === 'memory' ? '非最近两阶段，且未进入相关旧记忆前三项' : '未匹配 Lore 关键词或超过检索上限', estimatedTokens: estimateTokens(item.content) + estimateTokens(item.title) })));
+    return [...this.facts, ...lore, ...recent, ...older, ...(this.world.length ? [{ source: 'lore' as const, title: 'Applied world facts', content: JSON.stringify(this.world), priority: 1100 }] : []), ...(this.state ? [{ source: 'state' as const, title: 'Current state', content: JSON.stringify(this.state.tables), priority: 500, sourceId: this.state.id }] : [])];
   }
 }

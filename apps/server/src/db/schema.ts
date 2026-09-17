@@ -7,6 +7,7 @@ import type {
   TurnPlan,
   TurnProgress,
   MemoryCoverage,
+  ContextReport,
 } from '@new-ai-chat/contracts';
 
 const timestamps = {
@@ -150,6 +151,7 @@ export const turnTraces = sqliteTable('turn_traces', {
   model: text('model').notNull().default(''),
   speaker: text('speaker', { mode: 'json' }).$type<SpeakerRef | null>(),
   request: text('request', { mode: 'json' }).$type<unknown>(),
+  contextReport: text('context_report', { mode: 'json' }).$type<ContextReport | null>(),
   response: text('response', { mode: 'json' }).$type<unknown>(),
   tools: text('tools', { mode: 'json' }).$type<unknown[]>().notNull().default([]),
   thinking: text('thinking'),

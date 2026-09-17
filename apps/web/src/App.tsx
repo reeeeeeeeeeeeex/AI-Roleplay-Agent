@@ -5,6 +5,7 @@ import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';
 import Records from './Records.js';
+import ContextReport from './ContextReport.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
 import './branches.css';
 
@@ -941,6 +942,7 @@ export default function App() {
             <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
             {promptPreview.action === 'auto' && <p className="muted">草稿为空，正在预览自动继续；自动继续不重复上一轮用户输入。输入草稿后预览可查看本轮输入锚点。</p>}
             <p className="muted">身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)} · 主角：{promptPreview.personaName ?? '未选择（请求使用 Protagonist）'}{promptPreview.clipped ? ' · 已按上下文预算裁剪' : ''}</p>
+            <ContextReport report={promptPreview.contextReport} />
             <details className="prompt-json" open><summary>实际首请求 Body（未发送）</summary><pre>{prettyJson(promptPreview.requestBody)}</pre></details>
           </section>
         </div>

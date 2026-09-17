@@ -1,7 +1,7 @@
 import { Agent, type AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type AssistantMessage, type Context, type Message } from '@earendil-works/pi-ai';
-import type { RequestTiming, SpeakerRef, TurnPlan } from '@new-ai-chat/contracts';
-import { buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest, latestUserAnchor } from './prompt.js';
+import type { RequestTiming, SpeakerRef, TurnPlan, ContextReport } from '@new-ai-chat/contracts';
+import { buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest, latestUserAnchor, estimateTokens } from './prompt.js';
 import { fallbackPlan, validatePlan } from './plan.js';
 import { PiModelGateway } from './pi-gateway.js';
 import type {
@@ -32,6 +32,14 @@ function visibleText(message: AssistantMessage | null): string {
 
 function visibleThinking(message: AssistantMessage | null): string {
   return message?.content.flatMap((item) => item.type === 'thinking' && !item.redacted ? [item.thinking] : []).join('') ?? '';
+}
+
+function appendedReport(base: ContextReport, initial: number, messages: Context['messages']): ContextReport {
+  return { items: [...base.items, ...messages.slice(initial).map((message, index) => ({
+    id: `agent-append-${index}`, source: 'control' as const, title: `Agent 追加 · ${message.role}`,
+    role: message.role === 'toolResult' ? 'assistant' as const : message.role,
+    included: true, reason: '同一会话的工具结果或写作控制', estimatedTokens: estimateTokens(typeof message.content === 'string' ? message.content : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')),
+  }))] };
 }
 
 function domainTools(source: StoryContextSource, overrides: BaseAgentRequest['toolOverrides'] = []): AgentTool[] {
@@ -140,11 +148,13 @@ function routingPrompt(request: RouteRequest, fullPlanner: boolean): string {
 }
 
 function routingStart(request: RouteRequest, fullPlanner: boolean, capture: (plan: TurnPlan) => void) {
-  const fitted = fitRequest(request, routingPrompt(request, fullPlanner));
+  const fitted = fitRequest({ ...request, promptMode: fullPlanner ? 'planner' as const : 'writer' as const }, routingPrompt(request, fullPlanner));
   const terminalName = fullPlanner ? 'submit_turn_plan' : 'select_output_voices';
   const tools = [...(fullPlanner ? domainTools(fitted.source, fitted.toolOverrides) : []), planTool(terminalName, fitted, capture)];
   const dynamic = fullPlanner ? buildDynamicAnchor({ ...fitted, latestUserText: '' }, '', { kind: 'narrator' }).replace(/\[Current Speaker\][\s\S]*$/u, '') : '';
   const prompt = `${dynamic}\n\n${routingPrompt(fitted, fullPlanner)}`;
+  for (const item of fitted.contextReport!.items) if (item.source !== 'history' && item.role === 'assistant') item.role = 'user';
+  fitted.contextReport!.items.push({ id: 'planner-control', source: 'control', title: 'Planner 规划控制', role: 'user', included: true, reason: '首请求规划', estimatedTokens: estimateTokens(routingPrompt(fitted, fullPlanner)) });
   return { fitted, terminalName, tools, prompt };
 }
 
@@ -152,12 +162,14 @@ function writerStart(request: BaseAgentRequest, selected: TurnPlan | null, prefi
   const fallbackSpeaker = request.characters[0] ? { kind: 'character' as const, characterId: request.characters[0].id } : { kind: 'narrator' as const };
   const speaker = selected?.outputs[0]?.speaker ?? fallbackSpeaker;
   const brief = selected?.outputs[0]?.brief ?? prefix ?? 'Choose the appropriate output voice before writing.';
-  const writer = buildWriterContext({ ...request, speaker, pendingSpeaker: !selected, brief, outputIndex: 0, mode: 'writer-agent' });
+  const behavior = request.promptSettings?.writerInstruction ?? 'Select voices once when needed, then write the assigned prose in this same session.';
+  const writer = buildWriterContext({ ...fitRequest(request, behavior), speaker, pendingSpeaker: !selected, brief, outputIndex: 0, mode: 'writer-agent' });
+  writer.contextReport.items.splice(1, 0, { id: 'agent-behavior', source: 'system', title: 'Writer Agent 行为指令', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(behavior) });
   const tools = [...domainTools(request.source, request.toolOverrides), selectionTool(request, capture)];
   return {
     writer,
     context: {
-      systemPrompt: `${writer.systemPrompt}\n\n[Writer Agent Behavior]\n${request.promptSettings?.writerInstruction ?? 'Select voices once when needed, then write the assigned prose in this same session.'}`,
+      systemPrompt: `${writer.systemPrompt}\n\n[Writer Agent Behavior]\n${behavior}`,
       messages: writer.messages,
       tools,
     } satisfies Context,
@@ -174,7 +186,7 @@ export class PiAgentRuntime implements AgentRuntime {
     if (mode === 'planner' && !forcedPlan) {
       const start = routingStart({ ...request, plannerEnabled: true }, true, () => {});
       const context: Context = { systemPrompt: buildStableSystemPrompt(start.fitted, 'planner'), messages: [...buildHistoryMessages(start.fitted), { role: 'user', content: start.prompt, timestamp: Date.now() } as Message], tools: start.tools };
-      return { phase: 'planning', requestBody: await this.gateway.captureRequestBody(request.connection, context, { signal: request.signal, streaming: request.streaming ?? true }), speaker: null, pendingSelection: true, clipped: start.fitted.history.length < original.history || start.fitted.dynamicContext.length < original.context };
+      return { phase: 'planning', requestBody: await this.gateway.captureRequestBody(request.connection, context, { signal: request.signal, streaming: request.streaming ?? true }), contextReport: start.fitted.contextReport!, speaker: null, pendingSelection: true, clipped: start.fitted.history.length < original.history || start.fitted.dynamicContext.length < original.context };
     }
     request = fitRequest(request);
     const clipped = request.history.length < original.history || request.dynamicContext.length < original.context;
@@ -182,10 +194,10 @@ export class PiAgentRuntime implements AgentRuntime {
       const plan = forcedPlan ?? fallbackPlan(request.storyTurnId, request.characters);
       const speaker = plan.outputs[0]!.speaker;
       const writer = buildWriterContext({ ...request, speaker, brief: '', outputIndex: 0, mode: 'plain' });
-      return { phase: 'plain', requestBody: await this.gateway.captureRequestBody(request.connection, writer, { signal: request.signal, streaming: request.streaming ?? true, replayReasoning: false }), speaker, pendingSelection: false, clipped };
+      return { phase: 'plain', requestBody: await this.gateway.captureRequestBody(request.connection, writer, { signal: request.signal, streaming: request.streaming ?? true, replayReasoning: false }), contextReport: writer.contextReport, speaker, pendingSelection: false, clipped };
     }
     const start = writerStart(request, forcedPlan ?? null, undefined, () => {});
-    return { phase: start.pendingSelection ? 'selection' : 'writing', requestBody: await this.gateway.captureRequestBody(request.connection, start.context, { signal: request.signal, streaming: request.streaming ?? true }), speaker: start.speaker, pendingSelection: start.pendingSelection, clipped };
+    return { phase: start.pendingSelection ? 'selection' : 'writing', requestBody: await this.gateway.captureRequestBody(request.connection, start.context, { signal: request.signal, streaming: request.streaming ?? true }), contextReport: start.writer.contextReport, speaker: start.speaker, pendingSelection: start.pendingSelection, clipped };
   }
 
   async plan(request: RouteRequest, onTool?: (name: string, args: unknown) => void): Promise<TurnPlan> {
@@ -212,7 +224,7 @@ export class PiAgentRuntime implements AgentRuntime {
       },
       streamFn: (_model, context, options) => {
         activeFirstThinking = false;
-        activeTrace = request.trace?.start(fullPlanner ? 'planning' : 'selection', request.connection.model) ?? null;
+        activeTrace = request.trace?.start(fullPlanner ? 'planning' : 'selection', request.connection.model, undefined, request.contextReport) ?? null;
         return this.gateway.stream(request.connection, context, { ...options, signal: request.signal,
           streaming: request.streaming ?? true,
           tracePayload: (payload) => { if (activeTrace) request.trace?.request(activeTrace, payload); },
@@ -262,7 +274,7 @@ export class PiAgentRuntime implements AgentRuntime {
     for (const [outputIndex, output] of plan.outputs.entries()) {
       const context = buildWriterContext({ ...request, history, speaker: output.speaker, brief: '', outputIndex, mode: 'plain' });
       const timing: RequestTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
-      const traceId = request.trace?.start('plain', request.connection.model, output.speaker) ?? null;
+      const traceId = request.trace?.start('plain', request.connection.model, output.speaker, context.contextReport) ?? null;
       let final: AssistantMessage | null = null;
       let thinking = '';
       let text = '';
@@ -336,7 +348,7 @@ export class PiAgentRuntime implements AgentRuntime {
       streamFn: (_model, nextContext, streamOptions) => {
         requestCounts[outputIndex] = (requestCounts[outputIndex] ?? 0) + 1;
         activeTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
-        activeTrace = request.trace?.start(phase(), request.connection.model, selected?.outputs[outputIndex]?.speaker) ?? null;
+        activeTrace = request.trace?.start(phase(), request.connection.model, selected?.outputs[outputIndex]?.speaker, appendedReport(context.contextReport, context.messages.length, nextContext.messages)) ?? null;
         return this.gateway.stream(request.connection, nextContext, {
           ...streamOptions,
           signal: request.signal,

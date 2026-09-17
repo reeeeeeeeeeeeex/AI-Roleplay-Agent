@@ -331,6 +331,18 @@ export interface SessionEvent<T = unknown> {
   createdAt: string;
 }
 
+export interface ContextReportItem {
+  id: string;
+  source: 'system' | 'history' | 'lore' | 'memory' | 'state' | 'control';
+  title: string;
+  role: 'system' | 'user' | 'assistant';
+  included: boolean;
+  reason: string;
+  estimatedTokens: number;
+  messageIds?: string[];
+}
+export interface ContextReport { items: ContextReportItem[] }
+
 export interface TurnTrace {
   id: string;
   conversationId: string;
@@ -341,6 +353,7 @@ export interface TurnTrace {
   model: string;
   speaker: SpeakerRef | null;
   request: unknown | null;
+  contextReport?: ContextReport | null;
   response: unknown | null;
   tools: Array<{ name: string; arguments: unknown; result?: unknown; ok?: boolean }>;
   thinking: string | null;

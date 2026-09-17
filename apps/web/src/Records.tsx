@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import type { Conversation, GenerationMode, PinnedFact } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
+import ContextReport from './ContextReport.js';
 
 const tableNames: Record<string, string> = {
   global_state: '全局状态',
@@ -257,6 +258,7 @@ export default function Records({
                     <small className="muted">工具 {trace.tools?.length ?? 0} · 总输入 {totalInput ?? '未返回'} · 输出 {usage?.output ?? '未返回'} · 缓存命中 {usage?.cacheRead ?? '未返回'} / {cacheRate}{usage?.cacheWrite ? ` · 缓存写入 ${usage.cacheWrite}` : ''}{usage?.reasoning !== undefined ? ` · 思考 ${usage.reasoning}` : ''}</small>
                     <small className="muted">准备 {elapsed(timing?.preparedAt, timing?.sentAt)} · 响应头 {elapsed(timing?.sentAt, timing?.headersAt)} · 首次思考 {elapsed(timing?.sentAt, timing?.firstThinkingAt)} · 首次正文 {elapsed(timing?.sentAt, timing?.firstTextAt)} · 总耗时 {elapsed(timing?.sentAt, timing?.completedAt)}</small>
                     {trace.speaker && <small className="muted">输出身份：{trace.speaker.kind === 'narrator' ? '旁白' : trace.speaker.characterId}</small>}
+                    <ContextReport report={trace.contextReport} />
                     <details><summary>实际请求 Body</summary><pre>{trace.request ? formatBody(trace.request) : '不可用（旧回合未捕获）'}</pre></details>
                     {trace.response && <details><summary>原始响应 Body</summary><pre>{formatBody(trace.response)}</pre></details>}
                     <details><summary>工具调用与结果</summary><pre>{trace.tools?.length ? JSON.stringify(trace.tools, null, 2) : '无工具调用'}</pre></details>

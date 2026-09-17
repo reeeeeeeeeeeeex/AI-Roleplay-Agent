@@ -8,6 +8,7 @@ import type {
   TurnPlan,
   PromptSettings,
   GenerationMode,
+  ContextReport,
 } from '@new-ai-chat/contracts';
 
 export interface RuntimeConnection {
@@ -85,12 +86,14 @@ export interface BaseAgentRequest {
   signal: AbortSignal;
   promptSettings?: PromptSettings;
   continuation?: boolean;
+  contextReport?: ContextReport;
+  promptMode?: 'writer' | 'planner';
   trace?: RuntimeTraceSink;
 }
 
 export type TracePhase = 'selection' | 'planning' | 'writing' | 'records' | 'plain';
 export interface RuntimeTraceSink {
-  start(phase: TracePhase, model: string, speaker?: SpeakerRef): string;
+  start(phase: TracePhase, model: string, speaker?: SpeakerRef, contextReport?: ContextReport): string;
   request(traceId: string, payload: unknown): void;
   response(traceId: string, payload: unknown): void;
   thinking(traceId: string, text: string): void;
@@ -138,6 +141,7 @@ export interface UnifiedWriterOptions {
 }
 
 export interface FirstRequestPreview {
+  contextReport: ContextReport;
   phase: TracePhase;
   requestBody: string;
   speaker: SpeakerRef | null;

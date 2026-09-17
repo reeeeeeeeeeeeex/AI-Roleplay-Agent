@@ -1,6 +1,6 @@
 import { fallbackPlan } from './plan.js';
 import { PiAgentRuntime } from './runtime.js';
-import type { AgentRuntime, BaseAgentRequest, RouteRequest, WriterRequest, UnifiedWriterOptions } from './types.js';
+import type { AgentRuntime, AgentTurnResult, BaseAgentRequest, RouteRequest, WriterRequest, UnifiedWriterOptions } from './types.js';
 export class FakeRuntime implements AgentRuntime {
   private readonly previewRuntime = new PiAgentRuntime();
   previewFirstRequest(request: BaseAgentRequest, mode: 'plain' | 'writer-agent' | 'planner', forcedPlan?: ReturnType<typeof fallbackPlan>) {
@@ -21,7 +21,7 @@ export class FakeRuntime implements AgentRuntime {
     const completedAt = new Date().toISOString();
     return { text, providerState: null, usage: { input: 10, output: text.length, cacheRead: 0, cacheWrite: 0, totalTokens: 10 + text.length }, thinking: '', timing: { preparedAt: completedAt, sentAt: completedAt, headersAt: completedAt, firstThinkingAt: null, firstTextAt: completedAt, completedAt } };
   }
-  async writeTurn(request: BaseAgentRequest, options: UnifiedWriterOptions) {
+  async writeTurn(request: BaseAgentRequest, options: UnifiedWriterOptions): Promise<AgentTurnResult> {
     const plan = options.forcedPlan ?? await this.route({ ...request, plannerEnabled: false });
     options.onPhase?.('writing', plan);
     const results = [];

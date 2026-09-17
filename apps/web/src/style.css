@@ -563,6 +563,11 @@ main {
 }
 
 /* Messages Stream */
+.context-report { margin: 10px 0; }
+.context-report ol { max-height: 360px; overflow: auto; padding-left: 24px; }
+.context-report li { margin: 10px 0; overflow-wrap: anywhere; }
+.context-report small { display: block; }
+
 .turn-recovery {
   padding: 10px;
   margin-bottom: 8px;

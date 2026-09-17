@@ -356,6 +356,7 @@ export class Repository {
       requestIndex: input.requestIndex, status: input.status, model: input.model,
       speaker: input.speaker,
       request: this.traceSafe(input.request), response: this.traceSafe(input.response),
+      contextReport: input.contextReport ?? null,
       tools: this.traceSafe(input.tools) as unknown[], thinking: input.thinking,
       usage: input.usage, timing: input.timing, error: input.error, createdAt: now(), completedAt: null,
     };

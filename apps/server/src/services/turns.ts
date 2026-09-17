@@ -96,7 +96,7 @@ export class TurnService {
       agencyMode: settings.agencyMode, narrator: settings.narrator, characters: source.cast, persona,
       history: source.history, stableLore: source.stableLore(), dynamicContext: await source.dynamic(auto ? source.history.slice(-3).map(m => m.content).join('\n') : latest?.content ?? ''),
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal,
-      promptSettings: this.repository.getPromptSettings() };
+      promptSettings: this.repository.getPromptSettings(), contextReport: source.contextReport };
     return this.plugins ? this.plugins.enrich(request) : request;
   }
 
@@ -137,9 +137,9 @@ export class TurnService {
       let plan: TurnPlan | null = turn.plan ?? (forced ? { ...fallbackPlan(turn.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : null);
       let requestIndex = 0;
       const traceSink = {
-        start: (phase: TracePhase, model: string, speaker?: SpeakerRef) => {
+        start: (phase: TracePhase, model: string, speaker?: SpeakerRef, contextReport?: BaseAgentRequest['contextReport']) => {
           const index = requestIndex++;
-          const trace = this.repository.createTrace({ conversationId: turn.conversationId, turnId: turn.id, phase, requestIndex: index, status: 'running', model, speaker: speaker ?? null, request: null, response: null, tools: [], thinking: null, usage: null, timing: { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null }, error: null });
+          const trace = this.repository.createTrace({ conversationId: turn.conversationId, turnId: turn.id, phase, requestIndex: index, status: 'running', model, speaker: speaker ?? null, request: null, contextReport: contextReport ?? null, response: null, tools: [], thinking: null, usage: null, timing: { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null }, error: null });
           emit('trace.started', { traceId: trace.id, phase, requestIndex: index, model, speaker }); return trace.id;
         },
         request: (traceId: string, payload: unknown) => { this.repository.updateTrace(traceId, { request: payload }); emit('trace.request', { traceId }); },
