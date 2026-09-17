@@ -34,7 +34,6 @@ export class TurnService {
     const turn = this.repository.createTurn(chat.id, storyTurnId, request.trigger);
     let parent = chat.headMessageId;
     let continueText = '';
-    let forced: SpeakerRef | null = explicit;
     this.repository.database.sqlite.transaction(() => {
       if (request.input && request.trigger === 'normal') {
         parent = this.repository.createMessage({ conversationId: chat.id, parentId: parent, storyTurnId, role: 'user',
@@ -42,9 +41,9 @@ export class TurnService {
           content: request.input.text, providerState: null, legacyPayload: null }).id;
       } else if (target && request.trigger === 'regenerate') {
         const first = swipe ? target : fullHistory.find((m) => m.storyTurnId === target.storyTurnId && m.role === 'assistant') ?? target;
-        parent = first.parentId; if (swipe) forced = target.speaker;
+        parent = first.parentId;
       } else if (target && request.trigger === 'continue') {
-        parent = target.parentId; continueText = target.content; forced = target.speaker;
+        parent = target.parentId; continueText = target.content;
       }
       this.repository.setHead(chat.id, request.trigger === 'continue' ? target!.id : parent);
     })();
@@ -162,7 +161,7 @@ export class TurnService {
           emit('trace.completed', { traceId, status, usage, error });
         },
       };
-      if (mode === 'plain' && !forced && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
+      if (mode === 'plain' && !forced && !plan && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
       if (mode === 'plain' && !plan) { plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = []; }
       if (mode === 'planner' && !forced && !plan) {
         try {
@@ -238,11 +237,11 @@ export class TurnService {
         this.repository.createProposals(turn.conversationId, finalPlan);
         if (finalPlan.protagonistStateProposals.length || finalPlan.worldEventProposals.length) emit('proposals.ready', { plan: finalPlan });
         emit('story.settled', { head: expectedHead, variant: input.trigger === 'continue' || swipe });
-        this.repository.updateTurn(turn.id, { status: 'completed', completedAt: new Date().toISOString() });
+        this.repository.updateTurn(turn.id, { status: 'completed', recordsStatus: input.trigger === 'continue' || swipe ? 'completed' : 'running', completedAt: new Date().toISOString() });
       })();
       settled = true;
       if (input.trigger !== 'continue' && !swipe) {
-        this.repository.updateTurn(turn.id, { recordsStatus: 'running' }); emit('records.started');
+        emit('records.started');
         try {
           await this.postprocess(turn.conversationId, signal, traceSink);
           signal.throwIfAborted(); await this.plugins?.settled(turn.conversationId);

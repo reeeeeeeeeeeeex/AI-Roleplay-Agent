@@ -406,19 +406,20 @@ export class PiAgentRuntime implements AgentRuntime {
     });
     request.signal.throwIfAborted();
     const abort = () => agent.abort(); request.signal.addEventListener('abort', abort, { once: true });
+    const writerError = () => (agent.state.messages.findLast((message) => message.role === 'assistant') as AssistantMessage | undefined)?.errorMessage;
     try {
       options.onPhase?.(selected ? 'writing' : 'selection', selected ?? undefined);
       await agent.continue();
       request.signal.throwIfAborted();
       if (!selected) throw new Error('Writer Agent did not call select_output_voices with a valid selection.');
-      if (!results[0]) throw new Error(agent.state.error || 'Writer Agent returned no visible text.');
+      if (!results[0]) throw new Error(writerError() || 'Writer Agent returned no visible text.');
       options.onOutputComplete?.(results[0], 0);
       if (selected.outputs.length > 1) {
         outputIndex = 1;
         options.onPhase?.('writing', selected.outputs[1]);
         await agent.prompt(`[Writer Control]\nWrite only the second selected voice now. Do not select another voice or explain the process.\n[Current Speaker]\n${selected.outputs[1]!.speaker.kind === 'narrator' ? request.narrator.name : request.characters.find((c) => c.id === (selected!.outputs[1]!.speaker as { characterId: string }).characterId)?.name ?? 'Character'}\n[Writer Brief]\n${selected.outputs[1]!.brief}`);
         request.signal.throwIfAborted();
-        if (!results[1]) throw new Error(agent.state.error || 'Writer Agent returned no visible text for the second voice.');
+        if (!results[1]) throw new Error(writerError() || 'Writer Agent returned no visible text for the second voice.');
         options.onOutputComplete?.(results[1], 1);
       }
     } catch (error) {

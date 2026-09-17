@@ -69,6 +69,12 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     const send=(event:ReturnType<Repository['addEvent']>)=>{ if (!reply.raw.destroyed) reply.raw.write(`${event.id > 0 ? `id: ${event.id}\n` : ''}data: ${JSON.stringify(event)}\n\n`); };
     const prior=repository.eventsForTurn(id,after); for(const event of prior) send(event);
     const all=repository.eventsForTurn(id); if (all.some((event)=>terminal(event.type))) {reply.raw.end();return;}
+    const current=repository.getTurn(id)!;
+    if (['partial','failed','cancelled'].includes(current.status) || (current.status==='completed' && current.recordsStatus!=='running')) {
+      // A restart can occur after the durable status but before its final SSE event.
+      send({id:0,conversationId:current.conversationId,turnId:id,type:`turn.${current.status}`,payload:{turnId:id,storyTurnId:current.storyTurnId,error:current.error},createdAt:new Date().toISOString()});
+      reply.raw.end();return;
+    }
     const unsubscribe=events.subscribe(id,(event)=>{ send(event); if(terminal(event.type))reply.raw.end(); });
     const snapshot=events.snapshot(id); if(snapshot) send({id:0,conversationId:repository.getTurn(id)!.conversationId,turnId:id,type:'writer.snapshot',payload:snapshot,createdAt:new Date().toISOString()});
     const heartbeat=setInterval(()=>{ if(!reply.raw.destroyed)reply.raw.write(': heartbeat\n\n'); },15_000);

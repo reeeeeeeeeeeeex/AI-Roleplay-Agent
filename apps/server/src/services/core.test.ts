@@ -143,6 +143,8 @@ it('default persona and story binding keep previews, generation and the latest i
 
 describe('native turns and narrator',()=>{
   it('v0.2 retains the first output and retries only the interrupted second voice', async () => {
+    const group = server.repository.createGroup({ name: 'Recovery', memberIds: [character], scenario: '' });
+    server.repository.updateConversation(chat, { ...server.repository.getConversation(chat)!, kind: 'group', characterId: null, groupId: group.id });
     const original = runtime.write.bind(runtime);
     runtime.write = async (request, delta) => {
       if (request.outputIndex === 1) { delta('unfinished'); throw new Error('second voice failed'); }
@@ -158,6 +160,10 @@ describe('native turns and narrator',()=>{
     server.repository.setHead(chat, first[0]!.id);
     expect(() => server.turns.retry(turn.id)).toThrow(/分支/);
     server.repository.setHead(chat, first[1]!.id);
+    server.repository.updateTurn(turn.id, { status: 'running' });
+    server.repository.recoverInterruptedTurns();
+    expect(server.repository.getTurn(turn.id)?.status).toBe('partial');
+    server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), generationMode: 'plain' });
     runtime.write = original;
     const retry = server.turns.retry(turn.id); await server.turns.idle(chat);
     const branch = server.repository.getActiveBranch(chat);
@@ -184,6 +190,9 @@ describe('native turns and narrator',()=>{
     expect(server.repository.getActiveBranch(chat).filter(m => m.role === 'assistant')).toHaveLength(2);
     expect(settledStoryIds(server.repository, chat)).toEqual([turn.storyTurnId]);
     expect(server.repository.listMemories(chat)).toEqual([]);
+    server.repository.database.sqlite.prepare("DELETE FROM session_events WHERE turn_id = ? AND type = 'turn.completed'").run(turn.id);
+    const replay = await server.app.inject({ method: 'GET', url: `/api/turns/${turn.id}/events` });
+    expect(replay.body).toContain('"type":"turn.completed"');
   });
   it('discards a stale writer when the branch changes',async()=>{let entered!:()=>void;const ready=new Promise<void>((r)=>entered=r);let release!:()=>void;const gate=new Promise<void>((r)=>release=r);const original=runtime.write.bind(runtime);runtime.write=async(req,cb)=>{entered();await gate;return original(req,cb);};const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'one',voice:'protagonist'},replyTarget:{mode:'explicit',speaker:{kind:'narrator'}}}));await ready;server.repository.setHead(chat,null);release();await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('failed');expect(server.repository.getConversation(chat)?.headMessageId).toBeNull();});
   it('auto turns do not re-anchor stale user input',async()=>{await normal();const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'auto'}));await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('completed');expect(runtime.requests.at(-1)?.latestUserText).toBe('');});
