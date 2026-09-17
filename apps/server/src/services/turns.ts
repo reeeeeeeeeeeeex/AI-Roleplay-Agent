@@ -17,6 +17,7 @@ export class TurnService {
   cancel(id: string): boolean { const task = [...this.active.values()].find((task) => task.id === id); task?.controller.abort(); return Boolean(task); }
 
   start(request: TurnRequest, swipe = false): TurnRecord {
+    swipe ||= Boolean(request.rewriteInstruction);
     const chat = this.repository.getConversation(request.conversationId);
     if (!chat) throw new Error('Conversation not found.');
     this.assertIdle(chat.id);
@@ -131,6 +132,7 @@ export class TurnService {
     try {
       this.repository.updateTurn(turn.id, { status: 'running' }); emit('turn.started');
       const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto' || input.trigger === 'continue');
+      if (input.rewriteInstruction && target) request.rewrite = { instruction: input.rewriteInstruction, originalText: target.content };
       const chat = this.repository.getConversation(turn.conversationId)!;
       const mode = this.repository.getGeneralSettings().generationMode;
       let actualMode = mode;

@@ -299,8 +299,8 @@ export default function App() {
     }
   }
 
-  async function swipe(message: MessageNode) {
-    const result = await api(`/messages/${message.id}/swipe`, 'POST', {});
+  async function swipe(message: MessageNode, instruction?: string) {
+    const result = await api(`/messages/${message.id}/swipe`, 'POST', instruction ? { instruction } : {});
     await follow(result.id, message.conversationId);
   }
 
@@ -601,6 +601,10 @@ export default function App() {
                             </button>
                             <button disabled={!!turn} onClick={() => act(send('regenerate', m.id))}>重做整轮</button>
                             <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>续写</button>
+                            <button disabled={!!turn} onClick={() => {
+                              const instruction = window.prompt('按要求改写整条回复（不作为剧情输入）', '保留剧情，减少解释，增加对白。');
+                              if (instruction?.trim()) act(swipe(m, instruction));
+                            }}>按要求改写</button>
                           </>
                         )}
                         <button disabled={!!turn} title="从此处分支" onClick={() => act(setHead(m.id))}>

@@ -75,6 +75,7 @@ export const turnRequestSchema = z.object({
   trigger: z.enum(['normal', 'regenerate', 'continue', 'auto']).default('normal'),
   replyTarget: replyTargetSchema.default({ mode: 'auto' }),
   targetMessageId: z.string().min(1).optional(),
+  rewriteInstruction: z.string().trim().min(1).max(4_000).optional(),
 }).superRefine((value, context) => {
   if (value.trigger === 'normal' && !value.input) {
     context.addIssue({ code: 'custom', path: ['input'], message: 'Normal turns require input.' });
@@ -82,6 +83,7 @@ export const turnRequestSchema = z.object({
   if ((value.trigger === 'regenerate' || value.trigger === 'continue') && !value.targetMessageId) {
     context.addIssue({ code: 'custom', path: ['targetMessageId'], message: 'Target message is required.' });
   }
+  if (value.rewriteInstruction && value.trigger !== 'regenerate') context.addIssue({ code: 'custom', path: ['rewriteInstruction'], message: 'Rewrite instructions require a target reply.' });
 });
 export type TurnRequest = z.infer<typeof turnRequestSchema>;
 

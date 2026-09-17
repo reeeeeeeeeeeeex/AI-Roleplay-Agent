@@ -87,7 +87,8 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.get('/api/messages/:id/swipes', async (req) => repo.listSwipes(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })));
   app.post('/api/messages/:id/swipe', async (req,reply) => {
     const target = repo.getMessage(idOf(req)); if (!target) throw new Error('Message not found.');
-    return reply.code(202).send(turns.start(turnRequestSchema.parse({ conversationId: target.conversationId, trigger: 'regenerate', targetMessageId: target.id }), true));
+    const { instruction } = z.object({ instruction: z.string().trim().min(1).max(4_000).optional() }).parse(req.body ?? {});
+    return reply.code(202).send(turns.start(turnRequestSchema.parse({ conversationId: target.conversationId, trigger: 'regenerate', targetMessageId: target.id, rewriteInstruction: instruction }), true));
   });
   app.post('/api/turns', async (req, reply) => reply.code(202).send(turns.start(turnRequestSchema.parse(req.body))));
   app.get('/api/turns/:id', async (req,reply) => repo.getTurn(idOf(req)) ?? reply.code(404).send({ error: 'Turn not found.' }));

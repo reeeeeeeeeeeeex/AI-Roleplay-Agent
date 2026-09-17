@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../app.js';
-import { FakeRuntime, PiAgentRuntime, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
+import { FakeRuntime, PiAgentRuntime, buildWriterContext, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, blankState } from '@new-ai-chat/contracts';
 import { settledStoryIds, applyProposal } from './records.js';
 import { StoryContext } from './context.js';
@@ -189,7 +189,27 @@ describe('native turns and narrator',()=>{
   it('auto turns do not re-anchor stale user input',async()=>{await normal();const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'auto'}));await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('completed');expect(runtime.requests.at(-1)?.latestUserText).toBe('');});
 });
 describe('branches and records',()=>{
-  it('swiping the first output leaves the second output on the old branch',async()=>{await normal();const old=server.repository.getActiveBranch(chat);const first=old[1]!;const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'regenerate',targetMessageId:first.id}),true);await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('completed');const b=server.repository.getActiveBranch(chat);expect(b).toHaveLength(2);expect(b.some((m)=>m.id===old[2]!.id)).toBe(false);expect(server.repository.getMessage(old[2]!.id)).not.toBeNull();});
+  it('v0.2 directed rewrite preserves the old branch and keeps editing directions out of story records', async () => {
+    await normal(); const repo = server.repository; const old = repo.getActiveBranch(chat);
+    repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'planner', memoryTurnInterval: 1 });
+    const plan = vi.spyOn(runtime, 'plan'); const route = vi.spyOn(runtime, 'route'); const maintain = vi.spyOn(runtime, 'maintain');
+    const instruction = '保留剧情，改成非常简短的对白';
+    const response = await server.app.inject({ method: 'POST', url: `/api/messages/${old[1]!.id}/swipe`, payload: { instruction } });
+    expect(response.statusCode).toBe(202); await server.turns.idle(chat);
+    const branch = repo.getActiveBranch(chat);
+    expect(branch).toHaveLength(2); expect(branch[1]?.speaker).toEqual(old[1]?.speaker);
+    expect(repo.getMessage(old[2]!.id)).toEqual(old[2]);
+    expect(settledStoryIds(repo, chat)).toHaveLength(1);
+    expect(plan).not.toHaveBeenCalled(); expect(route).not.toHaveBeenCalled(); expect(maintain).not.toHaveBeenCalled();
+    const request = runtime.requests.at(-1)!;
+    const context = buildWriterContext({ ...request, mode: 'plain', speaker: old[1]!.speaker!, outputIndex: 0, brief: '' });
+    expect(String(context.messages.at(-1)?.content)).toContain(instruction);
+    expect(String(context.messages.at(-1)?.content)).toContain('[Rewrite Source]');
+    expect(JSON.stringify(branch)).not.toContain(instruction);
+    await server.records.generate(chat, 'memory', new AbortController().signal);
+    expect(maintain.mock.calls[0]![0].rewrite).toBeUndefined();
+    expect(JSON.stringify(maintain.mock.calls[0]![0].history)).not.toContain(instruction);
+  });
   it('regenerate replaces the whole logical turn and does not inflate counters',async()=>{await normal();const old=server.repository.getActiveBranch(chat);server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'regenerate',targetMessageId:old[2]!.id}));await server.turns.idle(chat);const b=server.repository.getActiveBranch(chat);expect(b).toHaveLength(3);expect(b[0]?.id).toBe(old[0]?.id);expect(settledStoryIds(server.repository,chat)).toHaveLength(1);});
   it('v0.2 plain Continue explicitly continues the selected immutable reply without an old input anchor', async () => {
     await normal();

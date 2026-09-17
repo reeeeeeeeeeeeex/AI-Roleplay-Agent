@@ -169,7 +169,11 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
 export function buildWriterContext(input: WriterRequest): { systemPrompt: string; messages: Message[]; contextReport: ContextReport } {
   const isPlain = input.mode === 'plain';
   const effectiveBrief = isPlain ? '' : input.brief;
-  const request = fitRequest(input, effectiveBrief);
+  const rewriteControl = input.rewrite ? [
+    section('Rewrite Source', input.rewrite.originalText),
+    section('Rewrite Instruction', `The following is a one-time editing direction, not an event or a fact in the story. Replace the source reply in full, preserving the assigned speaker and all protagonist agency constraints. Output only the rewritten prose.\n${input.rewrite.instruction}`),
+  ].join('\n\n') : '';
+  const request = fitRequest(input, `${effectiveBrief}\n${rewriteControl}`);
   const messages = buildHistoryMessages(request);
   for (const item of [...request.dynamicContext].sort((left, right) => right.priority - left.priority)) {
     const content = dynamicSection(item, request);
@@ -181,6 +185,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
   const content = [
     ...postHistorySections(request),
     briefSection,
+    rewriteControl,
     request.continuation ? section('Continue Writing', 'Continue directly from the end of the selected assistant reply in the history. Output only the new continuation; do not repeat existing text, restart the scene, or change the speaker. All protagonist agency and narrator constraints still apply.') : '',
     latestUserAnchor(request),
     currentSpeakerSection,

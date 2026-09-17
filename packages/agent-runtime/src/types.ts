@@ -86,6 +86,7 @@ export interface BaseAgentRequest {
   signal: AbortSignal;
   promptSettings?: PromptSettings;
   continuation?: boolean;
+  rewrite?: { instruction: string; originalText: string };
   contextReport?: ContextReport;
   promptMode?: 'writer' | 'planner';
   trace?: RuntimeTraceSink;
