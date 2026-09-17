@@ -91,7 +91,8 @@ export default function PersonaPicker({
               role="option"
               aria-selected={!value}
               className={`persona-picker-card empty-card ${!value ? 'selected' : ''}`}
-              onClick={() => {
+              onClick={(event) => {
+                event.preventDefault(); // Do not let the wrapping label reopen the trigger.
                 onChange(null);
                 setIsOpen(false);
               }}
@@ -125,9 +126,11 @@ export default function PersonaPicker({
                 <div
                   key={p.id}
                   role="option"
+                  aria-label={p.name}
                   aria-selected={isSelected}
                   className={`persona-picker-card ${isSelected ? 'selected' : ''}`}
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.preventDefault();
                     onChange(p.id);
                     setIsOpen(false);
                   }}
@@ -161,7 +164,8 @@ export default function PersonaPicker({
               <div
                 role="button"
                 className="persona-picker-card create-card"
-                onClick={() => {
+                onClick={(event) => {
+                  event.preventDefault();
                   setIsOpen(false);
                   onCreatePersona();
                 }}
