@@ -162,6 +162,7 @@ test('inline message edit keeps its position and survives a failed save', async 
   page.on('dialog', async dialog => { dialogs.push(dialog.type()); await dialog.dismiss(); });
   await page.getByLabel('回复者').selectOption('narrator');
   await send(page, '打开信。', 2);
+  await expect(page.getByRole('button', { name: /重做整轮/ })).toHaveCount(0);
   const reply = page.locator('article.message').last();
   const original = await reply.locator('.prose').innerText();
   const before = await reply.locator('.prose').boundingBox();
@@ -192,6 +193,7 @@ test('inline facts bookmarks and rewrite controls stay beside their content', as
   const dialogs: string[] = [];
   page.on('dialog', async dialog => { dialogs.push(dialog.type()); await dialog.dismiss(); });
   await send(page, '留下这封信。', 3);
+  await expect(page.getByRole('button', { name: '重做整轮（2 条）', exact: true })).toHaveCount(1);
   const reply = page.locator('article.message').last();
   await reply.getByRole('button', { name: '固定事实', exact: true }).click();
   await reply.getByRole('textbox', { name: '摘录固定事实' }).fill('信还未拆开。');

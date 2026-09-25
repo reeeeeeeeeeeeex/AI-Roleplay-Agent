@@ -96,6 +96,15 @@ export default function App() {
     return { siblings, leaves: nodes.filter(node => !parents.has(node.id)) };
   }, [nodes]);
 
+  const wholeTurnTargets = useMemo(() => {
+    const replies = new Map<string, string[]>();
+    for (const message of branch) {
+      if (message.role !== 'assistant' || !message.storyTurnId) continue;
+      const ids = replies.get(message.storyTurnId) ?? []; ids.push(message.id); replies.set(message.storyTurnId, ids);
+    }
+    return new Set([...replies.values()].filter(ids => ids.length > 1).map(ids => ids.at(-1)!));
+  }, [branch]);
+
   const scrollToLatest = () => { followBottom.current = true; setAwayFromBottom(false); bottom.current?.scrollIntoView({ behavior: 'auto' }); };
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
@@ -628,10 +637,10 @@ export default function App() {
                         )}
                         {m.role === 'assistant' && (
                           <>
-                            <button disabled={!!turn} title="生成新 Swipe" onClick={() => act(swipe(m))}>
+                            <button disabled={!!turn} title="只重新生成这一条，保持当前发言者；原文保留为其他版本" onClick={() => act(swipe(m))}>
                               <RotateCw size={12} />新版本
                             </button>
-                            <button disabled={!!turn} onClick={() => act(send('regenerate', m.id))}>重做整轮</button>
+                            {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title="重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留" onClick={() => act(send('regenerate', m.id))}>重做整轮（2 条）</button>}
                             <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>续写</button>
                             <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'rewrite', initial: '保留剧情，减少解释，增加对白。' })}>按要求改写</button>
                           </>
