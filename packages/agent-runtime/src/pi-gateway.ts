@@ -20,6 +20,20 @@ export type GatewayStreamOptions = SimpleStreamOptions & {
   onHeaders?: () => void;
 };
 
+function estimateContextTokens(context: Context, replayReasoning: boolean): number {
+  // Count model-facing content, not local contextReport, usage, timestamps, or tool details.
+  const messages = context.messages.reduce((sum, message) => sum + 32 + (
+    typeof message.content === 'string' ? estimateTokens(message.content) : message.content.reduce((total, part) => {
+      if (part.type === 'text') return total + estimateTokens(part.text);
+      if (part.type === 'thinking') return total + (replayReasoning ? estimateTokens(part.thinking) : 0);
+      if (part.type === 'toolCall') return total + estimateTokens(part.name) + estimateTokens(JSON.stringify(part.arguments));
+      return total;
+    }, 0)
+  ), 0);
+  const tools = (context.tools ?? []).reduce((sum, tool) => sum + estimateTokens(JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters })), 0);
+  return estimateTokens(context.systemPrompt ?? '') + messages + tools;
+}
+
 const apiNames = {
   'openai-chat-completions': 'openai-completions',
   'anthropic-messages': 'anthropic-messages',
@@ -165,7 +179,10 @@ export class PiModelGateway {
   private openStream(connection: RuntimeConnection, context: Context, options: GatewayStreamOptions, baseFetch: typeof fetch, terminalLog: boolean): AssistantMessageEventStream {
     const { streaming = true, replayReasoning = true, tracePayload, traceResponse, onSent, onHeaders, ...providerOptions } = options;
     const configuredOptions = Object.fromEntries(Object.entries(providerOptions).filter(([, value]) => value !== undefined));
-    if (estimateTokens(JSON.stringify(context)) + (options.maxTokens ?? connection.maxTokens) > (connection.contextWindow ?? 128_000)) throw new Error('Agent context exceeds the configured window after tool results. Reduce history or tool context, or increase the context window.');
+    const inputTokens = estimateContextTokens(context, replayReasoning);
+    const maxOutput = options.maxTokens ?? connection.maxTokens;
+    const window = connection.contextWindow ?? 128_000;
+    if (inputTokens + maxOutput > window) throw new Error(`上下文预算不足：输入估算 ${inputTokens} + 最大输出 ${maxOutput} > 配置窗口 ${window} token。请减少历史／工具返回内容，调低最大输出，或按模型实际支持的大小设置上下文窗口。输入为本地估算，不是供应商用量。`);
     const model = this.createModel(connection);
     const api = connection.protocol === 'openai-chat-completions'
       ? openAICompletionsApi()

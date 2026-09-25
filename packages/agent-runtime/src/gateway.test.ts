@@ -44,6 +44,35 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
 }
 
 describe('gateway transport contract', () => {
+  it('context budget excludes internal reports from a plain rewrite request', async () => {
+    const connection: RuntimeConnection = { id: 'budget', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 1, maxTokens: 1000, contextWindow: 8000, reasoning: 'off' };
+    const rewritten: Context & { contextReport: unknown } = {
+      systemPrompt: 'Write the assigned character.',
+      messages: [{ role: 'user', content: `[Rewrite Source]\n${'原来的回复。'.repeat(200)}\n[Rewrite Instruction]\n多用对白。\n[Current Speaker]\nSina`, timestamp: 1 }],
+      contextReport: { items: [{ reason: '本地上下文说明，不发送给模型。'.repeat(4000) }] },
+    };
+    const sent: string[] = [];
+    const network = vi.fn<typeof fetch>(async (_url, init) => { sent.push(String(init?.body)); return response(connection.protocol, true); });
+    const gateway = new PiModelGateway(network);
+    const preview = await gateway.captureRequestBody(connection, rewritten, { replayReasoning: false });
+    expect(network).not.toHaveBeenCalled();
+    let text = '';
+    for await (const event of gateway.stream(connection, rewritten, { replayReasoning: false })) if (event.type === 'text_delta') text += event.delta;
+    expect(text).toBe('OK');
+    expect(sent).toEqual([preview]);
+    expect(preview).toContain('[Rewrite Instruction]');
+    expect(preview).not.toContain('contextReport');
+  });
+
+  it('context budget still rejects oversized tool text with numeric estimates', () => {
+    const connection: RuntimeConnection = { id: 'budget', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 1, maxTokens: 1000, contextWindow: 8000, reasoning: 'off' };
+    const network = vi.fn<typeof fetch>();
+    const gateway = new PiModelGateway(network);
+    const oversized: Context = { ...context, messages: [{ role: 'toolResult', toolCallId: 'read-1', toolName: 'read_memory', content: [{ type: 'text', text: '旧记忆'.repeat(2000) }], isError: false, timestamp: 1 }] };
+    expect(() => gateway.stream(connection, oversized)).toThrow(/输入估算 \d+ \+ 最大输出 1000 > 配置窗口 8000/);
+    expect(network).not.toHaveBeenCalled();
+  });
+
   it.each(['openai-chat-completions', 'anthropic-messages', 'openai-responses'] as const)('%s sends real stream values', async (protocol) => {
     const sent: boolean[] = [], sentBodies: string[] = [], rawResponses: string[] = [], writes: string[] = [];
     const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
