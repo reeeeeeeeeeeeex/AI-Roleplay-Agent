@@ -8,6 +8,7 @@ import Records from './Records.js';
 import ContextReport from './ContextReport.js';
 import StoryNavigation from './StoryNavigation.js';
 import StoryImport from './StoryImport.js';
+import InlineEdit from './InlineEdit.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
 import './branches.css';
 
@@ -25,6 +26,7 @@ export default function App() {
   const [branch, setBranch] = useState<MessageNode[]>([]);
   const [nodes, setNodes] = useState<MessageNode[]>([]);
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
+  const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'text' | 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
   const [inputDrafts, setInputDrafts] = useState<Record<string, string>>(() => {
     try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('story-drafts') ?? '{}')).filter(([, value]) => typeof value === 'string')) as Record<string, string>; }
     catch { return {}; }
@@ -98,6 +100,7 @@ export default function App() {
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
   const activePersona = data.personas?.find(p => p.id === (chat?.personaId ?? generalSettings.defaultPersonaId));
+  useEffect(() => { setMessageEdit(null); }, [chatId, chat?.headMessageId]);
   const cast = chat?.kind === 'group'
     ? (data.groups ?? []).find((v) => v.id === chat.groupId)?.memberIds ?? []
     : chat?.characterId ? [chat.characterId] : [];
@@ -283,7 +286,7 @@ export default function App() {
   }
 
   async function send(trigger: 'normal' | 'auto' | 'regenerate' | 'continue' = 'normal', targetMessageId?: string) {
-    if (!chat || turn || sendPending.current) return;
+    if (!chat || turn || sendPending.current || messageEdit) return;
     sendPending.current = true;
     setSending(true);
     setError('');
@@ -304,6 +307,25 @@ export default function App() {
   async function swipe(message: MessageNode, instruction?: string) {
     const result = await api(`/messages/${message.id}/swipe`, 'POST', instruction ? { instruction } : {});
     await follow(result.id, message.conversationId);
+  }
+
+  async function saveMessageEdit(message: MessageNode, action: 'text' | 'fact' | 'rewrite' | 'bookmark', value: string) {
+    if (action === 'rewrite') {
+      const result = await api(`/messages/${message.id}/swipe`, 'POST', { instruction: value });
+      setMessageEdit(null);
+      act(follow(result.id, message.conversationId));
+      return;
+    }
+    if (action === 'text') {
+      await api(`/messages/${message.id}/edit`, 'POST', { content: value });
+      await refreshMessages(message.conversationId); await refresh();
+    } else if (action === 'fact') {
+      await api(`/conversations/${message.conversationId}/facts`, 'POST', { content: value, sourceMessageId: message.id });
+    } else {
+      await api(`/conversations/${message.conversationId}/bookmarks`, 'POST', { name: value, messageId: message.id });
+    }
+    setRecordsVersion(version => version + 1);
+    setMessageEdit(null);
   }
 
   async function retryRemaining() {
@@ -543,6 +565,12 @@ export default function App() {
                 const narrator = m.authorKind === 'narrator' || m.authorKind === 'user_narrator';
                 const avatar = avatarFor(m);
                 const info = m.generationInfo;
+                const editing = messageEdit?.id === m.id ? messageEdit : null;
+                const inlineEditor = editing && <InlineEdit key={`${m.id}:${editing.action}`} initial={editing.initial}
+                  label={{ text: '编辑正文', fact: '摘录固定事实', rewrite: '改写要求', bookmark: '书签名称' }[editing.action]}
+                  singleLine={editing.action === 'bookmark'} disabled={!!turn || sending}
+                  saveLabel={editing.action === 'rewrite' ? '开始改写' : '保存'}
+                  onCancel={() => setMessageEdit(null)} onSave={value => saveMessageEdit(m, editing.action, value)} />;
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
@@ -577,15 +605,16 @@ export default function App() {
                         <summary>模型思考</summary>
                         <pre>{info.thinking || '模型未返回可见思考内容。'}</pre>
                       </details>}
-                      <div className="prose">{m.content}</div>
+                      <div className="prose">{editing?.action === 'text' ? inlineEditor : m.content}</div>
+                      {editing && editing.action !== 'text' && <div className="message-inline-action">
+                        <small>{{ fact: '固定事实 · 保存到当前分支', rewrite: '一次性改写要求 · 不作为剧情输入', bookmark: '给这条消息命名书签' }[editing.action]}</small>
+                        {inlineEditor}
+                      </div>}
                       {m.role === 'assistant' && <small className="generation-info">{info
                         ? `${info.model} · 输入 ${totalInput ?? '未返回'} · 输出 ${info.usage?.output ?? '未返回'} · 缓存 ${info.usage?.cacheRead ?? '未返回'}${info.usage ? ` (${cacheRate}%)` : ''}`
                         : '生成信息不可用（旧消息）'}</small>}
-                      <div className="message-actions">
-                        <button disabled={!!turn} onClick={() => {
-                          const content = window.prompt('摘录为固定事实（仅当前分支）', window.getSelection()?.toString().trim() || m.content);
-                          if (content?.trim()) act(api(`/conversations/${chat.id}/facts`, 'POST', { content, sourceMessageId: m.id }).then(() => setRecordsVersion(value => value + 1)));
-                        }}>固定事实</button>
+                      {!editing && <div className="message-actions">
+                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'fact', initial: window.getSelection()?.toString().trim() || m.content })}>固定事实</button>
                         {swipes.length > 1 && (
                           <>
                             <button title="上一个版本" disabled={!!turn || index <= 0} onClick={() => act(setHead(swipes[index - 1]!.id))}>
@@ -604,26 +633,17 @@ export default function App() {
                             </button>
                             <button disabled={!!turn} onClick={() => act(send('regenerate', m.id))}>重做整轮</button>
                             <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>续写</button>
-                            <button disabled={!!turn} onClick={() => {
-                              const instruction = window.prompt('按要求改写整条回复（不作为剧情输入）', '保留剧情，减少解释，增加对白。');
-                              if (instruction?.trim()) act(swipe(m, instruction));
-                            }}>按要求改写</button>
+                            <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'rewrite', initial: '保留剧情，减少解释，增加对白。' })}>按要求改写</button>
                           </>
                         )}
-                        <button disabled={!!turn} onClick={() => {
-                          const name = window.prompt('添加故事书签', m.content.slice(0, 16));
-                          if (name?.trim()) act(api(`/conversations/${chat.id}/bookmarks`, 'POST', { name, messageId: m.id }).then(() => setRecordsVersion(value => value + 1)));
-                        }}>书签</button>
+                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'bookmark', initial: m.content.slice(0, 16) })}>书签</button>
                         <button disabled={!!turn} title="从此处分支" onClick={() => act(setHead(m.id))}>
                           <GitBranch size={12} />
                         </button>
-                        <button disabled={!!turn} onClick={() => {
-                          const content = window.prompt('编辑内容（创建新分支版本）', m.content);
-                          if (content !== null) act(api(`/messages/${m.id}/edit`, 'POST', { content }).then(async () => { await refreshMessages(chat.id); await refresh(); setRecordsVersion(value => value + 1); }));
-                        }}>
+                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'text', initial: m.content })}>
                           编辑
                         </button>
-                      </div>
+                      </div>}
                     </div>
                   </article>
                 );
@@ -700,14 +720,14 @@ export default function App() {
                       <Square size={14} />
                     </button>
                   ) : (
-                    <button type="submit" className="send primary" aria-label="发送" disabled={sending || !text.trim()}>
+                    <button type="submit" className="send primary" aria-label="发送" disabled={sending || !!messageEdit || !text.trim()}>
                       <Send size={15} />
                     </button>
                   )}
                 </div>
               </form>
               <div className="composer-hint">
-                <button disabled={sending || !!turn} onClick={() => act(send('auto'))}>让故事继续 →</button>
+                <button disabled={sending || !!turn || !!messageEdit} onClick={() => act(send('auto'))}>让故事继续 →</button>
               </div>
             </div>
           </>

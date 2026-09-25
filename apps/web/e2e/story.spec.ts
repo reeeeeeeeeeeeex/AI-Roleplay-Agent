@@ -133,12 +133,14 @@ test('v0.2 drafts, persona creation, reading position and bookmarked branch reco
   expect(await messages.evaluate(element => element.scrollTop)).toBeLessThan(10);
   await page.getByRole('button', { name: '回到最新 ↓' }).click();
 
-  page.once('dialog', dialog => dialog.accept('Sina 还不知道信中的秘密。'));
   await page.locator('article.message').last().getByRole('button', { name: '固定事实', exact: true }).click();
+  await page.getByRole('textbox', { name: '摘录固定事实' }).fill('Sina 还不知道信中的秘密。');
+  await page.locator('article.message').last().getByRole('button', { name: '保存', exact: true }).click();
   const records = page.locator('.records');
   await expect(records.getByText('Sina 还不知道信中的秘密。', { exact: true })).toBeVisible();
-  page.once('dialog', dialog => dialog.accept('拆信之前'));
   await page.locator('article.message').last().getByRole('button', { name: '书签', exact: true }).click();
+  await page.getByRole('textbox', { name: '书签名称', exact: true }).fill('拆信之前');
+  await page.getByRole('textbox', { name: '书签名称', exact: true }).press('Enter');
   await page.locator('.story-navigation summary').click();
   await expect(page.getByRole('button', { name: '☆ 拆信之前', exact: true })).toBeVisible();
 
@@ -153,4 +155,67 @@ test('v0.2 drafts, persona creation, reading position and bookmarked branch reco
   await expect(input).toHaveValue('');
   await expect(records.getByText('Sina 还不知道信中的秘密。', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test('inline message edit keeps its position and survives a failed save', async ({ page }) => {
+  const dialogs: string[] = [];
+  page.on('dialog', async dialog => { dialogs.push(dialog.type()); await dialog.dismiss(); });
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '打开信。', 2);
+  const reply = page.locator('article.message').last();
+  const original = await reply.locator('.prose').innerText();
+  const before = await reply.locator('.prose').boundingBox();
+  await reply.getByRole('button', { name: '编辑', exact: true }).click();
+  const input = page.getByRole('textbox', { name: '编辑正文', exact: true });
+  const after = await input.boundingBox();
+  expect(Math.abs(after!.x - before!.x)).toBeLessThan(2);
+  expect(Math.abs(after!.width - before!.width)).toBeLessThan(2);
+  await input.fill('取消这次更改'); await input.press('Escape');
+  await expect(reply.locator('.prose')).toHaveText(original);
+  await reply.getByRole('button', { name: '编辑', exact: true }).click();
+  const revised = '信纸上只有一句话。\n\n“明天见。”\n末尾保留换行。\n';
+  await input.fill(revised);
+  let fail = true;
+  await page.route('**/api/messages/*/edit', route => fail ? route.fulfill({ status: 400, json: { error: '暂时无法保存' } }) : route.continue());
+  await input.press('Control+Enter');
+  await expect(reply.getByRole('alert')).toHaveText('暂时无法保存');
+  await expect(input).toHaveValue(revised);
+  fail = false; await reply.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(input).toHaveCount(0);
+  await expect(reply.locator('.prose')).toHaveText(revised);
+  await page.reload();
+  await expect(reply.locator('.prose')).toHaveText(revised);
+  expect(dialogs).toEqual([]);
+});
+
+test('inline facts bookmarks and rewrite controls stay beside their content', async ({ page }) => {
+  const dialogs: string[] = [];
+  page.on('dialog', async dialog => { dialogs.push(dialog.type()); await dialog.dismiss(); });
+  await send(page, '留下这封信。', 3);
+  const reply = page.locator('article.message').last();
+  await reply.getByRole('button', { name: '固定事实', exact: true }).click();
+  await reply.getByRole('textbox', { name: '摘录固定事实' }).fill('信还未拆开。');
+  await reply.getByRole('button', { name: '保存', exact: true }).click();
+  const fact = page.locator('.records .memory-entry').first();
+  await fact.getByRole('button', { name: '修改', exact: true }).click();
+  await fact.getByRole('textbox', { name: '编辑固定事实' }).fill('信封没有署名。');
+  await fact.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.locator('.records')).toContainText('信封没有署名。');
+  await reply.getByRole('button', { name: '书签', exact: true }).click();
+  await reply.getByRole('textbox', { name: '书签名称' }).fill('收到信');
+  await reply.getByRole('textbox', { name: '书签名称' }).press('Enter');
+  await page.locator('.story-navigation summary').click();
+  await page.locator('.story-navigation').getByRole('button', { name: '重命名' }).click();
+  await page.getByRole('textbox', { name: '重命名书签' }).fill('未拆封的信');
+  await page.getByRole('textbox', { name: '重命名书签' }).press('Enter');
+  await expect(page.getByRole('button', { name: '☆ 未拆封的信' })).toBeVisible();
+  await reply.getByRole('button', { name: '按要求改写' }).click();
+  await reply.getByRole('textbox', { name: '改写要求' }).fill('减少解释，保留信封。');
+  const accepted = page.waitForResponse(response => response.url().endsWith('/swipe') && response.request().method() === 'POST');
+  await reply.getByRole('button', { name: '开始改写' }).click();
+  expect((await accepted).request().postDataJSON()).toEqual({ instruction: '减少解释，保留信封。' });
+  await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: '改写要求' })).toHaveCount(0);
+  await expect(page.locator('article.message:not(.streaming)')).toHaveCount(3);
+  expect(dialogs).toEqual([]);
 });

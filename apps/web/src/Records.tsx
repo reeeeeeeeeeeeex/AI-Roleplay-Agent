@@ -4,6 +4,7 @@ import type { Conversation, GenerationMode, PinnedFact } from '@new-ai-chat/cont
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
 import ContextReport from './ContextReport.js';
+import InlineEdit from './InlineEdit.js';
 
 const tableNames: Record<string, string> = {
   global_state: '全局状态',
@@ -54,6 +55,8 @@ export default function Records({
   const [traces, setTraces] = useState<any[]>([]);
   const [facts, setFacts] = useState<PinnedFact[]>([]);
   const [newFact, setNewFact] = useState('');
+  const [editingFact, setEditingFact] = useState<string | null>(null);
+  useEffect(() => { setEditingFact(null); }, [chat.id, chat.headMessageId]);
 
   useEffect(() => {
     let active = true;
@@ -123,13 +126,16 @@ export default function Records({
             <details open>
               <summary>固定事实 · 仅由你修改</summary>
               {facts.map(fact => <article className="memory-entry" key={fact.id}>
-                <pre>{fact.content}</pre>
+                {editingFact === fact.id ? <InlineEdit key={fact.id} initial={fact.content} label="编辑固定事实" disabled={disabled || busy}
+                  onCancel={() => setEditingFact(null)} onSave={async content => {
+                    await api(`/conversations/${chat.id}/facts`, 'POST', { id: fact.id, content });
+                    setEditingFact(null); onChanged();
+                  }} /> : <pre>{fact.content}</pre>}
                 {fact.sourceMessageId && <button onClick={() => onSource(fact.sourceMessageId!)}>查看来源</button>}
-                <button disabled={disabled || busy} onClick={() => {
-                  const content = window.prompt('修改固定事实（仅当前分支）', fact.content);
-                  if (content?.trim()) void run(`/conversations/${chat.id}/facts`, { id: fact.id, content });
-                }}>修改</button>
-                <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/facts/${fact.id}`, {}, 'DELETE')}>取消固定</button>
+                {editingFact !== fact.id && <>
+                  <button disabled={disabled || busy} onClick={() => setEditingFact(fact.id)}>修改</button>
+                  <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/facts/${fact.id}`, {}, 'DELETE')}>取消固定</button>
+                </>}
               </article>)}
               <textarea aria-label="固定事实" rows={2} value={newFact} onChange={event => setNewFact(event.target.value)} />
               <button disabled={disabled || busy || !newFact.trim()} onClick={() => void run(`/conversations/${chat.id}/facts`, { content: newFact }).then(saved => { if (saved) setNewFact(''); })}>固定事实</button>
