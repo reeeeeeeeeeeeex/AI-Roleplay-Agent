@@ -14,7 +14,6 @@ import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
 const studioCollections: Collection[] = ['characters', 'personas', 'groups', 'lorebooks'];
-const prettyJson = (body: string) => { try { return JSON.stringify(JSON.parse(body), null, 2); } catch { return body; } };
 
 export default function App() {
   const [data, setData] = useState<Record<string, any[]>>({});
@@ -979,12 +978,18 @@ export default function App() {
       {promptPreview && (
         <div className="modal-shade" style={{ zIndex: 130 }} onClick={() => setPromptPreview(null)}>
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
-            <header><h2>发送前提示词预览</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
-            <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
-            {promptPreview.action === 'auto' && <p className="muted">草稿为空，正在预览自动继续；自动继续不重复上一轮用户输入。输入草稿后预览可查看本轮输入锚点。</p>}
-            <p className="muted">身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)} · 主角：{promptPreview.personaName ?? '未选择（请求使用 Protagonist）'}{promptPreview.clipped ? ' · 已按上下文预算裁剪' : ''}</p>
-            <ContextReport report={promptPreview.contextReport} />
-            <details className="prompt-json" open><summary>实际首请求 Body（未发送）</summary><pre>{prettyJson(promptPreview.requestBody)}</pre></details>
+            <header><h2>发送提示词预览 · Raw input</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
+            <div className="prompt-preview-body">
+              <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
+              {promptPreview.action === 'auto' && <p className="muted">草稿为空，正在预览自动继续；自动继续不重复上一轮用户输入。输入草稿后预览可查看本轮输入锚点。</p>}
+              <p className="muted">身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)} · 主角：{promptPreview.personaName ?? '未选择（请求使用 Protagonist）'}{promptPreview.clipped ? ' · 已按上下文预算裁剪' : ''}</p>
+              <p className="muted">以下是发送边界捕获的首请求原始 JSON Body，未发送、未重新格式化。修改草稿、设置或聊天内容后请重新预览；Agent 后续请求可在 Trace 中查看。</p>
+              <section className="prompt-json" aria-label="Raw input">
+                <header><strong>Raw input · 首请求 Body</strong><button onClick={() => act(navigator.clipboard.writeText(promptPreview.requestBody))}>复制原始 Body</button></header>
+                <pre tabIndex={0}>{promptPreview.requestBody}</pre>
+              </section>
+              <ContextReport report={promptPreview.contextReport} />
+            </div>
           </section>
         </div>
       )}
