@@ -1650,6 +1650,17 @@ fieldset label {
   padding: 6px 12px;
 }
 
+.avatar-field-path-row {
+  margin-top: 4px;
+}
+
+.avatar-field-path-input {
+  width: 100%;
+  font-size: 11px;
+  padding: 5px 8px;
+  color: var(--text-muted);
+}
+
 /* Image preview lightbox modal */
 .lightbox-modal {
   position: fixed;

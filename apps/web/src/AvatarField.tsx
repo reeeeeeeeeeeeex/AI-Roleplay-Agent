@@ -83,13 +83,26 @@ export default function AvatarField({
                 setError('');
                 onChange(null);
               }}
-              title="清除头像"
+              title="清除"
             >
               <Trash2 size={13} />
               清除
             </button>
           )}
         </div>
+      </div>
+      <div className="avatar-field-path-row">
+        <input
+          type="text"
+          className="avatar-field-path-input"
+          placeholder="或输入本地图片路径 / URL (如 /api/assets/...)"
+          value={value ?? ''}
+          disabled={disabled || uploading}
+          onChange={(e) => {
+            setError('');
+            onChange(e.target.value.trim() || null);
+          }}
+        />
       </div>
       {error && <small className="error">{error}</small>}
     </div>
