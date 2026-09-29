@@ -970,7 +970,7 @@ export default function App() {
                     <article className="resource-item" key={v.id}>
                       <div className="resource-main">
                         <div className="resource-info">
-                          <h3 className="resource-title">{v.name ?? v.title}</h3>
+                          <h3 className="resource-title">{page === 'lorebooks' ? <button className="lorebook-title" onClick={() => edit(page, v)}>{v.name}</button> : v.name ?? v.title}</h3>
                           {(v.model || v.description || v.scenario) && (
                             <p className="resource-desc">{v.model ?? v.description ?? v.scenario}</p>
                           )}

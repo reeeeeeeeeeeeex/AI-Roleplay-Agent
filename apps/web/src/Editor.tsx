@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import AvatarField from './AvatarField';
 import PersonaPicker from './PersonaPicker';
+import LorebookEditor from './LorebookEditor';
 
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
@@ -165,6 +166,8 @@ export default function Editor({
     <JsonField key={key} label={label} initial={value[key]} onChange={(v) => set(key, v)} />
   );
 
+  if (kind === 'lorebooks') return <LorebookEditor initial={initial} onSave={onSave} onClose={onClose} zIndex={zIndex} />;
+
   return (
     <>
       <div className="modal-shade" style={{ zIndex }}>
@@ -227,7 +230,7 @@ export default function Editor({
             />
           )}
 
-          {(kind === 'characters' || kind === 'personas' || kind === 'lorebooks') && field('description', '描述', true)}
+          {(kind === 'characters' || kind === 'personas') && field('description', '描述', true)}
 
           {kind === 'characters' && (
             <>
@@ -290,15 +293,6 @@ export default function Editor({
               />
               {choices('memberIds', '成员（按选择顺序）', data.characters ?? [])}
               {field('scenario', '群聊场景', true)}
-            </>
-          )}
-
-          {kind === 'lorebooks' && (
-            <>
-              {json('entries', '条目 JSON')}
-              <small className="muted">
-                每项支持 keys、secondaryKeys、content、constant、enabled、order、position 和 depth。示例：<code>{'[{"keys":["森林"],"content":"森林中有一座灯塔。"}]'}</code>
-              </small>
             </>
           )}
 
