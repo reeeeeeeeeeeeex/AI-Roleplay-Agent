@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitBranch, PanelLeftClose, PanelLeft, Library } from 'lucide-react';
+import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog } from 'lucide-react';
 import { defaultGeneralSettings, defaultPromptSettings, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
@@ -504,14 +504,42 @@ export default function App() {
           <div className="top-actions">
             {chat && page === 'chat' && (
               <>
+                {chat.kind === 'group' ? (
+                  <button
+                    title="编辑当前群聊"
+                    aria-label="编辑当前群聊"
+                    onClick={() => {
+                      const grp = data.groups?.find((g) => g.id === chat.groupId);
+                      if (grp) edit('groups', grp);
+                    }}
+                  >
+                    <Users size={14} />
+                    <span>编辑群聊</span>
+                  </button>
+                ) : (
+                  <button
+                    title="编辑当前角色"
+                    aria-label="编辑当前角色"
+                    onClick={() => {
+                      const char = data.characters?.find((c) => c.id === chat.characterId);
+                      if (char) edit('characters', char);
+                    }}
+                  >
+                    <UserCog size={14} />
+                    <span>编辑角色</span>
+                  </button>
+                )}
                 <button title="故事分支" aria-label="故事分支" onClick={() => setShowBranches(true)}>
-                  <GitBranch size={16} />
+                  <GitFork size={14} />
+                  <span>故事分支</span>
                 </button>
                 <button title="故事资料" aria-label="故事资料" onClick={() => edit('conversations', chat)}>
-                  <Settings2 size={16} />
+                  <BookOpen size={14} />
+                  <span>故事资料</span>
                 </button>
                 <button title="记录面板" aria-label="记录面板" onClick={() => setPanel(!panel)}>
-                  {panel ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                  {panel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+                  <span>记录</span>
                 </button>
                 <button title="发送前预览提示词" aria-label="发送前预览提示词" onClick={() => act(showPromptPreview())}>预览</button>
               </>
@@ -646,7 +674,7 @@ export default function App() {
                         )}
                         <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'bookmark', initial: '' })}>书签</button>
                         <button disabled={!!turn} title="从此处分支" onClick={() => act(setHead(m.id))}>
-                          <GitBranch size={12} />
+                          <GitFork size={12} />从此处分支
                         </button>
                         <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'text', initial: m.content })}>
                           编辑
@@ -918,7 +946,7 @@ export default function App() {
               <p className="muted" style={{ marginBottom: 12 }}>切换到旧分支会同时恢复该分支的消息与状态记录。</p>
               {messageIndex.leaves.map((node) => (
                 <button key={node.id} disabled={!!turn} onClick={() => act(setHead(node.id).then(() => setShowBranches(false)))}>
-                  <GitBranch size={15} />
+                  <GitFork size={15} />
                   <span>
                     {node.id === chat.headMessageId ? '当前分支 · ' : ''}
                     {node.role === 'user' ? '用户' : speakerName(node.speaker)}

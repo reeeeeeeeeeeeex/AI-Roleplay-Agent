@@ -452,11 +452,17 @@ main {
 }
 
 .top-actions button {
-  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  font-size: 12px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
   border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .top-actions button:hover {
