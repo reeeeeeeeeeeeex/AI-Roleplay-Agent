@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ProtagonistTables, StateRow, StateTableName } from './index.js';
-const stateTableNames = ['global_state', 'protagonist_info', 'options', 'important_characters', 'protagonist_skills', 'inventory', 'quests_events'] as const;
+const stateTableNames = ['global_state', 'protagonist_info', 'important_characters', 'protagonist_skills', 'inventory', 'quests_events'] as const;
 
 // Public data columns retained for interoperable snapshots; executor is implemented independently.
 export const stateColumns: Record<StateTableName, string[]> = {
@@ -10,9 +10,8 @@ export const stateColumns: Record<StateTableName, string[]> = {
   protagonist_skills: ['skill_name', 'skill_type', 'skill_level', 'effect_desc'],
   inventory: ['item_name', 'quantity', 'description', 'category'],
   quests_events: ['quest_name', 'quest_type', 'issuer', 'detail_desc', 'current_progress', 'time_limit', 'reward', 'penalty'],
-  options: ['option_1', 'option_2', 'option_3', 'option_4'],
 };
-export const singletons = new Set<StateTableName>(['global_state', 'protagonist_info', 'options']);
+export const singletons = new Set<StateTableName>(['global_state', 'protagonist_info']);
 const identities: Partial<Record<StateTableName, string[]>> = { important_characters: ['name', 'gender_age'], protagonist_skills: ['skill_name', 'skill_type'], inventory: ['item_name', 'quantity', 'category'], quests_events: ['quest_name', 'quest_type'] };
 const cellSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 export const stateOperationSchema = z.object({
@@ -25,6 +24,11 @@ export function blankState(): ProtagonistTables {
   return Object.fromEntries(stateTableNames.map((table) => [table, singletons.has(table) ? [{ row_id: 1, ...Object.fromEntries(stateColumns[table].map((c) => [c, ''])) }] : []])) as ProtagonistTables;
 }
 export function normalizeState(input: unknown): ProtagonistTables {
+  // Old story archives may contain the retired suggestions table. Never import it as story truth.
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    const { options: _retired, ...tables } = input as Record<string, unknown>;
+    input = tables;
+  }
   const raw = z.record(z.string(), z.array(z.record(z.string(), cellSchema))).parse(input);
   if (Object.keys(raw).some((table) => !stateTableNames.includes(table as StateTableName))) throw new Error('Unknown state table.');
   const result = blankState();

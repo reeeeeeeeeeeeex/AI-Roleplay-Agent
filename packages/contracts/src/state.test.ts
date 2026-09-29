@@ -5,8 +5,14 @@ import type { StateTableName } from './index.js';
 const inserts:Record<string,Record<string,string>>={important_characters:{name:'Sina',gender_age:'adult',is_absent:'否'},protagonist_skills:{skill_name:'Light',skill_type:'magic'},inventory:{item_name:'Letter',quantity:'1',category:'document'},quests_events:{quest_name:'Find the sender',quest_type:'story'}};
 const tables=Object.keys(stateColumns) as StateTableName[];
 const seeded=()=>{let state=blankState();for(const [table,cells]of Object.entries(inserts))state=applyStateOperations(state,[{table,op:'insertRow',cells}]).tables;return state;};
-describe('seven-table atomic state',()=>{
-  it('bootstraps three singletons and four empty collections',()=>{const state=blankState();expect(Object.keys(state)).toHaveLength(7);for(const table of tables)expect(state[table].length).toBe(singletons.has(table)?1:0);});
+describe('six-table atomic state',()=>{
+  it('bootstraps two singletons and four empty collections',()=>{const state=blankState();expect(Object.keys(state)).toHaveLength(6);for(const table of tables)expect(state[table].length).toBe(singletons.has(table)?1:0);});
+  it('drops retired options on import but rejects new option operations', () => {
+    const state = normalizeState({ global_state: [{ row_id: 1, current_location: 'Tower' }], options: [{ row_id: 1, option_1: 'old action' }] });
+    expect(state).not.toHaveProperty('options');
+    expect(state.global_state[0]?.current_location).toBe('Tower');
+    expect(() => applyStateOperations(state, [{ op: 'updateRow', table: 'options', rowId: 1, cells: { option_1: 'new action' } }])).toThrow();
+  });
   it.each(tables)('rejects unknown columns atomically in %s',(table)=>{const state=seeded();const before=structuredClone(state);expect(()=>applyStateOperations(state,[{table,op:'updateRow',rowId:1,cells:{unknown:'bad'}}])).toThrow();expect(state).toEqual(before);});
   it.each(tables)('rejects model-assigned row IDs in %s',(table)=>{expect(()=>applyStateOperations(seeded(),[{table,op:'updateRow',rowId:1,cells:{row_id:2}}])).toThrow();});
   it.each(tables)('rejects missing update row in %s',(table)=>{expect(()=>applyStateOperations(seeded(),[{table,op:'updateRow',rowId:999,cells:{}}])).toThrow();});

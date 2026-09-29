@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { migrateRetiredOptions } from './retired-options.js';
 
 const migration = `
 PRAGMA foreign_keys = ON;
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS imports (
 
 export function migrateDatabase(database: Database.Database): void {
   database.exec(migration);
+  migrateRetiredOptions(database);
   // Additive migrations also support databases created by earlier v0.1 builds.
   for (const [table, column, definition] of [
     ['connections', 'context_window', 'INTEGER NOT NULL DEFAULT 128000'],

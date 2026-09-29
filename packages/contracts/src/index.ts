@@ -419,7 +419,6 @@ export interface MemoryEntry {
 export const stateTableNames = [
   'global_state',
   'protagonist_info',
-  'options',
   'important_characters',
   'protagonist_skills',
   'inventory',

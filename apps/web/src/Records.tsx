@@ -14,7 +14,6 @@ const tableNames: Record<string, string> = {
   protagonist_skills: '主角技能',
   inventory: '背包物品',
   quests_events: '任务与事件',
-  options: '选项',
 };
 export default function Records({
   chat,
