@@ -17,8 +17,8 @@ describe('ReST prompt assembly', () => {
     const solo = buildStableSystemPrompt(base);
     expect(defaultPromptSettings.mainInstruction).toContain('Continue the current fictional roleplay as {{char}}');
     expect(solo).toContain('Continue the current fictional roleplay as A');
-    expect(solo).toContain('[Assistant Role]\nA greets P.');
-    expect(solo.indexOf('[Protagonist Agency]')).toBeLessThan(solo.indexOf('[Assistant Role]'));
+    expect(solo).toContain('[Assistant Role: A]\nA greets P.');
+    expect(solo.indexOf('[Protagonist Agency]')).toBeLessThan(solo.indexOf('[Assistant Role: A]'));
     const override = buildStableSystemPrompt({ ...base, characters: [{ ...base.characters[0]!, systemPrompt: 'Character override for {{char}}.' }] });
     expect(override).toContain('[Main Instruction]\nCharacter override for A.');
 
@@ -30,6 +30,7 @@ describe('ReST prompt assembly', () => {
 
     const history: MessageNode[] = [{ id: 'u', conversationId: 'chat', parentId: null, storyTurnId: 's', role: 'user', authorKind: 'protagonist', speaker: null, content: 'history', providerState: null, legacyPayload: null, createdAt: new Date().toISOString() }];
     const writer = buildWriterContext({ ...base, history, speaker: { kind: 'narrator' }, outputIndex: 0, brief: '', pendingSpeaker: false });
+    expect(writer.systemPrompt).toContain('[Assistant Role: A]\nA greets P.');
     expect(writer.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'assistant', 'user']);
     expect(String(writer.messages[0]?.content)).toContain('[P]\nhistory');
     const final = String(writer.messages.at(-1)?.content);

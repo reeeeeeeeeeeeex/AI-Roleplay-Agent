@@ -26,7 +26,7 @@ export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer
   const isGroup = request.conversationKind === 'group' || (!request.conversationKind && request.characters.length > 1);
   const expand = (text: string, character = castNames) => expandStoryMacros(text, userName, character);
   const characterSections = request.characters.map((character) => [
-    section(isGroup ? `Assistant Role: ${character.name}` : 'Assistant Role', expand(character.description, character.name)),
+    section(`Assistant Role: ${character.name}`, expand(character.description, character.name)),
     section(isGroup ? `Assistant Personality: ${character.name}` : 'Assistant Personality', expand(character.personality, character.name)),
     section(isGroup ? '' : 'Scenario', isGroup ? '' : expand(character.scenario, character.name)),
     section(isGroup ? `Example Dialogue: ${character.name}` : 'Example Dialogue', expand(character.exampleDialogue, character.name)),
