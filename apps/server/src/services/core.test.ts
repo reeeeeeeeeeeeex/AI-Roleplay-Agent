@@ -105,6 +105,34 @@ it('model settings: discovers models with saved credentials without saving the d
 async function normal(voice='protagonist',replyTarget:any={mode:'auto'}) {
   const turn=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'推开门。',voice},replyTarget}));await server.turns.idle(chat);return server.repository.getTurn(turn.id)!;
 }
+it('record send switches gate injected context and tool reads while keeping fixed facts', async () => {
+  const repo = server.repository;
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: '灯塔记忆' });
+  repo.createState(chat, null, blankState());
+  repo.savePinnedFact(chat, '不可丢弃的事实', null);
+  const enabled = new StoryContext(repo, chat);
+  expect(await enabled.readMemory(5)).toHaveLength(1);
+  expect(await enabled.readState()).not.toBeNull();
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), sendMemory: false, sendProtagonistState: false });
+  const request = await server.turns.request(chat, 'test', new AbortController().signal);
+  expect(request.dynamicContext.map(item => item.content)).toEqual(['不可丢弃的事实']);
+  expect(await request.source.readMemory(5)).toEqual([]);
+  expect(await request.source.searchMemory('灯塔', 5)).toEqual([]);
+  expect(await request.source.readState()).toBeNull();
+});
+
+it('record maintenance retains its own records when both send switches are off', async () => {
+  await normal();
+  const repo = server.repository;
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: '已有记忆' });
+  repo.createState(chat, null, blankState());
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), sendMemory: false, sendProtagonistState: false });
+  const maintain = vi.spyOn(runtime, 'maintain').mockResolvedValueOnce('[]').mockResolvedValueOnce(JSON.stringify({ timeSpan: '今日', location: '门口', chronicle: '主角推开了门。', dialogue: [], overview: '进门' }));
+  await server.records.generate(chat, 'state', new AbortController().signal);
+  await server.records.generate(chat, 'memory', new AbortController().signal);
+  expect(maintain.mock.calls[0]![0].dynamicContext.map(item => item.source)).toEqual(['state']);
+  expect(maintain.mock.calls[1]![0].dynamicContext.map(item => item.content)).toEqual(['已有记忆']);
+});
 it('general settings: migrates old global values and persists updates', async () => {
   const db = server.repository.database;
   server.repository.updateConnection(connection, connectionInputSchema.parse({ ...server.repository.listConnections()[0]!, historyMessageLimit: 7 }));

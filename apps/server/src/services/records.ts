@@ -15,7 +15,7 @@ export function settledStoryIds(repository: Repository, chat: string): string[] 
 export class RecordService {
   private pending = new Set<string>();
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime,
-    private request: (chat: string, turn: string, signal: AbortSignal) => Promise<BaseAgentRequest>) {}
+    private request: (chat: string, turn: string, signal: AbortSignal, maintenance: 'memory' | 'state') => Promise<BaseAgentRequest>) {}
   async automatic(chat: string, signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
     const config = this.repository.getGeneralSettings();
     const completed = settledStoryIds(this.repository, chat);
@@ -35,7 +35,7 @@ export class RecordService {
       const beforeMemoryEdit = this.repository.events(chat).findLast(event => event.type === 'memory.edited')?.id;
       const completed = settledStoryIds(this.repository, chat);
       let storyTurnId = completed.at(-1) ?? null;
-      const request = await this.request(chat, storyTurnId ?? 'manual', AbortSignal.any([signal, AbortSignal.timeout(120_000)]));
+      const request = await this.request(chat, storyTurnId ?? 'manual', AbortSignal.any([signal, AbortSignal.timeout(120_000)]), kind);
       if (trace) request.trace = trace;
       const instruction = kind === 'memory'
         ? 'Return only a JSON object with timeSpan, location, chronicle (objective chronology, target 400 Chinese characters), dialogue (up to 3 strings), overview (at most 40 characters). Append a new stage, preserve earlier memory, and avoid repeating details already summarized. No AM codes. Do not invent events.'

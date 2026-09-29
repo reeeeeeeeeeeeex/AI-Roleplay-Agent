@@ -243,6 +243,8 @@ export const narratorProfileSchema = z.object({
 });
 
 export const generalSettingsSchema = z.object({
+  sendMemory: z.boolean().default(true),
+  sendProtagonistState: z.boolean().default(true),
   historyMessageLimit: z.number().int().min(0).max(10_000).default(0),
   connectionId: z.string().min(1).nullable().default(null),
   defaultPersonaId: z.string().min(1).nullable().default(null),

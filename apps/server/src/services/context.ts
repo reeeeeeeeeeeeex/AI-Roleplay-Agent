@@ -13,8 +13,9 @@ export class StoryContext implements StoryContextSource {
   readonly facts: RetrievedContext[];
   readonly contextReport: ContextReport = { items: [] };
   readonly lore;
-  constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode) {
+  constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode, options: { maintenance?: 'memory' | 'state' | undefined } = {}) {
     const chat = repository.getConversation(conversationId)!;
+    const settings = repository.getGeneralSettings();
     const branch = [...repository.getActiveBranch(conversationId), ...(virtualMessage ? [virtualMessage] : [])];
     const start = chat.historyStartMessageId ? repository.getMessage(chat.historyStartMessageId) : null;
     const startIndex = start ? historyStartIndex(branch, start) : 0;
@@ -28,8 +29,8 @@ export class StoryContext implements StoryContextSource {
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
       .map(({ id, name, description, personality, scenario, exampleDialogue, systemPrompt, postHistoryInstructions }) => ({ id, name, description, personality, scenario: group || chat.scenario ? '' : scenario, exampleDialogue, systemPrompt, postHistoryInstructions }));
-    this.state = repository.latestState(conversationId);
-    const memories = repository.listMemories(conversationId, 1000);
+    this.state = settings.sendProtagonistState || options.maintenance === 'state' ? repository.latestState(conversationId) : null;
+    const memories = settings.sendMemory || options.maintenance === 'memory' ? repository.listMemories(conversationId, 1000) : [];
     // Imported ST summaries are cumulative snapshots, not separate chronology stages.
     // A manual replacement (including an empty string) is an explicit new baseline.
     const baseline = memories.findIndex((m) => m.source === 'imported' || m.source === 'manual');

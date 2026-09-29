@@ -82,7 +82,7 @@ export class TurnService {
     return turn;
   }
 
-  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input']): Promise<BaseAgentRequest> {
+  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input'], maintenance?: 'memory' | 'state'): Promise<BaseAgentRequest> {
     const chat = this.repository.getConversation(chatId)!;
     const settings = this.repository.getGeneralSettings();
     const connection = this.repository.resolveConnection();
@@ -90,7 +90,7 @@ export class TurnService {
     const virtualMessage = virtualInput ? { id: `preview-${storyTurnId}`, conversationId: chatId, parentId: chat.headMessageId, storyTurnId, role: 'user' as const,
       authorKind: virtualInput.voice === 'narrator' ? 'user_narrator' as const : 'protagonist' as const, speaker: null, content: virtualInput.text,
       providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() } : undefined;
-    const source = new StoryContext(this.repository, chatId, virtualMessage);
+    const source = new StoryContext(this.repository, chatId, virtualMessage, { maintenance });
     const latest = virtualMessage ?? [...(source.fixedHistory ? source.history : this.repository.getActiveBranch(chatId))].reverse().find((m) => m.role === 'user');
     const persona = this.repository.resolvePersona(chat.personaId);
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
