@@ -94,6 +94,7 @@ export class TurnService {
     const persona = this.repository.resolvePersona(chat.personaId);
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
       conversationKind: chat.kind, scenario: chat.scenario, streaming: settings.streaming,
+      authorNote: chat.authorNote,
       agencyMode: settings.agencyMode, narrator: settings.narrator, characters: source.cast, persona,
       history: source.history, stableLore: source.stableLore(), dynamicContext: await source.dynamic(auto ? source.history.slice(-3).map(m => m.content).join('\n') : latest?.content ?? ''),
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal,

@@ -2,6 +2,7 @@ import type { Message } from '@earendil-works/pi-ai';
 import type { MessageNode, SpeakerRef, ContextReport, ContextReportItem } from '@new-ai-chat/contracts';
 import { defaultPromptSettings } from '@new-ai-chat/contracts';
 import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterRequest } from './types.js';
+import { authorNoteInFirstSystem } from './author-note.js';
 
 function section(title: string, body: string | undefined): string {
   const clean = body?.trim();
@@ -46,6 +47,7 @@ export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer
     section('User Role', request.persona ? `${request.persona.name}\n${expand(request.persona.description)}` : 'The user controls the protagonist.'),
     ...characterSections,
     section('Narrator Style', request.narrator.style),
+    section('Additional Instruction', expand(promptSettings.additionalInstruction ?? '')),
     ...request.stableLore.map((item) => section(item.title === 'Group Scenario' || item.title === 'Scenario' ? item.title : `Lore Book: ${item.title}`, expand(item.content))),
   ].filter(Boolean).join('\n\n');
 }
@@ -124,6 +126,14 @@ function syntheticContext(text: string): Message {
   return { role: 'assistant', content: [{ type: 'text', text }], api: 'new-ai-chat-context', provider: 'local', model: 'context', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop', timestamp: Date.now() };
 }
 
+export function buildAuthorNoteMessages(request: BaseAgentRequest): Message[] {
+  const content = section("Author's Note", expandStoryMacros(request.authorNote ?? '', request.persona?.name ?? 'Protagonist', request.characters.map(character => character.name).join(', ')));
+  // Pi only models user/assistant/tool messages. The gateway restores the System role
+  // before sending, keeping this instruction after history where the protocol allows it.
+  const message = { role: 'user' as const, content, timestamp: 0, authorNote: true };
+  return content ? [message] : [];
+}
+
 // Deliberately conservative, provider-independent estimate (not a tokenizer).
 // Preserve complete messages and signed provider blocks; never truncate their contents.
 export function estimateTokens(text: string): number {
@@ -135,7 +145,8 @@ export function estimateTokens(text: string): number {
 export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText = ''): T {
   const limit = (request.connection.contextWindow ?? 128_000) - request.connection.maxTokens - 4096;
   const pinned = request.dynamicContext.filter(item => item.required);
-  const mandatory = estimateTokens(buildStableSystemPrompt(request, request.promptMode ?? 'writer')) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(latestUserAnchor(request)) + estimateTokens(reservedText) + pinned.reduce((sum, item) => sum + estimateTokens(dynamicSection(item, request)), 0);
+  const authorNote = buildAuthorNoteMessages(request)[0];
+  const mandatory = estimateTokens(buildStableSystemPrompt(request, request.promptMode ?? 'writer')) + (authorNote ? estimateTokens(String(authorNote.content)) + 32 : 0) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(latestUserAnchor(request)) + estimateTokens(reservedText) + pinned.reduce((sum, item) => sum + estimateTokens(dynamicSection(item, request)), 0);
   if (limit < 1024 || mandatory > limit) throw new Error('Stable prompt or latest input exceeds the context budget. Increase context window or shorten the cards/lore/input.');
   let remaining = limit - mandatory;
   const contextBudget = remaining * 0.4;
@@ -162,6 +173,7 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
     ...[...request.dynamicContext].sort((a, b) => b.priority - a.priority).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),
   ];
   const keys = new Set(items.map(item => `${item.source}:${item.id}`));
+  if (authorNote) items.push({ id: 'author-note', source: 'control', title: '作者注释', role: 'system', included: true, reason: authorNoteInFirstSystem(request.connection) ? 'DeepSeek：合并到首条 System；修改注释会影响后续前缀缓存' : request.connection.protocol === 'anthropic-messages' ? '协议要求：顶层 System' : '历史后部 · Depth 0', estimatedTokens: estimateTokens(String(authorNote.content)) + 32 });
   items.push(...(request.contextReport?.items ?? []).filter(item => !item.included && !keys.has(`${item.source}:${item.id}`)));
   return { ...request, history, dynamicContext, contextReport: { items } };
 }
@@ -179,6 +191,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
     const content = dynamicSection(item, request);
     if (content) messages.push(syntheticContext(content));
   }
+  messages.push(...buildAuthorNoteMessages(request));
   const briefSection = !isPlain ? section('Writer Brief', effectiveBrief) : '';
   const currentSpeakerSection = section('Current Speaker', request.pendingSpeaker ? 'Pending selection' : speakerName(request.speaker, request.characters, request.narrator.name));
 

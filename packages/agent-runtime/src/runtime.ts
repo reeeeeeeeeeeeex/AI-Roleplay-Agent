@@ -1,7 +1,7 @@
 import { Agent, type AgentEvent, type AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type AssistantMessage, type AssistantMessageEvent, type Context, type Message } from '@earendil-works/pi-ai';
 import type { RequestTiming, SpeakerRef, TurnPlan, ContextReport } from '@new-ai-chat/contracts';
-import { buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest, latestUserAnchor, estimateTokens } from './prompt.js';
+import { buildAuthorNoteMessages, buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest, latestUserAnchor, estimateTokens } from './prompt.js';
 import { fallbackPlan, validatePlan } from './plan.js';
 import { PiModelGateway } from './pi-gateway.js';
 import type {
@@ -226,7 +226,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const original = { history: request.history.length, context: request.dynamicContext.length };
     if (mode === 'planner' && !forcedPlan) {
       const start = routingStart({ ...request, plannerEnabled: true }, true, () => {});
-      const context: Context = { systemPrompt: buildStableSystemPrompt(start.fitted, 'planner'), messages: [...buildHistoryMessages(start.fitted), { role: 'user', content: start.prompt, timestamp: Date.now() } as Message], tools: start.tools };
+      const context: Context = { systemPrompt: buildStableSystemPrompt(start.fitted, 'planner'), messages: [...buildHistoryMessages(start.fitted), ...buildAuthorNoteMessages(start.fitted), { role: 'user', content: start.prompt, timestamp: Date.now() } as Message], tools: start.tools };
       return { phase: 'planning', requestBody: await this.gateway.captureRequestBody(request.connection, context, { signal: request.signal, streaming: request.streaming ?? true }), contextReport: start.fitted.contextReport!, speaker: null, pendingSelection: true, clipped: start.fitted.history.length < original.history || start.fitted.dynamicContext.length < original.context };
     }
     request = fitRequest(request);
@@ -264,7 +264,7 @@ export class PiAgentRuntime implements AgentRuntime {
         model: this.gateway.createModel(request.connection),
         thinkingLevel: request.connection.reasoning,
         tools,
-        messages: buildHistoryMessages(request),
+        messages: [...buildHistoryMessages(request), ...buildAuthorNoteMessages(request)],
       },
       streamFn: (_model, context, options) => {
         activeFirstThinking = false;

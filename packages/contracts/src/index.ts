@@ -25,12 +25,14 @@ export type GenerationMode = z.infer<typeof generationModeSchema>;
 
 export interface PromptSettings {
   mainInstruction: string;
+  additionalInstruction: string;
   groupInstruction: string;
   writerInstruction: string;
   plannerInstruction: string;
 }
 
 export const defaultPromptSettings: PromptSettings = {
+  additionalInstruction: '',
   mainInstruction: "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input without deciding {{user}}'s thoughts, dialogue, or choices.",
   groupInstruction: 'Continue the current fictional group roleplay and scene narration, faithfully preserving established characterization, relationships, world rules, and scene continuity.',
   writerInstruction: 'You are one Writer Agent. Use read-only story tools when useful. When no speaker is forced, call select_output_voices exactly once, then continue this same conversation by writing the selected voices in order. Never put tool calls or tool explanations in visible prose.',
@@ -38,6 +40,7 @@ export const defaultPromptSettings: PromptSettings = {
 };
 
 export const promptSettingsSchema = z.object({
+  additionalInstruction: z.string().max(20_000).default(''),
   mainInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.mainInstruction),
   groupInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.groupInstruction),
   writerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.writerInstruction),
@@ -261,12 +264,14 @@ export interface Conversation {
   personaId: string | null;
   lorebookIds: string[];
   headMessageId: string | null;
+  authorNote: string;
   scenario: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export const conversationInputSchema = z.object({
+  authorNote: z.string().max(20_000).default(''),
   title: z.string().trim().min(1).max(300),
   kind: z.enum(['solo', 'group']),
   characterId: z.string().nullable().default(null),

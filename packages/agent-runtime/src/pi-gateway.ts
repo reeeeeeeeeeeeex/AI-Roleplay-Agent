@@ -10,6 +10,7 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import type { RuntimeConnection } from './types.js';
 import { estimateTokens } from './prompt.js';
+import { prepareAuthorNotes } from './author-note.js';
 
 export type GatewayStreamOptions = SimpleStreamOptions & {
   streaming?: boolean;
@@ -215,8 +216,9 @@ export class PiModelGateway {
         ? anthropicMessagesApi()
         : openAIResponsesApi();
     const reasoning = connection.reasoning === 'off' ? {} : { reasoning: connection.reasoning };
+    const prepared = prepareAuthorNotes(context, connection);
     const transportFetch: typeof fetch = async (input, init) => {
-      const normalized = normalizePayload(JSON.parse(String(init?.body ?? '{}')), connection, streaming);
+      const normalized = prepared.restore(normalizePayload(JSON.parse(String(init?.body ?? '{}')), connection, streaming));
       const payload = replayReasoning ? normalized : stripReasoningHistory(normalized);
       const requestBody = JSON.stringify(payload);
       const sequence = !streaming && terminalLog ? ++rawRequestSequence : 0;
@@ -235,7 +237,7 @@ export class PiModelGateway {
         headers: { ...Object.fromEntries(response.headers.entries()), 'content-type': 'text/event-stream; charset=utf-8' },
       });
     };
-    return api.streamSimple(model, context, {
+    return api.streamSimple(model, prepared.context, {
       ...reasoning,
       headers: connection.headers,
       temperature: connection.temperature,

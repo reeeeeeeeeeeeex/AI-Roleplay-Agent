@@ -34,6 +34,7 @@ export const defaults: Record<Collection, any> = {
   groups: { name: '', avatarPath: null, memberIds: [], scenario: '' },
   conversations: {
     title: '新的故事',
+    authorNote: '',
     kind: 'solo',
     characterId: null,
     groupId: null,
@@ -210,6 +211,8 @@ export default function Editor({
                 </label>
                 {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
                 {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
+                {field('authorNote', '作者注释', true)}
+                <p className="muted">Role：System。仅对当前故事生效，留空不发送。DeepSeek 合并到首条 System，修改注释会影响后续前缀缓存。</p>
               </>
             ) : (
               field('name', '名称')

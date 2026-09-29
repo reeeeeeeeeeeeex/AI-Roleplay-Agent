@@ -134,6 +134,8 @@ export default function SettingsModal({
             e.preventDefault(); void save(() => onSavePrompts(prompts), '提示词已保存。');
           }}>
             <label>写作主指令<textarea required rows={6} value={prompts.mainInstruction} onChange={e => setPrompts({ ...prompts, mainInstruction: e.target.value })} /></label>
+            <label>附加指令<textarea rows={4} maxLength={20000} value={prompts.additionalInstruction} onChange={e => setPrompts({ ...prompts, additionalInstruction: e.target.value })} /></label>
+            <p className="muted">独立的 System 指令，对所有故事生效；留空不发送。</p>
             <label>群聊主指令<textarea required rows={5} value={prompts.groupInstruction} onChange={e => setPrompts({ ...prompts, groupInstruction: e.target.value })} /></label>
             <label>Writer Agent 行为指令<textarea required rows={7} value={prompts.writerInstruction} onChange={e => setPrompts({ ...prompts, writerInstruction: e.target.value })} /></label>
             <label>Planner 指令<textarea required rows={6} value={prompts.plannerInstruction} onChange={e => setPrompts({ ...prompts, plannerInstruction: e.target.value })} /></label>

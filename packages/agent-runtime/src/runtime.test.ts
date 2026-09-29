@@ -57,6 +57,8 @@ describe('Agent tool lifecycle', () => {
   it('keeps a rewrite speaker fixed and recovers from a hallucinated selection tool', async () => {
     const { runtime, request, bodies, traces, network } = setup([{ calls: [selection] }, { text: 'Rewritten story.' }]);
     request.rewrite = { instruction: 'Use clearer wording.', originalText: 'Old story.' };
+    request.authorNote = 'Keep the scene quiet.';
+    request.promptSettings = { ...defaultPromptSettings, additionalInstruction: 'Use precise dialogue.' };
     const preview = await runtime.previewFirstRequest(request, 'writer-agent', fixedPlan);
     expect(network).not.toHaveBeenCalled();
     const onOutputComplete = vi.fn();
@@ -70,6 +72,10 @@ describe('Agent tool lifecycle', () => {
     expect(traces[0]?.tools[0]).toMatchObject({ name: 'select_output_voices', ok: false });
     expect(traces[0]?.error).toContain('not found');
     expect(traces[1]?.status).toBe('completed');
+    const noteIndex = first.messages.findIndex((message: any) => message.content === "[Author's Note]\nKeep the scene quiet.");
+    expect(first.messages[noteIndex].role).toBe('system');
+    expect(first.messages[0].content).toContain('[Additional Instruction]\nUse precise dialogue.');
+    expect(JSON.parse(bodies[1]!).messages.slice(0, first.messages.length)).toEqual(first.messages);
   });
 
   it('routes exact character IDs and writes two voices without exposing tool commentary', async () => {

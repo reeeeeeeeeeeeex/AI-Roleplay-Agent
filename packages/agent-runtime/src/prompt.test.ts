@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultPromptSettings, type MessageNode } from '@new-ai-chat/contracts';
-import { buildStableSystemPrompt, buildWriterContext } from './prompt.js';
+import { buildStableSystemPrompt, buildWriterContext, fitRequest } from './prompt.js';
 
 const base = {
   connection: { id: 'c', protocol: 'openai-responses' as const, baseUrl: 'https://example.test/v1', model: 'm', apiKey: '', headers: {}, temperature: 1, maxTokens: 1000, reasoning: 'off' as const },
@@ -19,8 +19,11 @@ describe('ReST prompt assembly', () => {
     expect(solo).toContain('Continue the current fictional roleplay as A');
     expect(solo).toContain('[Assistant Role: A]\nA greets P.');
     expect(solo.indexOf('[Protagonist Agency]')).toBeLessThan(solo.indexOf('[Assistant Role: A]'));
-    const override = buildStableSystemPrompt({ ...base, characters: [{ ...base.characters[0]!, systemPrompt: 'Character override for {{char}}.' }] });
+    const override = buildStableSystemPrompt({ ...base, promptSettings: { ...defaultPromptSettings, additionalInstruction: 'Extra guidance for {{user}} and {{char}}.' }, characters: [{ ...base.characters[0]!, systemPrompt: 'Character override for {{char}}.' }] });
     expect(override).toContain('[Main Instruction]\nCharacter override for A.');
+    expect(override).toContain('[Additional Instruction]\nExtra guidance for P and A.');
+    expect(override.indexOf('[Additional Instruction]')).toBeLessThan(override.indexOf('[Lore Book: World]'));
+    expect(solo).not.toContain('[Additional Instruction]');
 
     const groupCharacters = [base.characters[0]!, { ...base.characters[0]!, id: 'b', name: 'B', description: 'second', scenario: 'must not appear' }];
     const group = buildStableSystemPrompt({ ...base, conversationKind: 'group', characters: groupCharacters, stableLore: [{ source: 'lore', title: 'Group Scenario', content: 'shared scene', priority: 1 }] });
@@ -42,6 +45,7 @@ describe('ReST prompt assembly', () => {
     const history: MessageNode[] = [{ id: 'u', conversationId: 'chat', parentId: null, storyTurnId: 's', role: 'user', authorKind: 'protagonist', speaker: null, content: 'history', providerState: null, legacyPayload: null, createdAt: new Date().toISOString() }];
     const plain = buildWriterContext({
       ...base,
+      authorNote: 'Keep {{char}} cautious around {{user}}.',
       history,
       dynamicContext: [
         { source: 'state', title: 'Protagonist State', content: 'HP: 100', priority: 3 },
@@ -68,5 +72,9 @@ describe('ReST prompt assembly', () => {
     expect(finalPlain).toContain('[Latest User Input]\n以下是用户本轮输入：\n“我推开门。”');
     expect(finalPlain).not.toContain('[Writer Brief]');
     expect(finalPlain).toContain('[Current Speaker]\nA');
+    expect(plain.messages.at(-2)).toMatchObject({ authorNote: true, content: "[Author's Note]\nKeep A cautious around P." });
+    expect(plain.contextReport.items.find(item => item.id === 'author-note')).toMatchObject({ role: 'system', included: true });
+    expect(plain.systemPrompt).toBe(buildStableSystemPrompt(base));
+    expect(() => fitRequest({ ...base, authorNote: '必须保留'.repeat(20000) })).toThrow('context budget');
   });
 });

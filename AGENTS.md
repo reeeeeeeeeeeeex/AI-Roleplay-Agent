@@ -37,6 +37,8 @@
 - 统计的总输入包含供应商报告的缓存读取和写入 token；供应商未返回的字段显示不可用。非流式请求不伪造首思考／首正文时间。
 - 提示词预览必须从 Gateway 的真实 fetch 边界捕获首个请求 Body，不得手工重建协议 JSON。流式请求不在 CMD 输出 raw 数据；非流式请求才输出未经字段脱敏的原始 Body。Authorization、API Key、Cookie 等认证 Header 始终不得输出。
 - 普通发送、Swipe 和 regenerate 的最新原始用户输入锚点使用“以下是用户本轮输入：”，放在 Memory、主角状态和后置指令之后、最终 Current Speaker 之前；在历史裁剪前取得原文。空草稿预览为 Auto，不复用旧输入。
+- 故事资料的作者注释按会话保存，普通写作、Writer Agent 和 Planner 都按 System 指令处理；通用 Chat Completions / Responses 放在历史后部、最终控制之前，DeepSeek Chat Completions（官方地址或模型名含 DeepSeek）合并到首条 System 末尾，Anthropic 放入独立顶层 System 块。修改 DeepSeek 作者注释会影响后续前缀缓存，不得为保缓存降级为 User。Pi 内部的消息标记必须在 Gateway 发送边界转换，不能作为 User 注释或随机占位符发给模型。作者注释计入必留预算，不写入剧情历史，原生故事包保留该字段。
+- 通用提示词的附加指令独立于写作主指令和角色卡覆盖，放在固定 System 前缀的角色资料后、常驻世界书前。附加指令和作者注释都默认留空，空白不生成标题；Raw input 预览与实际请求使用同一转换路径。
 - 左下角主角入口管理全局默认 Persona 和故事绑定；未绑定故事跟随全局默认，已绑定故事保持自身 Persona。提示词、预览、开场白和前端显示使用一致的身份解析。
 - 不复制 SillyTavern 源码，不修改导入源目录，不导入旧 API 密钥或扩展代码。
 - 不擅自调用付费模型，不提交密钥、本地数据库、导入数据或构建产物。

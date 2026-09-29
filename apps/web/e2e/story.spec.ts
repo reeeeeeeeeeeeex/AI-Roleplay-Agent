@@ -37,6 +37,40 @@ test('startup distinguishes missing endpoints from required pairing', async ({ p
   await expect(page.getByRole('button', { name: '通用设置', exact: true })).toBeVisible();
 });
 
+test('story author note and global additional instruction persist into raw System prompts', async ({ page }) => {
+  const note = '本段故事保持悬疑气氛。\n不要提前揭示信件来源。';
+  const additional = '多用对白，避免重复已有描写。';
+  await page.getByRole('button', { name: '故事资料', exact: true }).click();
+  const story = page.getByRole('dialog', { name: '编辑故事资料', exact: true });
+  await story.getByRole('textbox', { name: '作者注释', exact: true }).fill(note);
+  await story.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(story).toHaveCount(0);
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await settings.getByRole('button', { name: '提示词', exact: true }).click();
+  const main = await settings.getByRole('textbox', { name: '写作主指令', exact: true }).inputValue();
+  await settings.getByRole('textbox', { name: '附加指令', exact: true }).fill(additional);
+  await settings.getByRole('button', { name: '保存提示词', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('提示词已保存');
+  await settings.getByRole('button', { name: '关闭设置' }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '故事资料', exact: true }).click();
+  await expect(story.getByRole('textbox', { name: '作者注释', exact: true })).toHaveValue(note);
+  await story.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await settings.getByRole('button', { name: '提示词', exact: true }).click();
+  await expect(settings.getByRole('textbox', { name: '写作主指令', exact: true })).toHaveValue(main);
+  await expect(settings.getByRole('textbox', { name: '附加指令', exact: true })).toHaveValue(additional);
+  await settings.getByRole('button', { name: '关闭设置' }).click();
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  const raw = page.getByRole('region', { name: 'Raw input', exact: true }).locator('pre');
+  await expect(raw).toContainText(additional);
+  const body = JSON.parse((await raw.textContent())!);
+  expect(body.messages[0].content).toContain(`[Additional Instruction]\n${additional}`);
+  expect(body.messages.at(-2)).toMatchObject({ role: 'system', content: `[Author's Note]\n${note}` });
+  expect(body.messages.at(-1).role).toBe('user');
+});
+
 test('developer Trace viewer shows live thinking, tool results and exact raw input', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const raw = '{\n  "model": "trace-test", "messages": [{"role":"user","content":"测试原文"}]\n}';

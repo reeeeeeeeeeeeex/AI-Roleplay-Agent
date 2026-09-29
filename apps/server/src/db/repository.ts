@@ -51,6 +51,7 @@ type TurnRow = typeof turns.$inferSelect;
 
 function mapConversation(row: ConversationRow): Conversation {
   return {
+    authorNote: row.authorNote,
     id: row.id,
     title: row.title,
     kind: row.kind as Conversation['kind'],
@@ -275,6 +276,7 @@ export class Repository {
     this.database.db.insert(conversations).values({
       id: conversationId, title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
       personaId: input.personaId, lorebookIds: input.lorebookIds,
+      authorNote: input.authorNote,
       scenario: input.scenario,
       createdAt: timestamp, updatedAt: timestamp,
     }).run();
@@ -285,6 +287,7 @@ export class Repository {
     this.database.db.update(conversations).set({
       title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
       personaId: input.personaId, lorebookIds: input.lorebookIds, updatedAt: now(),
+      authorNote: input.authorNote,
       scenario: input.scenario,
     }).where(eq(conversations.id, conversationId)).run();
     return this.getConversation(conversationId);

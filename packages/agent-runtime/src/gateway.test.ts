@@ -44,6 +44,32 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
 }
 
 describe('gateway transport contract', () => {
+  it.each([
+    ['https://api.deepseek.com/beta', 'chat'],
+    ['https://proxy.example.test/v1', 'deepseek/deepseek-chat'],
+  ])('keeps the DeepSeek author note in the first System at %s', async (baseUrl, model) => {
+    const connection: RuntimeConnection = { id: 'deepseek', protocol: 'openai-chat-completions', baseUrl, model, apiKey: 'test', headers: {}, temperature: 1, maxTokens: 100, reasoning: 'off' };
+    const note = { role: 'user' as const, content: "[Author's Note]\nKeep the scene quiet.", timestamp: 1, authorNote: true };
+    const noteContext: Context = { ...context, messages: [...context.messages, note, { role: 'user', content: 'Final writing control.', timestamp: 2 }] };
+    const sent: string[] = [];
+    const network = vi.fn<typeof fetch>(async (_url, init) => { sent.push(String(init?.body)); return response(connection.protocol, true); });
+    const gateway = new PiModelGateway(network);
+    const preview = await gateway.captureRequestBody(connection, noteContext);
+    const body = JSON.parse(preview);
+    expect(network).not.toHaveBeenCalled();
+    expect(body.messages[0]).toEqual({ role: 'system', content: `Test\n\n${note.content}` });
+    expect(body.messages.slice(1).every((item: any) => item.role !== 'system')).toBe(true);
+    expect(JSON.stringify(body.messages.slice(1))).not.toContain("Author's Note");
+    expect(body.messages.at(-1).content).toBe('Final writing control.');
+    expect(preview).not.toMatch(/author-note:|"authorNote"/u);
+    for await (const _event of gateway.stream(connection, noteContext)) { /* mock transport only */ }
+    expect(sent).toEqual([preview]);
+    const repeated = await gateway.captureRequestBody(connection, noteContext);
+    expect(repeated).toBe(preview);
+    expect(noteContext.systemPrompt).toBe('Test');
+    expect(noteContext.messages).toContain(note);
+  });
+
   it('context budget excludes internal reports from a plain rewrite request', async () => {
     const connection: RuntimeConnection = { id: 'budget', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 1, maxTokens: 1000, contextWindow: 8000, reasoning: 'off' };
     const rewritten: Context & { contextReport: unknown } = {
@@ -74,6 +100,8 @@ describe('gateway transport contract', () => {
   });
 
   it.each(['openai-chat-completions', 'anthropic-messages', 'openai-responses'] as const)('%s sends real stream values', async (protocol) => {
+    const note = { role: 'user' as const, content: "[Author's Note]\nKeep the scene quiet.", timestamp: 1, authorNote: true };
+    const noteContext: Context = { ...context, messages: [...context.messages, note, { role: 'user', content: 'Final writing control.', timestamp: 2 }] };
     const sent: boolean[] = [], sentBodies: string[] = [], rawResponses: string[] = [], writes: string[] = [];
     const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
       const body = String(init?.body), streaming = Boolean(JSON.parse(body).stream);
@@ -82,8 +110,25 @@ describe('gateway transport contract', () => {
     });
     const connection: RuntimeConnection = { id: 'test', protocol, baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 0.5, maxTokens: 100, reasoning: 'high' };
     const gateway = new PiModelGateway(fetchMock);
-    const captured = await gateway.captureRequestBody(connection, context, { streaming: true });
-    const visibleOnly = await gateway.captureRequestBody(connection, context, { streaming: true, replayReasoning: false, onPayload: (value: any) => {
+    const captured = await gateway.captureRequestBody(connection, noteContext, { streaming: true });
+    const changed = JSON.parse(await gateway.captureRequestBody(connection, { ...noteContext, messages: [context.messages[0]!, { ...note, content: "[Author's Note]\nLet the rain stop." }, noteContext.messages.at(-1)!] }));
+    const body = JSON.parse(captured);
+    expect(captured).not.toMatch(/author-note:|"authorNote"/u);
+    if (protocol === 'anthropic-messages') {
+      expect(body.system.at(-1)).toMatchObject({ type: 'text', text: note.content });
+      expect(body.messages).toEqual(changed.messages);
+      expect(body.system[0]).toEqual(changed.system[0]);
+      expect(JSON.stringify(body.messages)).not.toContain("Author's Note");
+    } else {
+      const items = body[protocol === 'openai-responses' ? 'input' : 'messages'];
+      const changedItems = changed[protocol === 'openai-responses' ? 'input' : 'messages'];
+      const index = items.findIndex((item: any) => JSON.stringify(item.content).includes("Author's Note"));
+      expect(index).toBeGreaterThan(1);
+      expect(items[index].role).toBe('system');
+      expect(items.slice(0, index)).toEqual(changedItems.slice(0, index));
+      expect(JSON.stringify(items.at(-1).content)).toContain('Final writing control.');
+    }
+    const visibleOnly = await gateway.captureRequestBody(connection, noteContext, { streaming: true, replayReasoning: false, onPayload: (value: any) => {
       if (protocol === 'openai-responses') return { ...value, input: [...value.input, { type: 'reasoning', encrypted_content: 'private-reasoning' }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'visible history' }] }] };
       if (protocol === 'anthropic-messages') return { ...value, messages: [...value.messages, { role: 'assistant', content: [{ type: 'thinking', thinking: 'private-reasoning', signature: 'signature' }, { type: 'text', text: 'visible history' }] }] };
       return { ...value, messages: [...value.messages, { role: 'assistant', reasoning_content: 'private-reasoning', content: 'visible history' }] };
@@ -96,7 +141,7 @@ describe('gateway transport contract', () => {
       let text = '', thinking = '';
       const requests: unknown[] = [], responses: unknown[] = [];
       writes.length = 0;
-      for await (const event of gateway.stream(connection, context, { streaming, tracePayload: value => requests.push(value), traceResponse: value => responses.push(value) })) {
+      for await (const event of gateway.stream(connection, noteContext, { streaming, tracePayload: value => requests.push(value), traceResponse: value => responses.push(value) })) {
         if (event.type === 'text_delta') text += event.delta;
         if (event.type === 'thinking_delta') thinking += event.delta;
       }

@@ -482,7 +482,7 @@ describe('record truth and logical-turn safeguards', () => {
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), defaultPersonaId: persona.id });
     const book = repo.createLorebook(lorebookInputSchema.parse({ name: '灯塔世界', entries: [{ keys: ['灯塔'], content: '灯塔临海' }] }));
     const group = repo.createGroup({ name: '旅途', memberIds: [character], scenario: '海边' });
-    repo.updateConversation(chat, { ...repo.getConversation(chat)!, kind: 'group', characterId: null, groupId: group.id, lorebookIds: [book.id] });
+    repo.updateConversation(chat, { ...repo.getConversation(chat)!, kind: 'group', characterId: null, groupId: group.id, lorebookIds: [book.id], authorNote: '让海边场景保持安静。' });
     const state = blankState(); state.global_state[0]!.current_location = '灯塔'; state.global_state[0]!.cur_time = '夜间';
     state.important_characters.push({ row_id: 1, name: 'Sina', is_absent: '否' }); repo.createState(chat, turn.storyTurnId, state);
     await server.records.generate(chat, 'memory', new AbortController().signal);
@@ -492,6 +492,7 @@ describe('record truth and logical-turn safeguards', () => {
     server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'regenerate', targetMessageId: old[1]!.id }), true); await server.turns.idle(chat);
     const archive = (await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).json();
     expect(archive.format).toBe('ai-roleplay-story');
+    expect(archive.conversation.authorNote).toBe('让海边场景保持安静。');
     expect(JSON.stringify(archive)).not.toMatch(/secret-do-not-return|header-secret|providerState|turn_traces/);
     const count = repo.listConversations().length;
     expect((await server.app.inject({ method: 'POST', url: '/api/imports/story/preview', payload: archive })).statusCode).toBe(200);
@@ -499,6 +500,7 @@ describe('record truth and logical-turn safeguards', () => {
     const restored = await server.app.inject({ method: 'POST', url: '/api/imports/story/execute', payload: archive });
     expect(restored.statusCode, restored.body).toBe(201);
     const copy = restored.json(); expect(copy.id).not.toBe(chat); expect(copy.personaId).not.toBe(persona.id);
+    expect(copy.authorNote).toBe('让海边场景保持安静。');
     expect(repo.getActiveBranch(copy.id)).toHaveLength(2); expect(repo.listMessages(copy.id)).toHaveLength(4);
     expect(repo.listMemories(copy.id)).toEqual([]);
     const bookmark = repo.listBookmarks(copy.id)[0]!;
