@@ -32,6 +32,7 @@ export class RecordService {
       const head = this.repository.getConversation(chat)?.headMessageId;
       const beforeState = this.repository.latestState(chat);
       const beforeMemory = this.repository.listMemories(chat, 1)[0];
+      const beforeMemoryEdit = this.repository.events(chat).findLast(event => event.type === 'memory.edited')?.id;
       const completed = settledStoryIds(this.repository, chat);
       let storyTurnId = completed.at(-1) ?? null;
       const request = await this.request(chat, storyTurnId ?? 'manual', AbortSignal.any([signal, AbortSignal.timeout(120_000)]));
@@ -62,6 +63,7 @@ export class RecordService {
       }
       const answer = parseModelJson(await this.runtime.maintain(request, instruction));
       signal.throwIfAborted();
+      if (this.repository.events(chat).findLast(event => event.type === 'memory.edited')?.id !== beforeMemoryEdit) throw new Error('Memory changed; discarded stale update.');
       if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new Error('Records changed; discarded stale update.');
       return this.repository.database.sqlite.transaction(() => {
         if (kind === 'memory') {

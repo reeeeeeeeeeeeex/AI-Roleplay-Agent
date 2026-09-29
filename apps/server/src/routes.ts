@@ -111,6 +111,15 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return row ? repo.getTurn(row.id) : null;
   });
   app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));
+  app.patch('/api/conversations/:id/memory/:memoryId', async (req) => {
+    const { id: chat, memoryId } = z.object({ id: z.string(), memoryId: z.string() }).parse(req.params);
+    turns.assertIdle(chat);
+    const value = z.object({ content: z.string().max(200_000), previous: z.string(), head: z.string().nullable() }).parse(req.body);
+    const entry = repo.listMemories(chat, 1000).find(item => item.id === memoryId);
+    if (!entry || repo.getConversation(chat)?.headMessageId !== value.head || entry.content !== value.previous) throw new Error('记忆或分支已变化，请刷新后重试。未覆盖现有内容。');
+    if (entry.content !== value.content) repo.addEvent(chat, null, 'memory.edited', { id: memoryId, head: value.head, content: value.content });
+    return { ...entry, content: value.content };
+  });
   app.get('/api/conversations/:id/facts', async req => repo.listPinnedFacts(idOf(req)));
   app.get('/api/conversations/:id/navigation', async req => repo.navigation(idOf(req)));
   app.post('/api/conversations/:id/bookmarks', async req => {
@@ -152,6 +161,15 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.post('/api/conversations/:id/state/patch', async (req) => {
     const chat=idOf(req); turns.assertIdle(chat); const result = applyStateOperations(repo.latestState(chat)?.tables ?? blankState(), req.body);
     return result.changed ? repo.createState(chat,settledStoryIds(repo,chat).at(-1) ?? null,result.tables) : { unchanged: true };
+  });
+  app.patch('/api/conversations/:id/state/cell', async (req) => {
+    const chat = idOf(req); turns.assertIdle(chat);
+    const value = z.object({ head: z.string().nullable(), table: z.string(), rowId: z.number().int(), column: z.string(), content: z.string(), previous: z.string() }).parse(req.body);
+    const tables = repo.latestState(chat)?.tables ?? blankState();
+    const row = tables[value.table as keyof typeof tables]?.find(item => item.row_id === value.rowId);
+    if (repo.getConversation(chat)?.headMessageId !== value.head || !row || String(row[value.column] ?? '') !== value.previous) throw new Error('状态或分支已变化，请刷新后重试。未覆盖现有内容。');
+    const result = applyStateOperations(tables, [{ op: 'updateRow', table: value.table, rowId: value.rowId, cells: { [value.column]: value.content } }]);
+    return result.changed ? repo.createState(chat, settledStoryIds(repo, chat).at(-1) ?? null, result.tables) : { tables };
   });
   for (const kind of ['memory','state'] as const) app.post(`/api/conversations/:id/${kind}/generate`, async (req) => { const chat=idOf(req); turns.assertIdle(chat); return records.generate(chat,kind,AbortSignal.timeout(120_000)); });
   app.get('/api/conversations/:id/proposals', async (req) => repo.listProposals(idOf(req)));

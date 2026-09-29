@@ -18,6 +18,7 @@ const generationInfo = z.object({ mode: generationModeSchema, model: text, strea
 const assetUrl = /^\/api\/assets\/([a-f0-9]{64}\.(?:png|jpe?g|webp))$/u;
 const payloads: Record<string, z.ZodType> = {
   'checkpoint': z.object({ id: ref, head: maybeRef }),
+  'memory.edited': z.object({ id: ref, head: maybeRef, content: text }),
   'story.settled': z.object({ storyTurnId: ref, head: ref, variant: z.boolean().optional() }),
   'fact.saved': z.object({ id: ref, content: text, sourceMessageId: maybeRef, head: maybeRef }),
   'fact.removed': z.object({ id: ref, head: maybeRef }),
@@ -81,6 +82,7 @@ export function readStoryArchive(value: unknown): StoryArchive {
     event.payload = p;
     requireRef(nodeIds, p.head); requireRef(nodeIds, p.messageId); requireRef(nodeIds, p.sourceMessageId);
     if (event.type === 'checkpoint') requireRef(recordIds, p.id);
+    if (event.type === 'memory.edited') requireRef(new Set(archive.memories.map(item => item.id)), p.id);
     if (p.proposalId) requireRef(proposalIds, p.proposalId);
     for (const output of p.plan?.outputs ?? []) requireSpeaker(output.speaker);
   }

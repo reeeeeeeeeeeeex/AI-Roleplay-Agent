@@ -301,6 +301,30 @@ describe('branches and records',()=>{
     expect(settledStoryIds(server.repository, chat)).toHaveLength(1);
   });
   it('keeps state snapshots scoped to the chosen branch',async()=>{await normal();const b=server.repository.getActiveBranch(chat);const state=blankState();state.global_state[0]!.current_location='room';server.repository.createState(chat,b.at(-1)!.storyTurnId,state);expect(server.repository.latestState(chat)?.tables.global_state[0]?.current_location).toBe('room');server.repository.setHead(chat,b[0]!.id);expect(server.repository.latestState(chat)).toBeNull();});
+  it('autosaves record edits only on their originating branch and preserves memory edits in archives', async () => {
+    const repo = server.repository;
+    await normal();
+    const firstHead = repo.getConversation(chat)!.headMessageId;
+    const memory = repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: '原来的记忆' });
+    await normal();
+    const head = repo.getConversation(chat)!.headMessageId;
+    const edit = { content: '修订的记忆', previous: memory.content, head };
+    expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBe(200);
+    expect(repo.listMemories(chat)[0]).toMatchObject({ ...memory, content: edit.content });
+    const cell = { head, table: 'global_state', rowId: 1, column: 'current_location', previous: '', content: '书店' };
+    expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: cell })).statusCode).toBe(200);
+    const stale = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: { ...cell, content: '旧输入' } });
+    expect(stale.statusCode).toBeGreaterThanOrEqual(400);
+    expect(repo.latestState(chat)?.tables.global_state[0]?.current_location).toBe('书店');
+    const archive = (await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).json();
+    const imported = await server.app.inject({ method: 'POST', url: '/api/imports/story/execute', payload: archive });
+    expect(imported.statusCode, imported.body).toBe(201);
+    expect(repo.listMemories(imported.json().id)[0]?.content).toBe(edit.content);
+    repo.setHead(chat, firstHead);
+    expect(repo.listMemories(chat)[0]?.content).toBe(memory.content);
+    expect(repo.latestState(chat)).toBeNull();
+    expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBeGreaterThanOrEqual(400);
+  });
   it('v0.2 memory coverage and pinned facts follow the branch without resummarizing covered turns', async () => {
     const repo = server.repository;
     const first = await normal(); const firstBranch = repo.getActiveBranch(chat);

@@ -2,8 +2,11 @@ export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-export async function api<T=any>(path:string, method='GET', value?:unknown):Promise<T> {
-  const response=await fetch(`/api${path}`,{method,headers:{'Content-Type':'application/json'},...(value===undefined?{}:{body:JSON.stringify(value)})});
+export async function api<T=any>(path:string, method='GET', value?:unknown, options: { keepalive?: boolean } = {}):Promise<T> {
+  const bodyText = value === undefined ? undefined : JSON.stringify(value);
+  // Browsers cap keepalive bodies at 64 KiB; normal large edits must still save.
+  const keepalive = options.keepalive === true && new Blob([bodyText ?? '']).size < 60_000;
+  const response=await fetch(`/api${path}`,{keepalive,method,headers:{'Content-Type':'application/json'},...(bodyText===undefined?{}:{body:bodyText})});
   const body=await response.json(); if(!response.ok)throw new ApiError(response.status,body.error??`HTTP ${response.status}`); return body as T;
 }
 export async function streamTurn(id:string,onEvent:(event:any)=>void,signal:AbortSignal) {

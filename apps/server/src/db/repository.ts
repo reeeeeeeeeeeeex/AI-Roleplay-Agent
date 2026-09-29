@@ -402,7 +402,14 @@ export class Repository {
 
   listMemories(conversationId: string, limit = 20): MemoryEntry[] {
     const active = this.checkpointFilter(conversationId);
-    return (this.database.db.select().from(memories).where(eq(memories.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all() as MemoryEntry[]).filter((row) => active(row.id)).slice(0, limit);
+    const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
+    const edits = new Map<string, string>();
+    for (const event of this.events(conversationId)) {
+      if (event.type !== 'memory.edited') continue;
+      const edit = event.payload as { id: string; head: string | null; content: string };
+      if (!edit.head || heads.has(edit.head)) edits.set(edit.id, edit.content);
+    }
+    return (this.database.db.select().from(memories).where(eq(memories.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all() as MemoryEntry[]).filter((row) => active(row.id)).slice(0, limit).map(row => edits.has(row.id) ? { ...row, content: edits.get(row.id)! } : row);
   }
   createMemory(input: Omit<MemoryEntry, 'id' | 'createdAt'>): MemoryEntry {
     const row = { ...input, coverage: input.coverage ?? null, id: id(), createdAt: now() }; this.database.db.insert(memories).values(row).run();

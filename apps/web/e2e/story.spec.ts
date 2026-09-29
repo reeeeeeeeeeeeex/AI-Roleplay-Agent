@@ -37,6 +37,48 @@ test('startup distinguishes missing endpoints from required pairing', async ({ p
   await expect(page.getByRole('button', { name: '通用设置', exact: true })).toBeVisible();
 });
 
+test('record fields save directly on blur and when the drawer closes', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: '原来的记忆' } });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  const memory = page.getByRole('textbox', { name: 'Memory Stage 1', exact: true });
+  await memory.fill('修订后的记忆\n保留换行。');
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('修订后的记忆\n保留换行。');
+  await expect(page.getByRole('button', { name: '编辑数据', exact: true })).toHaveCount(0);
+  await page.getByRole('textbox', { name: '全局状态 1 current_location', exact: true }).fill('旧书店');
+  await page.getByRole('textbox', { name: '全局状态 1 cur_time', exact: true }).fill('午夜');
+  await page.getByRole('button', { name: '关闭记录面板' }).click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0]).toMatchObject({ current_location: '旧书店', cur_time: '午夜' });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await expect(memory).toHaveValue('修订后的记忆\n保留换行。');
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '全局状态 1 current_location', exact: true })).toHaveValue('旧书店');
+});
+
+test('failed record autosave keeps the draft after leaving the drawer', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: '旧内容' } });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  let fail = true;
+  await page.route('**/api/conversations/*/memory/*', route => fail ? route.fulfill({ status: 500, json: { error: '测试保存失败' } }) : route.continue());
+  const memory = page.getByRole('textbox', { name: 'Memory Stage 1', exact: true });
+  await memory.fill('仍然保留的草稿');
+  await page.getByRole('button', { name: '关闭记录面板' }).click();
+  await expect(page.getByRole('alert')).toContainText('测试保存失败');
+  fail = false;
+  await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await expect(memory).toHaveValue('仍然保留的草稿');
+  await memory.focus();
+  await page.getByRole('heading', { name: '故事记录', exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('仍然保留的草稿');
+});
+
 test('story author note and global additional instruction persist into raw System prompts', async ({ page }) => {
   const note = '本段故事保持悬疑气氛。\n不要提前揭示信件来源。';
   const additional = '多用对白，避免重复已有描写。';

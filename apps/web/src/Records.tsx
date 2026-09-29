@@ -5,6 +5,7 @@ import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
 import AgentTrace from './AgentTrace.js';
 import InlineEdit from './InlineEdit.js';
+import AutoSaveField from './AutoSaveField.js';
 
 const tableNames: Record<string, string> = {
   global_state: '全局状态',
@@ -43,10 +44,7 @@ export default function Records({
   const [state, setState] = useState<any>({ tables: {} });
   const [proposals, setProposals] = useState<any[]>([]);
   const [newMemory, setNewMemory] = useState('');
-  const [stateText, setStateText] = useState('');
-  const [editState, setEditState] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [baselineMemory, setBaselineMemory] = useState('');
   const [facts, setFacts] = useState<PinnedFact[]>([]);
   const [newFact, setNewFact] = useState('');
   const [editingFact, setEditingFact] = useState<string | null>(null);
@@ -64,7 +62,6 @@ export default function Records({
         if (active) {
           setMemory(m);
           setState(s);
-          setStateText(JSON.stringify(s.tables, null, 2));
           setProposals(p);
           setFacts(f);
         }
@@ -140,7 +137,11 @@ export default function Records({
                 <div className="memory-stage">Stage {entry.stage}</div>
                 <small className="muted">{entry.coverage ? `覆盖 ${entry.coverage.storyTurnIds.length} 个完整回合` : '覆盖范围：历史记录未提供'}</small>
                 {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>起点</button><button onClick={() => onSource(entry.coverage.endMessageId)}>终点</button></div>}
-                <pre>{entry.content || '（空记忆标记）'}</pre>
+                <AutoSaveField draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content} label={`Memory Stage ${entry.stage}`} placeholder="（空记忆标记）" disabled={disabled || busy} onError={onError}
+                  onSave={async (content, previous) => {
+                    const saved = await api(`/conversations/${chat.id}/memory/${entry.id}`, 'PATCH', { content, previous, head: chat.headMessageId }, { keepalive: true });
+                    setMemory(items => items.map(item => item.id === entry.id ? saved : item)); onChanged();
+                  }} />
               </article>
             ))}
             <details>
@@ -150,74 +151,38 @@ export default function Records({
                 保存记录
               </button>
             </details>
-            <details>
-              <summary>替换当前 Memory</summary>
-              <p className="muted" style={{ margin: '6px 0' }}>保存为新基线。保存空内容可清空模型读取的记忆。</p>
-              <button
-                onClick={() => {
-                  const baseline = memory.findIndex((m) => m.source === 'imported' || m.source === 'manual');
-                  setBaselineMemory((baseline < 0 ? memory : memory.slice(0, baseline + 1)).reverse().map((m) => m.content).join('\n\n'));
-                }}
-              >
-                载入当前记忆
-              </button>
-              <textarea aria-label="替换记忆" rows={4} value={baselineMemory} onChange={(e) => setBaselineMemory(e.target.value)} />
-              <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory`, { content: baselineMemory, mode: 'replace' })}>
-                保存基线
-              </button>
-            </details>
+
           </>
         )}
 
         {tab === 'state' && (
           <>
-            <div className="two-col" style={{ marginBottom: 12 }}>
-              <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/state/generate`)}>
-                AI 更新
-              </button>
-              <button disabled={disabled || busy} onClick={() => setEditState(!editState)}>
-                编辑数据
-              </button>
-            </div>
-            {editState ? (
-              <>
-                <textarea className="code state-editor" aria-label="状态 JSON" value={stateText} onChange={(e) => setStateText(e.target.value)} />
-                <button
-                  disabled={disabled || busy}
-                  onClick={() => {
-                    try {
-                      void run(`/conversations/${chat.id}/state`, { tables: JSON.parse(stateText) });
-                    } catch (error) {
-                      onError((error as Error).message);
-                    }
-                  }}
-                >
-                  验证并保存
-                </button>
-              </>
-            ) : (
-              Object.entries(state.tables ?? {}).map(([table, rows]) => (
+            <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/state/generate`)}>AI 更新</button>
+            {Object.entries(state.tables ?? {}).map(([table, rows]) => (
                 <details className="state-table" key={table} open={table === 'global_state' || table === 'protagonist_info'}>
                   <summary>
                     <span>{tableNames[table] ?? table}</span>
                     <small>{(rows as any[]).length}</small>
                   </summary>
-                  {(rows as any[]).map((row, index) => (
-                    <dl key={index}>
+                  {(rows as any[]).map((row) => (
+                    <dl key={row.row_id}>
                       {Object.entries(row)
                         .filter(([key]) => key !== 'row_id')
                         .map(([key, value]) => (
                           <div key={key}>
                             <dt>{key}</dt>
-                            <dd>{String(value ?? '—') || '—'}</dd>
+                            <dd><AutoSaveField draftKey={`${chat.id}:${chat.headMessageId}:state:${table}:${row.row_id}:${key}`} initial={String(value ?? '')} label={`${tableNames[table]} ${row.row_id} ${key}`} disabled={disabled || busy} onError={onError}
+                              onSave={async (content, previous) => {
+                                const saved = await api(`/conversations/${chat.id}/state/cell`, 'PATCH', { table, rowId: row.row_id, column: key, content, previous, head: chat.headMessageId }, { keepalive: true });
+                                setState(saved); onChanged();
+                              }} /></dd>
                           </div>
                         ))}
                     </dl>
                   ))}
                   {!(rows as any[]).length && <p className="muted" style={{ padding: '6px 0' }}>暂无记录</p>}
                 </details>
-              ))
-            )}
+              ))}
           </>
         )}
 

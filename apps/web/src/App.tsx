@@ -1008,6 +1008,7 @@ export default function App() {
 
       {page === 'chat' && chat && panel && (
             <Records
+              key={`${chat.id}:${chat.headMessageId}`}
               onSource={scrollToMessage}
           chat={chat}
           generationMode={generalSettings.generationMode}
