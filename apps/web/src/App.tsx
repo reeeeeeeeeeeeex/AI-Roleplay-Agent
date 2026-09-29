@@ -641,10 +641,10 @@ export default function App() {
                             </button>
                             {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title="重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留" onClick={() => act(send('regenerate', m.id))}>重做整轮（2 条）</button>}
                             <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>续写</button>
-                            <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'rewrite', initial: '保留剧情，减少解释，增加对白。' })}>按要求改写</button>
+                            <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'rewrite', initial: '' })}>按要求改写</button>
                           </>
                         )}
-                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'bookmark', initial: m.content.slice(0, 16) })}>书签</button>
+                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'bookmark', initial: '' })}>书签</button>
                         <button disabled={!!turn} title="从此处分支" onClick={() => act(setHead(m.id))}>
                           <GitBranch size={12} />
                         </button>
