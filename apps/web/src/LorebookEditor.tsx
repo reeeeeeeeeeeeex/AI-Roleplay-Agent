@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { Lorebook, LoreEntry } from '@new-ai-chat/contracts';
 import { ChevronDown, ChevronRight, Copy, Plus, Trash2 } from 'lucide-react';
 import './lorebook-editor.css';
+import { useContentAutosave } from './useContentAutosave';
 
 type Entry = Omit<LoreEntry, 'id' | 'lorebookId'>;
 type DraftEntry = Entry & { localId: string; keyInput: string; secondaryInput: string; orderInput: string };
@@ -35,20 +36,26 @@ function Keywords({ label, values, input, onInput, onChange }: {
 }
 
 export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
-  initial?: Partial<Lorebook>; onSave: (value: Omit<Partial<Lorebook>, 'entries'> & { entries: Entry[] }) => Promise<void>; onClose: () => void; zIndex: number;
+  initial?: Partial<Lorebook>; onSave: (value: Omit<Partial<Lorebook>, 'entries'> & { entries: Entry[]; expectedUpdatedAt?: string | undefined }) => Promise<Partial<Lorebook>>; onClose: () => void; zIndex: number;
 }) {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [description, setDescription] = useState(initial?.description ?? '');
-  const [entries, setEntries] = useState(() => (initial?.entries ?? []).map(entry => draftEntry({ ...emptyEntry, ...entry })));
+  const record = useRef(initial);
+  const [seed] = useState(() => ({ id: initial?.id, updatedAt: initial?.updatedAt, name: initial?.name ?? '', description: initial?.description ?? '', entries: (initial?.entries ?? []).map(entry => draftEntry({ ...emptyEntry, ...entry })) }));
+  const autosave = useContentAutosave({ initial: seed, draftKey: `lorebooks:${initial?.id ?? 'new'}`, onSave: async draft => {
+    if (!draft.name.trim()) throw new Error('请填写世界书名称。');
+    const invalid = draft.entries.find(entry => !entry.orderInput.trim() || !Number.isSafeInteger(Number(entry.orderInput)));
+    if (invalid) throw new Error(`「${entryTitle(invalid)}」的顺序必须是整数。`);
+    const id = record.current?.id ?? draft.id;
+    record.current = await onSave({ ...initial, ...(id ? { id } : {}), expectedUpdatedAt: record.current?.updatedAt ?? draft.updatedAt, name: draft.name.trim(), description: draft.description, entries: draft.entries.map(entryValue) });
+    return { saved: { ...draft, id: record.current.id, updatedAt: record.current.updatedAt } };
+  } });
+  const { name, description, entries } = autosave.value;
+  const setName = (name: string) => autosave.change(old => ({ ...old, name }));
+  const setDescription = (description: string) => autosave.change(old => ({ ...old, description }));
+  const setEntries = (change: (entries: DraftEntry[]) => DraftEntry[]) => autosave.change(old => ({ ...old, entries: change(old.entries) }));
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [discarding, setDiscarding] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const baseline = useRef(JSON.stringify({ name, description, entries: entries.map(entryValue) }));
-  const dirty = JSON.stringify({ name, description, entries: entries.map(entryValue) }) !== baseline.current;
   const titleInputs = useRef(new Map<string, HTMLInputElement>());
   const formId = useId();
 
@@ -60,8 +67,9 @@ export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
     setFocusId(null);
   }, [focusId]);
 
-  function update(localId: string, patch: Partial<DraftEntry>) {
+  function update(localId: string, patch: Partial<DraftEntry>, immediate = false) {
     setEntries(old => old.map(entry => entry.localId === localId ? { ...entry, ...patch } : entry));
+    if (immediate) void autosave.flush();
   }
   function add(source?: DraftEntry) {
     const order = entries.length ? Math.max(...entries.map(entry => Number(entry.orderInput) || 0)) + 1 : 100;
@@ -70,36 +78,22 @@ export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
     setQuery('');
     setExpanded(old => new Set([...old, entry.localId]));
     setFocusId(entry.localId);
+    void autosave.flush();
   }
   function toggle(localId: string) {
     setExpanded(old => { const next = new Set(old); if (next.has(localId)) next.delete(localId); else next.add(localId); return next; });
   }
-  function close() { if (!busy) { if (dirty) setDiscarding(true); else onClose(); } }
-  async function save() {
-    if (busy) return;
-    const invalid = entries.find(entry => !entry.orderInput.trim() || !Number.isSafeInteger(Number(entry.orderInput)));
-    if (invalid) {
-      setError(`「${entryTitle(invalid)}」的顺序必须是整数。`);
-      setQuery('');
-      setExpanded(old => new Set([...old, invalid.localId]));
-      setFocusId(invalid.localId);
-      return;
-    }
-    setBusy(true); setError(''); setDiscarding(false);
-    try { await onSave({ ...initial, name: name.trim(), description, entries: entries.map(entryValue) }); }
-    catch (err) { setError(err instanceof Error ? err.message : '保存失败，请重试。'); }
-    finally { setBusy(false); }
-  }
+  async function close() { if (await autosave.flush()) onClose(); }
   const search = query.trim().toLocaleLowerCase();
   const visible = entries.filter(entry => [entry.title, entry.content, ...entry.keys, ...entry.secondaryKeys, entry.keyInput, entry.secondaryInput].some(value => value.toLocaleLowerCase().includes(search)));
 
-  return <div className="modal-shade" style={{ zIndex }}>
+  return <div className="modal-shade" style={{ zIndex }} onClick={event => { if (event.target === event.currentTarget) void close(); }}>
     <section className="modal lorebook-modal" role="dialog" aria-modal="true" aria-label="编辑世界书">
       <header><h2>{initial?.id ? '编辑' : '创建'}世界书 <span className="muted">· {entries.length} 个条目</span></h2>
-        <button type="button" onClick={close} disabled={busy} aria-label="关闭">✕</button>
+        <button type="button" onClick={() => void close()} aria-label="关闭">✕</button>
       </header>
-      <form id={formId} onSubmit={event => { event.preventDefault(); void save(); }}>
-        <fieldset disabled={busy} className="lorebook-fields">
+      <form id={formId} onBlur={() => void autosave.flush()} onSubmit={event => { event.preventDefault(); void autosave.flush(); }}>
+        <fieldset className="lorebook-fields">
           <div className="lorebook-meta">
             <label>名称<input value={name} required maxLength={200} onChange={event => setName(event.target.value)} /></label>
             <label>描述<textarea rows={2} maxLength={20_000} value={description} onChange={event => setDescription(event.target.value)} /></label>
@@ -120,18 +114,18 @@ export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
                     <span className="lore-entry-heading"><strong>{title}</strong><span className="lore-entry-preview">{entry.content.trim() || '暂无正文'}</span></span>
                     <span className="lore-entry-mode">{entry.constant ? '始终加入' : '关键词触发'}</span>
                   </button>
-                  <label className="check"><input type="checkbox" checked={entry.enabled} onChange={event => update(entry.localId, { enabled: event.target.checked })} />{entry.enabled ? '启用' : '停用'}</label>
+                  <label className="check"><input type="checkbox" checked={entry.enabled} onChange={event => update(entry.localId, { enabled: event.target.checked }, true)} />{entry.enabled ? '启用' : '停用'}</label>
                 </div>
                 <div id={bodyId} className="lore-entry-body" hidden={!open}>
                   <label>条目标题<input ref={input => { if (input) titleInputs.current.set(entry.localId, input); else titleInputs.current.delete(entry.localId); }} value={entry.title} onChange={event => update(entry.localId, { title: event.target.value })} /></label>
                   <label>正文<textarea rows={8} maxLength={200_000} value={entry.content} onChange={event => update(entry.localId, { content: event.target.value })} /></label>
-                  <label>触发方式<select value={entry.constant ? 'constant' : 'keyword'} onChange={event => update(entry.localId, { constant: event.target.value === 'constant' })}>
+                  <label>触发方式<select value={entry.constant ? 'constant' : 'keyword'} onChange={event => update(entry.localId, { constant: event.target.value === 'constant' }, true)}>
                     <option value="keyword">关键词触发</option><option value="constant">始终加入</option>
                   </select></label>
                   {entry.constant && <small className="muted">启用时始终加入上下文，关键词会保留但不参与触发。</small>}
                   <div className="two-col">
-                    <Keywords label="关键词" values={entry.keys} input={entry.keyInput} onInput={keyInput => update(entry.localId, { keyInput })} onChange={keys => update(entry.localId, { keys })} />
-                    <Keywords label="辅助关键词" values={entry.secondaryKeys} input={entry.secondaryInput} onInput={secondaryInput => update(entry.localId, { secondaryInput })} onChange={secondaryKeys => update(entry.localId, { secondaryKeys })} />
+                    <Keywords label="关键词" values={entry.keys} input={entry.keyInput} onInput={keyInput => update(entry.localId, { keyInput })} onChange={keys => update(entry.localId, { keys }, true)} />
+                    <Keywords label="辅助关键词" values={entry.secondaryKeys} input={entry.secondaryInput} onInput={secondaryInput => update(entry.localId, { secondaryInput })} onChange={secondaryKeys => update(entry.localId, { secondaryKeys }, true)} />
                   </div>
                   <small className="muted">主关键词命中后，还需命中任一辅助关键词；辅助关键词留空则不作额外限制。</small>
                   {!entry.constant && !entry.keys.length && !entry.keyInput.trim() && <small className="muted">添加关键词后才能触发此条目，也可以改为“始终加入”。</small>}
@@ -140,8 +134,8 @@ export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
                     <button type="button" onClick={() => add(entry)}><Copy size={14} />复制条目</button>
                     <button type="button" className="danger" onClick={() => setDeleting(entry.localId)}><Trash2 size={14} />删除条目</button>
                     {deleting === entry.localId && <div className="lore-delete-confirm" role="group" aria-label="确认删除条目">
-                      <span>删除「{title}」？保存世界书后生效。</span>
-                      <button type="button" className="danger" onClick={() => { setEntries(old => old.filter(item => item.localId !== entry.localId)); setDeleting(null); }}>确认删除</button>
+                      <span>删除「{title}」？</span>
+                      <button type="button" className="danger" onClick={() => { setEntries(old => old.filter(item => item.localId !== entry.localId)); setDeleting(null); void autosave.flush(); }}>确认删除</button>
                       <button type="button" onClick={() => setDeleting(null)}>保留条目</button>
                     </div>}
                   </div>
@@ -153,9 +147,9 @@ export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
         </fieldset>
       </form>
       <footer className="lorebook-footer">
-        {error && <p className="error" role="alert">{error}</p>}
-        {discarding ? <div className="lore-discard" role="group" aria-label="未保存的修改"><span>有尚未保存的修改。</span><button type="button" onClick={() => setDiscarding(false)}>继续编辑</button><button type="button" className="danger" onClick={onClose}>放弃修改</button></div>
-          : <><span className="muted">{dirty ? '有未保存的修改' : '修改后点击保存'}</span><button type="button" onClick={onClose} disabled={busy}>取消</button><button type="submit" form={formId} className="primary" disabled={busy}>{busy ? '保存中…' : '保存'}</button></>}
+        {autosave.error && <p className="error" role="alert">{autosave.error}</p>}
+        <span className="muted" role="status">{autosave.status === 'saving' ? '保存中…' : autosave.dirty ? '离开编辑框自动保存' : autosave.status === 'saved' ? '已自动保存' : '点击内容编辑，离开自动保存'}</span>
+        <button type="button" onClick={() => void close()}>关闭</button>
       </footer>
     </section>
   </div>;

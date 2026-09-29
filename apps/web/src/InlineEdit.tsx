@@ -44,7 +44,7 @@ export default function InlineEdit({ initial, label, onSave, onCancel, disabled 
     <div className="inline-edit-actions">
       <button type="button" disabled={disabled || busy || !value.trim()} onClick={() => void save()}>{busy ? '保存中…' : saveLabel}</button>
       <button type="button" disabled={busy} onClick={onCancel}>取消</button>
-      <small>{singleLine ? 'Enter 保存' : 'Ctrl / ⌘ + Enter 保存'} · Esc 取消</small>
+      <small>{singleLine ? 'Enter' : 'Ctrl / ⌘ + Enter'} {saveLabel} · Esc 取消</small>
     </div>
     {error && <small className="error" role="alert">{error}</small>}
   </div>;

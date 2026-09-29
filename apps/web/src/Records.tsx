@@ -4,8 +4,8 @@ import type { Conversation, GenerationMode, PinnedFact } from '@new-ai-chat/cont
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
 import AgentTrace from './AgentTrace.js';
-import InlineEdit from './InlineEdit.js';
 import AutoSaveField from './AutoSaveField.js';
+import { flushContentEdits } from './useContentAutosave.js';
 
 const tableNames: Record<string, string> = {
   global_state: '全局状态',
@@ -42,12 +42,8 @@ export default function Records({
   const [memory, setMemory] = useState<any[]>([]);
   const [state, setState] = useState<any>({ tables: {} });
   const [proposals, setProposals] = useState<any[]>([]);
-  const [newMemory, setNewMemory] = useState('');
   const [busy, setBusy] = useState(false);
   const [facts, setFacts] = useState<PinnedFact[]>([]);
-  const [newFact, setNewFact] = useState('');
-  const [editingFact, setEditingFact] = useState<string | null>(null);
-  useEffect(() => { setEditingFact(null); }, [chat.id, chat.headMessageId]);
 
   useEffect(() => {
     let active = true;
@@ -74,8 +70,9 @@ export default function Records({
   }, [chat.id, version]);
 
   async function run(path: string, value: unknown = {}, method = 'POST') {
-    setBusy(true);
     try {
+      await flushContentEdits();
+      setBusy(true);
       await api(path, method, value);
       onChanged();
       return true;
@@ -114,19 +111,16 @@ export default function Records({
             <details open>
               <summary>固定事实 · 仅由你修改</summary>
               {facts.map(fact => <article className="memory-entry" key={fact.id}>
-                {editingFact === fact.id ? <InlineEdit key={fact.id} initial={fact.content} label="编辑固定事实" disabled={disabled || busy}
-                  onCancel={() => setEditingFact(null)} onSave={async content => {
-                    await api(`/conversations/${chat.id}/facts`, 'POST', { id: fact.id, content });
-                    setEditingFact(null); onChanged();
-                  }} /> : <pre>{fact.content}</pre>}
+                <AutoSaveField key={`${fact.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:fact:${fact.id}`} initial={fact.content} label="固定事实内容" disabled={disabled || busy} onError={onError}
+                  onSave={async (content, previous) => {
+                    const saved = await api(`/conversations/${chat.id}/facts`, 'POST', { id: fact.id, content, previous, head: chat.headMessageId }, { keepalive: true });
+                    setFacts(items => items.map(item => item.id === fact.id ? saved : item)); onChanged(); return saved.content;
+                  }} />
                 {fact.sourceMessageId && <button onClick={() => onSource(fact.sourceMessageId!)}>查看来源</button>}
-                {editingFact !== fact.id && <>
-                  <button disabled={disabled || busy} onClick={() => setEditingFact(fact.id)}>修改</button>
                   <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/facts/${fact.id}`, {}, 'DELETE')}>取消固定</button>
-                </>}
               </article>)}
-              <textarea aria-label="固定事实" rows={2} value={newFact} onChange={event => setNewFact(event.target.value)} />
-              <button disabled={disabled || busy || !newFact.trim()} onClick={() => void run(`/conversations/${chat.id}/facts`, { content: newFact }).then(saved => { if (saved) setNewFact(''); })}>固定事实</button>
+              <AutoSaveField key={`new-fact:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:new-fact`} initial="" label="添加固定事实" placeholder="填写固定事实，离开自动保存" disabled={disabled || busy} resetOnSave lockWhileSaving onError={onError}
+                onSave={async content => { await api(`/conversations/${chat.id}/facts`, 'POST', { content, head: chat.headMessageId }, { keepalive: true }); onChanged(); }} />
             </details>
             <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory/generate`)}>
               {busy ? '更新中…' : '立即生成 Memory'}
@@ -136,7 +130,7 @@ export default function Records({
                 <div className="memory-stage">Stage {entry.stage}</div>
                 <small className="muted">{entry.coverage ? `覆盖 ${entry.coverage.storyTurnIds.length} 个完整回合` : '覆盖范围：历史记录未提供'}</small>
                 {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>起点</button><button onClick={() => onSource(entry.coverage.endMessageId)}>终点</button></div>}
-                <AutoSaveField draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content} label={`Memory Stage ${entry.stage}`} placeholder="（空记忆标记）" disabled={disabled || busy} onError={onError}
+                <AutoSaveField key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content} label={`Memory Stage ${entry.stage}`} placeholder="（空记忆标记）" disabled={disabled || busy} onError={onError}
                   onSave={async (content, previous) => {
                     const saved = await api(`/conversations/${chat.id}/memory/${entry.id}`, 'PATCH', { content, previous, head: chat.headMessageId }, { keepalive: true });
                     setMemory(items => items.map(item => item.id === entry.id ? saved : item)); onChanged();
@@ -145,10 +139,8 @@ export default function Records({
             ))}
             <details>
               <summary>手动添加记录</summary>
-              <textarea aria-label="手动记忆" rows={4} value={newMemory} onChange={(e) => setNewMemory(e.target.value)} />
-              <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory`, { content: newMemory }).then(saved => { if (saved) setNewMemory(''); })}>
-                保存记录
-              </button>
+              <AutoSaveField key={`new-memory:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:new-memory`} initial="" label="手动记忆" placeholder="填写记忆，离开自动保存" disabled={disabled || busy} resetOnSave lockWhileSaving onError={onError}
+                onSave={async content => { await api(`/conversations/${chat.id}/memory`, 'POST', { content, head: chat.headMessageId }, { keepalive: true }); onChanged(); }} />
             </details>
 
           </>
@@ -170,7 +162,7 @@ export default function Records({
                         .map(([key, value]) => (
                           <div key={key}>
                             <dt>{key}</dt>
-                            <dd><AutoSaveField draftKey={`${chat.id}:${chat.headMessageId}:state:${table}:${row.row_id}:${key}`} initial={String(value ?? '')} label={`${tableNames[table]} ${row.row_id} ${key}`} disabled={disabled || busy} onError={onError}
+                            <dd><AutoSaveField key={`${chat.headMessageId}:${table}:${row.row_id}:${key}`} draftKey={`${chat.id}:${chat.headMessageId}:state:${table}:${row.row_id}:${key}`} initial={String(value ?? '')} label={`${tableNames[table]} ${row.row_id} ${key}`} disabled={disabled || busy} onError={onError}
                               onSave={async (content, previous) => {
                                 const saved = await api(`/conversations/${chat.id}/state/cell`, 'PATCH', { table, rowId: row.row_id, column: key, content, previous, head: chat.headMessageId }, { keepalive: true });
                                 setState(saved); onChanged();

@@ -31,7 +31,7 @@ test('lorebook creates readable entries and reopens on a narrow screen with keyb
   await editor.getByLabel('关键词', { exact: true }).fill('海岸');
   await editor.getByLabel('关键词', { exact: true }).press('Enter');
   await editor.getByLabel('辅助关键词', { exact: true }).fill('夜晚');
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  await editor.getByRole('button', { name: '关闭', exact: true }).last().click();
   await expect(editor).toHaveCount(0);
   const book = (await (await request.get('/api/lorebooks')).json()).find((item: any) => item.name === '表单新建世界');
   expect(book.entries[0]).toMatchObject({ title: '海岸灯塔', keys: ['海岸'], secondaryKeys: ['夜晚'], enabled: true, constant: false });
@@ -42,7 +42,7 @@ test('lorebook creates readable entries and reopens on a narrow screen with keyb
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await expect(editor.getByRole('textbox', { name: '正文', exact: true })).toHaveValue('守塔人住在这里。\n夜晚灯火通明。');
   expect(await editor.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
-  await expect(editor.getByRole('button', { name: '保存', exact: true })).toBeInViewport();
+  await expect(editor.getByRole('button', { name: '关闭', exact: true }).last()).toBeInViewport();
 });
 
 test('lorebook search and collapsing keep hidden drafts in the saved book', async ({ page, request }) => {
@@ -55,7 +55,7 @@ test('lorebook search and collapsing keep hidden drafts in the saved book', asyn
   await expect(entries(page)).toHaveCount(1);
   await entries(page).first().locator('.lore-entry-toggle').click();
   await entries(page).first().getByRole('textbox', { name: '正文', exact: true }).fill('森林的新正文。');
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  await editor.getByRole('button', { name: '关闭', exact: true }).last().click();
   await expect(editor).toHaveCount(0);
   const saved = await (await request.get(`/api/lorebooks/${book.id}`)).json();
   expect(saved.entries.map((entry: any) => entry.content)).toEqual(['灯塔的新正文。', '森林的新正文。']);
@@ -81,7 +81,7 @@ test('lorebook copies, toggles and deletes the selected entry without shifting d
   await forest.getByRole('button', { name: '删除条目' }).click();
   await forest.getByRole('button', { name: '确认删除', exact: true }).click();
   await expect(copy.getByRole('textbox', { name: '正文', exact: true })).toHaveValue('复制条目的独立正文。');
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  await editor.getByRole('button', { name: '关闭', exact: true }).last().click();
   await expect(editor).toHaveCount(0);
   const saved = await (await request.get(`/api/lorebooks/${book.id}`)).json();
   expect(saved.entries).toHaveLength(2);
@@ -89,24 +89,28 @@ test('lorebook copies, toggles and deletes the selected entry without shifting d
   expect(saved.entries[1]).toMatchObject({ title: '灯塔（副本）', content: '复制条目的独立正文。', constant: true, order: 21 });
 });
 
-test('lorebook failed saves retain drafts and close or cancel never write them', async ({ page, request }) => {
+test('lorebook autosave retains failed drafts through reload and retries on blur', async ({ page, request }) => {
   const book = await openFixture(page, request, '失败保留世界');
   const editor = dialog(page);
+  let fail = true;
+  await page.route(`**/api/lorebooks/${book.id}`, route => route.request().method() === 'PUT' && fail ? route.fulfill({ status: 500, json: { error: '测试保存失败' } }) : route.continue());
   await editor.getByRole('button', { name: '全部展开', exact: true }).click();
-  await entries(page).first().getByRole('textbox', { name: '正文', exact: true }).fill('尚未保存的正文。');
-  await page.route(`**/api/lorebooks/${book.id}`, route => route.request().method() === 'PUT' ? route.fulfill({ status: 500, json: { error: '测试保存失败' } }) : route.continue());
-  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  const body = entries(page).first().getByRole('textbox', { name: '正文', exact: true });
+  await body.fill('尚未保存的正文。');
+  await editor.getByRole('button', { name: '关闭', exact: true }).last().click();
   await expect(editor.getByRole('alert')).toContainText('测试保存失败');
-  await expect(entries(page).first().getByRole('textbox', { name: '正文', exact: true })).toHaveValue('尚未保存的正文。');
-  await editor.getByRole('button', { name: '关闭', exact: true }).click();
-  await editor.getByRole('button', { name: '继续编辑', exact: true }).click();
-  await expect(entries(page).first().getByRole('textbox', { name: '正文', exact: true })).toHaveValue('尚未保存的正文。');
-  await editor.getByRole('button', { name: '取消', exact: true }).click();
-  await expect(editor).toHaveCount(0);
+  await expect(body).toHaveValue('尚未保存的正文。');
   expect((await (await request.get(`/api/lorebooks/${book.id}`)).json()).entries[0].content).toBe('灯塔的旧正文。');
+  await page.reload();
+  await page.locator('.studio-nav').getByRole('button', { name: /^世界书/ }).click();
   await page.getByRole('button', { name: book.name, exact: true }).click();
-  await editor.getByRole('textbox', { name: '描述', exact: true }).fill('放弃这次修改');
-  await editor.getByRole('button', { name: '关闭', exact: true }).click();
-  await editor.getByRole('button', { name: '放弃修改', exact: true }).click();
-  expect((await (await request.get(`/api/lorebooks/${book.id}`)).json()).description).toBe('测试世界');
+  await editor.getByRole('button', { name: '全部展开', exact: true }).click();
+  await expect(body).toHaveValue('尚未保存的正文。');
+  fail = false;
+  await body.focus(); await body.blur();
+  await expect.poll(async () => (await (await request.get(`/api/lorebooks/${book.id}`)).json()).entries[0].content).toBe('尚未保存的正文。');
+  await body.fill('第二次编辑仍使用最新版本。'); await body.blur();
+  await expect.poll(async () => (await (await request.get(`/api/lorebooks/${book.id}`)).json()).entries[0].content).toBe('第二次编辑仍使用最新版本。');
+  await editor.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await expect(editor).toHaveCount(0);
 });

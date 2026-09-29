@@ -3,6 +3,7 @@ import { api } from './api';
 import AvatarField from './AvatarField';
 import PersonaPicker from './PersonaPicker';
 import LorebookEditor from './LorebookEditor';
+import { useContentAutosave } from './useContentAutosave';
 
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
@@ -58,12 +59,22 @@ export default function Editor({
   initial?: any;
   data: Partial<Record<Collection, any[]>>;
   onClose: () => void;
-  onSave: (value: any) => Promise<void>;
+  onSave: (value: any) => Promise<any>;
   defaultPersonaId?: string | null;
   onPersonaCreated?: (persona: any) => void;
   zIndex?: number;
 }) {
-  const [value, setValue] = useState<any>(() => ({ ...defaults[kind], ...initial }));
+  const record = useRef(initial);
+  const automatic = kind !== 'connections' && kind !== 'lorebooks';
+  const autosave = useContentAutosave<any>({ initial: { ...defaults[kind], ...initial }, draftKey: `${kind}:${initial?.id ?? 'new'}`, enabled: automatic,
+    onSave: async draft => {
+      if (!String(draft.name ?? draft.title ?? '').trim()) throw new Error('请填写名称。');
+      record.current = await onSave({ ...draft, id: record.current?.id ?? draft.id, expectedUpdatedAt: record.current?.updatedAt ?? draft.updatedAt });
+      return { saved: { ...draft, id: record.current.id, updatedAt: record.current.updatedAt } };
+    },
+  });
+  const value = autosave.value;
+  const setValue = autosave.change;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [creatingPersona, setCreatingPersona] = useState(false);
@@ -100,7 +111,14 @@ export default function Editor({
     }
   }
 
-  const set = (key: string, v: any) => setValue((old: any) => ({ ...old, [key]: v }));
+  const set = (key: string, v: any, immediate = false) => {
+    setValue((old: any) => ({ ...old, [key]: v }));
+    if (automatic && immediate) void autosave.flush();
+  };
+  async function close() {
+    const createDefaults = !record.current?.id && !value.id && Boolean(String(value.name ?? value.title ?? '').trim());
+    if (!automatic || await autosave.flush(createDefaults)) onClose();
+  }
 
   const field = (key: string, label: string, multiline = false, type = 'text', bounds?: { min: number; max: number; step: number }) => (
     <label key={key}>
@@ -127,7 +145,7 @@ export default function Editor({
   const select = (key: string, label: string, options: Array<[string, string]>, empty = false) => (
     <label key={key}>
       {label}
-      <select value={value[key] ?? ''} onChange={(event) => set(key, event.target.value || null)}>
+      <select value={value[key] ?? ''} onChange={(event) => set(key, event.target.value || null, true)}>
         {empty && <option value="">未选择</option>}
         {options.map(([id, name]) => (
           <option key={id} value={id}>
@@ -151,7 +169,7 @@ export default function Editor({
                 key,
                 e.target.checked
                   ? [...(value[key] ?? []), item.id]
-                  : (value[key] ?? []).filter((id: string) => id !== item.id)
+                  : (value[key] ?? []).filter((id: string) => id !== item.id), true
               )
             }
           />
@@ -170,16 +188,18 @@ export default function Editor({
 
   return (
     <>
-      <div className="modal-shade" style={{ zIndex }}>
+      <div className="modal-shade" style={{ zIndex }} onClick={event => { if (event.target === event.currentTarget) void close(); }}>
         <section className="modal" role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
           <header>
-            <h2>{initial?.id ? '编辑' : '创建'}{titles[kind]}</h2>
-            <button onClick={onClose} aria-label="关闭">✕</button>
+            <h2>{record.current?.id ? titles[kind] : `创建${titles[kind]}`}</h2>
+            <button onClick={() => void close()} aria-label="关闭">✕</button>
           </header>
 
           <form
+            onBlur={() => { if (automatic) void autosave.flush(); }}
             onSubmit={(e) => {
               e.preventDefault();
+              if (automatic) { void autosave.flush(); return; }
               setBusy(true);
               setError('');
               void onSave(value)
@@ -208,7 +228,7 @@ export default function Editor({
                     emptyLabel="跟随全局默认"
                     defaultPersonaId={defaultPersonaId}
                     disabled={busy}
-                    onChange={(id) => set('personaId', id)}
+                    onChange={(id) => set('personaId', id, true)}
                     onCreatePersona={() => setCreatingPersona(true)}
                   />
                 </label>
@@ -226,7 +246,7 @@ export default function Editor({
               label={kind === 'characters' ? '角色头像' : '主角头像'}
               value={value.avatarPath}
               disabled={busy}
-              onChange={(url) => set('avatarPath', url)}
+              onChange={(url) => set('avatarPath', url, true)}
             />
           )}
 
@@ -289,7 +309,7 @@ export default function Editor({
                 label="群封面图片"
                 value={value.avatarPath}
                 disabled={busy}
-                onChange={(url) => set('avatarPath', url)}
+                onChange={(url) => set('avatarPath', url, true)}
               />
               {choices('memberIds', '成员（按选择顺序）', data.characters ?? [])}
               {field('scenario', '群聊场景', true)}
@@ -299,8 +319,10 @@ export default function Editor({
           {error && <p className="error">{error}</p>}
 
           <footer>
-            <button type="button" onClick={onClose}>取消</button>
-            <button className="primary" disabled={busy} type="submit">{busy ? '保存中…' : '保存'}</button>
+            {automatic ? <>
+              {autosave.error ? <p className="error" role="alert">{autosave.error}</p> : <small className="muted" role="status">{autosave.status === 'saving' ? '保存中…' : autosave.dirty ? '离开编辑框自动保存' : autosave.status === 'saved' ? '已自动保存' : '点击内容编辑，离开自动保存'}</small>}
+              <button type="button" onClick={() => void close()}>关闭</button>
+            </> : <><button type="button" onClick={onClose}>取消</button><button className="primary" disabled={busy} type="submit">{busy ? '保存中…' : '保存'}</button></>}
           </footer>
         </form>
       </section>
@@ -313,10 +335,10 @@ export default function Editor({
         zIndex={zIndex + 20}
         onClose={() => setCreatingPersona(false)}
         onSave={async (newPersona) => {
-          const saved = await api('/personas', 'POST', newPersona);
+          const saved = await api(`/personas${newPersona.id ? `/${newPersona.id}` : ''}`, newPersona.id ? 'PUT' : 'POST', newPersona, { keepalive: true });
           onPersonaCreated?.(saved);
-          set('personaId', saved.id);
-          setCreatingPersona(false);
+          set('personaId', saved.id, true);
+          return saved;
         }}
       />
     )}

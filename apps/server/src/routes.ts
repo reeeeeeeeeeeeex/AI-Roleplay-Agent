@@ -49,7 +49,15 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     app.get(base, async () => collection.list());
     app.get(`${base}/:id`, async (req, reply) => collection.get(idOf(req)) ?? reply.code(404).send({ error: 'Not found.' }));
     app.post(base, async (req, reply) => { const value = collection.schema.parse(req.body); refs(collection.path, value); return reply.code(201).send(collection.create(value)); });
-    app.put(`${base}/:id`, async (req, reply) => { idleAll(); const value = collection.schema.parse(req.body); refs(collection.path, value); return collection.update(idOf(req), value) ?? reply.code(404).send({ error: 'Not found.' }); });
+    app.put(`${base}/:id`, async (req, reply) => {
+      idleAll();
+      const { expectedUpdatedAt: expected, expectedScenario } = z.object({ expectedUpdatedAt: z.string().optional(), expectedScenario: z.string().optional() }).parse(req.body);
+      const existing = collection.get(idOf(req)) as { updatedAt?: string } | null;
+      if (expected && existing?.updatedAt !== expected) throw new Error('内容已在别处修改，草稿已保留，请重新打开后核对。');
+      if (collection.path === 'conversations' && expectedScenario !== undefined && repo.navigation(idOf(req)).scene.scenario !== expectedScenario) throw new Error('场景已在别处修改，未覆盖现有内容。');
+      const value = collection.schema.parse(req.body); refs(collection.path, value);
+      return collection.update(idOf(req), value) ?? reply.code(404).send({ error: 'Not found.' });
+    });
     app.delete(`${base}/:id`, async (req) => { idleAll(); return { deleted: Boolean(collection.remove(idOf(req))) }; });
   }
   app.get('/api/settings/general', async () => repo.getGeneralSettings());
@@ -104,7 +112,10 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.post('/api/conversations/:id/head', async (req) => { const id = idOf(req); turns.assertIdle(id); const value = z.object({ messageId: z.string().nullable() }).parse(req.body); repo.setHead(id,value.messageId); repo.addEvent(id,null,'branch.selected', value); return repo.getConversation(id); });
   app.post('/api/messages/:id/edit', async (req) => {
     const target = repo.getMessage(idOf(req)); if (!target) throw new Error('Message not found.'); turns.assertIdle(target.conversationId);
-    const { content } = z.object({ content: z.string().max(100_000) }).parse(req.body);
+    const { content, previous, head } = z.object({ content: z.string().max(100_000), previous: z.string().optional(), head: z.string().nullable().optional() }).parse(req.body);
+    if (head !== undefined && repo.getConversation(target.conversationId)?.headMessageId !== head) throw new Error('分支已变化，未覆盖当前故事。请重新打开后核对草稿。');
+    if (previous !== undefined && target.content !== previous) throw new Error('消息已变化，未覆盖现有内容。');
+    if (target.content === content) return target;
     const wasSettled = target.storyTurnId && settledStoryIds(repo, target.conversationId).includes(target.storyTurnId);
     return repo.database.sqlite.transaction(() => {
       const message = repo.createMessage({ ...target, content, providerState: null, legacyPayload: null }); repo.setHead(target.conversationId, message.id);
@@ -151,7 +162,8 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.get('/api/conversations/:id/navigation', async req => repo.navigation(idOf(req)));
   app.post('/api/conversations/:id/bookmarks', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
-    const value = z.object({ id: z.string().optional(), name: z.string().trim().min(1).max(100), messageId: z.string() }).parse(req.body);
+    const value = z.object({ id: z.string().optional(), name: z.string().trim().min(1).max(100), messageId: z.string(), previous: z.string().optional() }).parse(req.body);
+    if (value.id && value.previous !== undefined && repo.listBookmarks(chat).find(item => item.id === value.id)?.name !== value.previous) throw new Error('书签已在别处修改，未覆盖现有内容。');
     return repo.saveBookmark(chat, value.name, value.messageId, value.id);
   });
   app.delete('/api/conversations/:id/bookmarks/:bookmarkId', async req => {
@@ -160,7 +172,9 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   });
   app.post('/api/conversations/:id/facts', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
-    const value = z.object({ id: z.string().optional(), content: z.string().trim().min(1).max(10_000), sourceMessageId: z.string().nullable().default(null) }).parse(req.body);
+    const value = z.object({ id: z.string().optional(), content: z.string().trim().min(1).max(10_000), sourceMessageId: z.string().nullable().default(null), head: z.string().nullable().optional(), previous: z.string().optional() }).parse(req.body);
+    if (value.head !== undefined && repo.getConversation(chat)?.headMessageId !== value.head) throw new Error('分支已变化，未覆盖固定事实。');
+    if (value.id && value.previous !== undefined && repo.listPinnedFacts(chat).find(item => item.id === value.id)?.content !== value.previous) throw new Error('固定事实已在别处修改，未覆盖现有内容。');
     return repo.savePinnedFact(chat, value.content, value.sourceMessageId, value.id);
   });
   app.delete('/api/conversations/:id/facts/:factId', async req => {
@@ -168,7 +182,8 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     repo.removePinnedFact(id, factId); return { removed: true };
   });
   app.post('/api/conversations/:id/memory', async (req) => {
-    const chat = idOf(req); turns.assertIdle(chat); const { content, mode } = z.object({ content: z.string().max(200_000), mode: z.enum(['append', 'replace']).default('append') }).parse(req.body);
+    const chat = idOf(req); turns.assertIdle(chat); const { content, mode, head } = z.object({ content: z.string().max(200_000), mode: z.enum(['append', 'replace']).default('append'), head: z.string().nullable().optional() }).parse(req.body);
+    if (head !== undefined && repo.getConversation(chat)?.headMessageId !== head) throw new Error('分支已变化，未写入其他分支。');
     return repo.createMemory({ conversationId: chat, content, source: mode === 'replace' ? 'manual' : 'generated', stage: (repo.listMemories(chat,1)[0]?.stage ?? 0)+1, storyTurnId: settledStoryIds(repo,chat).at(-1) ?? null });
   });
   app.get('/api/conversations/:id/state', async (req) => repo.latestState(idOf(req)) ?? { tables: blankState(), version: 1 });

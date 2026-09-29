@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Pencil, Square } from 'lucide-react';
 import type { ActionChoiceCache } from '@new-ai-chat/contracts';
 import { api } from './api.js';
+import { flushContentEdits } from './useContentAutosave.js';
 import './action-choices.css';
 
 type Edit = { groupId: string; index: number; value: string; previous: string };
@@ -55,6 +56,8 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
   useEffect(() => { if (disabled) { controller.current?.abort(); setOpen(false); } }, [disabled]);
 
   async function generate() {
+    await flushContentEdits();
+    if (!mounted.current) return;
     attempted.current = true;
     const abort = new AbortController(); controller.current = abort;
     setBusy(true); callbacks.current.onBusy(true); callbacks.current.onChanged(); setError('');

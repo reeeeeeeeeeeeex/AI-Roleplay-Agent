@@ -13,6 +13,8 @@ import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.
 import MessageNavigation from './MessageNavigation.js';
 import { useChatWindow } from './useChatWindow.js';
 import ActionChoices from './ActionChoices.js';
+import AutoSaveField from './AutoSaveField.js';
+import { flushContentEdits } from './useContentAutosave.js';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
@@ -38,8 +40,9 @@ export default function App() {
   const [page, setPage] = useState<'chat' | Collection | 'import'>('chat');
   const [branch, setBranch] = useState<MessageNode[]>([]);
   const [nodes, setNodes] = useState<MessageNode[]>([]);
+  const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
-  const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'text' | 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
+  const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
   const [inputDrafts, setInputDrafts] = useState<Record<string, string>>(() => {
     try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('story-drafts') ?? '{}')).filter(([, value]) => typeof value === 'string')) as Record<string, string>; }
     catch { return {}; }
@@ -214,7 +217,9 @@ export default function App() {
     catch { setNotice('浏览器无法保存草稿，请在关闭页面前复制输入。'); }
   }, [inputDrafts]);
 
-  async function selectChat(id: string) {
+  async function selectChat(id: string, flush = true) {
+    if (flush) await flushContentEdits();
+    editedMessageIds.current.clear();
     if (turn) {
       await api(`/turns/${turn.id}/cancel`, 'POST', {});
       streamAbort.current?.abort();
@@ -306,14 +311,25 @@ export default function App() {
     };
   }
 
+  function savedMessageId(id?: string) {
+    while (id && editedMessageIds.current.has(id)) id = editedMessageIds.current.get(id)!;
+    return id;
+  }
+  function messageRenderKey(id: string) {
+    // Keep action buttons mounted while blur replaces an immutable message node.
+    for (const [previous, current] of [...editedMessageIds.current].reverse()) if (id === current) id = previous;
+    return id;
+  }
+
   async function send(trigger: 'normal' | 'auto' | 'regenerate' | 'continue' = 'normal', targetMessageId?: string, choiceText?: string) {
     if (!chat || turn || sendPending.current || messageEdit) return;
     sendPending.current = true;
-    setSending(true);
     setError('');
     setNotice('');
     try {
-      const payload = turnPayload(trigger, targetMessageId);
+      await flushContentEdits();
+      setSending(true);
+      const payload = turnPayload(trigger, savedMessageId(targetMessageId));
       const result = await api('/turns', 'POST', choiceText === undefined ? payload : { ...payload, input: { voice: 'protagonist', text: choiceText } });
       // Clear only the accepted draft, never newer typing or another chat's input.
       if (trigger === 'normal' && choiceText === undefined) setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
@@ -327,21 +343,20 @@ export default function App() {
   }
 
   async function swipe(message: MessageNode, instruction?: string) {
-    const result = await api(`/messages/${message.id}/swipe`, 'POST', instruction ? { instruction } : {});
+    await flushContentEdits();
+    const result = await api(`/messages/${savedMessageId(message.id)}/swipe`, 'POST', instruction ? { instruction } : {});
     await follow(result.id, message.conversationId);
   }
 
-  async function saveMessageEdit(message: MessageNode, action: 'text' | 'fact' | 'rewrite' | 'bookmark', value: string) {
+  async function saveMessageEdit(message: MessageNode, action: 'fact' | 'rewrite' | 'bookmark', value: string) {
     if (action === 'rewrite') {
-      const result = await api(`/messages/${message.id}/swipe`, 'POST', { instruction: value });
+      await flushContentEdits();
+      const result = await api(`/messages/${savedMessageId(message.id)}/swipe`, 'POST', { instruction: value });
       setMessageEdit(null);
       act(follow(result.id, message.conversationId));
       return;
     }
-    if (action === 'text') {
-      await api(`/messages/${message.id}/edit`, 'POST', { content: value });
-      await refreshMessages(message.conversationId); await refresh();
-    } else if (action === 'fact') {
+    if (action === 'fact') {
       await api(`/conversations/${message.conversationId}/facts`, 'POST', { content: value, sourceMessageId: message.id });
     } else {
       await api(`/conversations/${message.conversationId}/bookmarks`, 'POST', { name: value, messageId: message.id });
@@ -352,13 +367,15 @@ export default function App() {
 
   async function retryRemaining() {
     if (!lastTurn || turn || sendPending.current) return;
-    sendPending.current = true; setSending(true); setError('');
-    try { const next = await api(`/turns/${lastTurn.id}/retry`, 'POST', {}); await follow(next.id, lastTurn.conversationId); }
+    sendPending.current = true; setError('');
+    try { await flushContentEdits(); setSending(true); const next = await api(`/turns/${lastTurn.id}/retry`, 'POST', {}); await follow(next.id, lastTurn.conversationId); }
     finally { sendPending.current = false; setSending(false); }
   }
 
   async function setHead(messageId: string | null) {
+    await flushContentEdits();
     await api(`/conversations/${chatId}/head`, 'POST', { messageId });
+    editedMessageIds.current.clear();
     scrollToLatest();
     await refreshMessages(chatId!);
     await refresh();
@@ -366,7 +383,8 @@ export default function App() {
   }
   async function setHistoryStart(messageId: string | null) {
     if (!chatId) return;
-    const updated = await api<Conversation>(`/conversations/${chatId}/history-start`, 'POST', { messageId });
+    await flushContentEdits();
+    const updated = await api<Conversation>(`/conversations/${chatId}/history-start`, 'POST', { messageId: savedMessageId(messageId ?? undefined) ?? null });
     setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === updated.id ? updated : item) }));
     setPromptPreview(null);
   }
@@ -375,7 +393,7 @@ export default function App() {
     if (!chat) return;
     const trigger = text.trim() ? 'normal' : 'auto';
     const { conversationId: _conversationId, ...payload } = turnPayload(trigger);
-    try { setPromptPreview(await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload)); }
+    try { await flushContentEdits(); setPromptPreview(await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload)); }
     catch (err: any) { setError(err.message || '预览失败'); }
   }
 
@@ -386,19 +404,20 @@ export default function App() {
     if (!editor) return;
     const input = { ...value };
     if (editor.kind === 'connections' && value.id && !input.apiKey) delete input.apiKey;
-    const saved = await api(`/${editor.kind}${value.id ? `/${value.id}` : ''}`, value.id ? 'PUT' : 'POST', input);
-    await refresh();
-    setEditor(null);
-    if (editor.kind === 'conversations') await selectChat(saved.id);
+    const saved = await api(`/${editor.kind}${value.id ? `/${value.id}` : ''}`, value.id ? 'PUT' : 'POST', input, { keepalive: editor.kind !== 'connections' });
+    // Persistence has succeeded even if refreshing the surrounding view fails.
+    await refresh().catch(error => setError(error.message));
+    if (editor.kind === 'connections') setEditor(null);
+    if (editor.kind === 'conversations' && !value.id) await selectChat(saved.id, false).catch(error => setError(error.message));
     if (editor.kind === 'personas' && personaCreateTarget) {
       if (personaCreateTarget === 'global') {
-        await savePersona(saved.id, true);
+        await savePersona(saved.id, true).catch(error => setError(error.message));
       } else if (personaCreateTarget === 'chat') {
-        await savePersona(saved.id, false);
+        await savePersona(saved.id, false).catch(error => setError(error.message));
       }
       setPersonaCreateTarget(null);
-      setShowPersona(true);
     }
+    return saved;
   }
 
   async function remove(kind: Collection, value: any) {
@@ -525,7 +544,8 @@ export default function App() {
               </button>
             )}
             <button className="mobile-only" aria-label="打开导航" onClick={() => setMobileNav(true)}>☰</button>
-            <h1>{page === 'chat' ? chat?.title ?? '新故事' : page === 'import' ? '导入故事' : page === 'conversations' ? '故事列表' : titles[page]}</h1>
+            <h1>{page === 'chat' && chat ? <AutoSaveField key={chat.id} draftKey={`story-title:${chat.id}`} initial={chat.title} label="故事标题" singleLine disabled={!!turn || sending} onError={setError}
+              onSave={async title => { const saved = await api(`/conversations/${chat.id}`, 'PUT', { ...chat, title, expectedUpdatedAt: chat.updatedAt }, { keepalive: true }); setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? saved : item) })); }} /> : page === 'chat' ? '新故事' : page === 'import' ? '导入故事' : page === 'conversations' ? '故事列表' : titles[page]}</h1>
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
@@ -540,7 +560,7 @@ export default function App() {
                     }}
                   >
                     <Users size={14} />
-                    <span>编辑群聊</span>
+                    <span>群聊资料</span>
                   </button>
                 ) : (
                   <button
@@ -552,7 +572,7 @@ export default function App() {
                     }}
                   >
                     <UserCog size={14} />
-                    <span>编辑角色</span>
+                    <span>角色资料</span>
                   </button>
                 )}
                 <button title="故事分支" aria-label="故事分支" onClick={() => setShowBranches(true)}>
@@ -605,12 +625,12 @@ export default function App() {
             <div className="cast-strip">
               <span><i className="dot narrator" />{generalSettings.narrator.name}</span>
               {cast.map((id: string) => (
-                <span key={id}><i className="dot" />{data.characters?.find((c) => c.id === id)?.name}</span>
+                <button className="content-link" key={id} onClick={() => edit('characters', data.characters?.find(c => c.id === id))}><i className="dot" />{data.characters?.find((c) => c.id === id)?.name}</button>
               ))}
               <small>{generalSettings.agencyMode === 'protected' ? '主角保护' : '共同创作'}</small>
             </div>
 
-            <StoryNavigation key={chat.id} chatId={chat.id} version={recordsVersion} disabled={!!turn || sending} onHead={setHead} onChanged={() => setRecordsVersion(value => value + 1)} onError={setError} />
+            <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onHead={setHead} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">
               <span>{historyStartPosition < 0 ? '固定发送起点不在当前分支，请重新选择或取消。' : `已固定发送起点 · 从此处起 ${branch.slice(historyStartPosition).filter(message => message.role !== 'system').length} 条消息，后续持续追加`}</span>
               {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>查看起点</button>}
@@ -632,15 +652,15 @@ export default function App() {
                 const avatar = avatarFor(m);
                 const info = m.generationInfo;
                 const editing = messageEdit?.id === m.id ? messageEdit : null;
-                const inlineEditor = editing && <InlineEdit key={`${m.id}:${editing.action}`} initial={editing.initial}
-                  label={{ text: '编辑正文', fact: '摘录固定事实', rewrite: '改写要求', bookmark: '书签名称' }[editing.action]}
-                  singleLine={editing.action === 'bookmark'} disabled={!!turn || sending}
-                  saveLabel={editing.action === 'rewrite' ? '开始改写' : '保存'}
-                  onCancel={() => setMessageEdit(null)} onSave={value => saveMessageEdit(m, editing.action, value)} />;
+                const inlineEditor = editing && (editing.action === 'rewrite'
+                  ? <InlineEdit key={`${m.id}:rewrite`} initial={editing.initial} label="改写要求" disabled={!!turn || sending} saveLabel="开始改写"
+                      onCancel={() => setMessageEdit(null)} onSave={value => saveMessageEdit(m, 'rewrite', value)} />
+                  : <><AutoSaveField key={`${m.id}:${editing.action}`} draftKey={`${m.id}:new-${editing.action}`} initial="" label={editing.action === 'bookmark' ? '书签名称' : '摘录固定事实'} singleLine={editing.action === 'bookmark'} autoFocus disabled={!!turn || sending} lockWhileSaving
+                      onError={setError} onSave={value => saveMessageEdit(m, editing.action, value)} /><button onClick={() => setMessageEdit(null)}>关闭</button></>);
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
-                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={m.id} id={`message-${m.id}`} data-message-id={m.id}>
+                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={messageRenderKey(m.id)} id={`message-${m.id}`} data-message-id={m.id}>
                     <div
                       className={`avatar ${avatar ? 'clickable' : ''}`}
                       onClick={() => { if (avatar) setPreviewImage(avatar); }}
@@ -671,21 +691,35 @@ export default function App() {
                         <summary>模型思考</summary>
                         <pre>{info.thinking || '模型未返回可见思考内容。'}</pre>
                       </details>}
-                      <div className="prose">{editing?.action === 'text' ? inlineEditor : m.content}</div>
-                      {editing && editing.action !== 'text' && <div className="message-inline-action">
+                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? 'AI 回复正文' : m.role === 'user' ? '用户消息正文' : '消息正文'} disabled={!!turn || sending} lockWhileSaving onError={setError}
+                        onSave={async (content, previous) => {
+                          const saved = await api<MessageNode>(`/messages/${m.id}/edit`, 'POST', { content, previous, head: chat.headMessageId }, { keepalive: true });
+                          if (saved.id !== m.id) editedMessageIds.current.set(m.id, saved.id);
+                          await refreshMessages(m.conversationId).catch(error => setError(error.message));
+                          await refresh().catch(error => setError(error.message)); setRecordsVersion(version => version + 1);
+                        }} /></div>
+                      {editing && <div className="message-inline-action">
                         <small>{{ fact: '固定事实 · 保存到当前分支', rewrite: '一次性改写要求 · 不作为剧情输入', bookmark: '给这条消息命名书签' }[editing.action]}</small>
                         {inlineEditor}
                       </div>}
                       {m.role === 'assistant' && <small className="generation-info">{info
                         ? `${info.model} · 输入 ${totalInput ?? '未返回'} · 输出 ${info.usage?.output ?? '未返回'} · 缓存 ${info.usage?.cacheRead ?? '未返回'}${info.usage ? ` (${cacheRate}%)` : ''}`
                         : '生成信息不可用（旧消息）'}</small>}
-                      {!editing && <div className="message-actions">
+                      {!editing && <div className="message-actions" onMouseDown={event => {
+                        // Run the click before blur can move or replace the message controls.
+                        if (document.activeElement?.closest('.prose')) event.preventDefault();
+                      }}>
                         {m.role !== 'system' && <button className={branch[historyStartPosition]?.id === m.id ? 'active' : ''} disabled={!!turn || sending}
                           title="包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整"
                           onClick={() => act(setHistoryStart(branch[historyStartPosition]?.id === m.id ? null : m.id))}>
                           {branch[historyStartPosition]?.id === m.id ? '发送起点 · 取消' : '从此处开始发送'}
                         </button>}
-                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'fact', initial: window.getSelection()?.toString().trim() || m.content })}>固定事实</button>
+                        <button disabled={!!turn || sending} onClick={event => {
+                          const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
+                          const selected = body?.value.slice(body.selectionStart, body.selectionEnd).trim();
+                          const content = selected || body?.value || m.content;
+                          act(flushContentEdits().then(() => saveMessageEdit({ ...m, id: savedMessageId(m.id)! }, 'fact', content)));
+                        }}>固定事实</button>
                         {swipes.length > 1 && (
                           <>
                             <button title="上一个版本" disabled={!!turn || index <= 0} onClick={() => act(setHead(swipes[index - 1]!.id))}>
@@ -704,15 +738,12 @@ export default function App() {
                             </button>
                             {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title="重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留" onClick={() => act(send('regenerate', m.id))}>重做整轮（2 条）</button>}
                             <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>续写</button>
-                            <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'rewrite', initial: '' })}>按要求改写</button>
+                            <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'rewrite', initial: '' })))}>按要求改写</button>
                           </>
                         )}
-                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'bookmark', initial: '' })}>书签</button>
-                        <button disabled={!!turn} title="从此处分支" onClick={() => act(setHead(m.id))}>
+                        <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'bookmark', initial: '' })))}>书签</button>
+                        <button disabled={!!turn} title="从此处分支" onClick={() => act(flushContentEdits().then(() => setHead(savedMessageId(m.id)!)))}>
                           <GitFork size={12} />从此处分支
-                        </button>
-                        <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'text', initial: m.content })}>
-                          编辑
                         </button>
                       </div>}
                     </div>
@@ -848,14 +879,14 @@ export default function App() {
                             )}
                           </div>
                           <div className="character-card-body">
-                            <h3 className="character-card-title">{c.title}</h3>
+                            <h3 className="character-card-title"><button className="content-link" onClick={() => edit('conversations', c)}>{c.title}</button></h3>
                             <div className="character-card-meta">
                               <span className="badge">{isGroup ? `群聊 · ${grp?.name ?? '群组'}` : `单聊 · ${char?.name ?? '角色'}`}</span>
                               <small className="time">{formatTime(c.updatedAt || c.createdAt)}</small>
                             </div>
-                            <p className="character-card-desc">
+                            <button className="character-card-desc content-link" onClick={() => edit('conversations', c)}>
                               {c.scenario || (isGroup ? (memberNames ? `成员：${memberNames}` : grp?.scenario) : char?.description) || '暂无描述'}
-                            </p>
+                            </button>
                             <div className="character-card-footer">
                               <button
                                 className="primary"
@@ -866,7 +897,6 @@ export default function App() {
                               >
                                 进入故事
                               </button>
-                              <button onClick={() => edit('conversations', c)}>编辑</button>
                               <button className="danger" onClick={() => act(remove('conversations', c))}>删除</button>
                             </div>
                           </div>
@@ -895,14 +925,14 @@ export default function App() {
                             )}
                           </div>
                           <div className="character-card-body">
-                            <h3 className="character-card-title">{v.name}</h3>
+                            <h3 className="character-card-title"><button className="content-link" onClick={() => edit('groups', v)}>{v.name}</button></h3>
                             <div className="character-card-meta">
                               <span className="badge">{v.memberIds?.length ?? 0} 位成员</span>
                               <small className="time">{formatTime(v.updatedAt || v.createdAt)}</small>
                             </div>
-                            <p className="character-card-desc">
+                            <button className="character-card-desc content-link" onClick={() => edit('groups', v)}>
                               {memberNames ? `成员：${memberNames}。` : ''}{v.scenario || '暂无群聊场景描述'}
-                            </p>
+                            </button>
                             <div className="character-card-footer">
                               <button
                                 className="primary"
@@ -915,7 +945,6 @@ export default function App() {
                               >
                                 开启群聊
                               </button>
-                              <button onClick={() => edit('groups', v)}>编辑</button>
                               <button className="danger" onClick={() => act(remove('groups', v))}>删除</button>
                             </div>
                           </div>
@@ -942,12 +971,12 @@ export default function App() {
                           )}
                         </div>
                         <div className="character-card-body">
-                          <h3 className="character-card-title">{v.name}</h3>
+                          <h3 className="character-card-title"><button className="content-link" onClick={() => edit(page, v)}>{v.name}</button></h3>
                           <div className="character-card-meta">
                             <span className="badge">{page === 'characters' ? '角色' : '主角'}</span>
                             <small className="time">{formatTime(v.updatedAt || v.createdAt)}</small>
                           </div>
-                          <p className="character-card-desc">{v.description || v.scenario || '暂无描述'}</p>
+                          <button className="character-card-desc content-link" onClick={() => edit(page, v)}>{v.description || v.scenario || '暂无描述'}</button>
                           <div className="character-card-footer">
                             {page === 'characters' && (
                               <button
@@ -961,7 +990,6 @@ export default function App() {
                                 开始聊天
                               </button>
                             )}
-                            <button onClick={() => edit(page, v)}>编辑</button>
                             <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
                           </div>
                         </div>
@@ -977,7 +1005,7 @@ export default function App() {
                         <div className="resource-info">
                           <h3 className="resource-title">{page === 'lorebooks' ? <button className="lorebook-title" onClick={() => edit(page, v)}>{v.name}</button> : v.name ?? v.title}</h3>
                           {(v.model || v.description || v.scenario) && (
-                            <p className="resource-desc">{v.model ?? v.description ?? v.scenario}</p>
+                            <button className="resource-desc content-link" onClick={() => edit(page, v)}>{v.model ?? v.description ?? v.scenario}</button>
                           )}
                         </div>
                       </div>
@@ -985,7 +1013,7 @@ export default function App() {
                         <span>{v.protocol ?? (v.entries ? `${v.entries.length} 个条目` : v.memberIds ? `${v.memberIds.length} 位成员` : '')}</span>
                       </div>
                       <div className="resource-actions">
-                        <button onClick={() => edit(page, v)}>编辑</button>
+                        {page === 'connections' && <button onClick={() => edit(page, v)}>编辑</button>}
                         <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
                       </div>
                     </article>
@@ -1076,7 +1104,7 @@ export default function App() {
           data={data}
           defaultPersonaId={generalSettings.defaultPersonaId}
           onPersonaCreated={(newPersona) => {
-            setData((old) => ({ ...old, personas: [...(old.personas ?? []), newPersona] }));
+            setData(old => ({ ...old, personas: [...(old.personas ?? []).filter(persona => persona.id !== newPersona.id), newPersona] }));
           }}
           onClose={() => {
             setEditor(null);

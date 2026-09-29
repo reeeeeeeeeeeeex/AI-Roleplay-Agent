@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { StoryNavigation as Navigation } from '@new-ai-chat/contracts';
 import { api } from './api.js';
-import InlineEdit from './InlineEdit.js';
+import AutoSaveField from './AutoSaveField.js';
+import { flushContentEdits } from './useContentAutosave.js';
 
-export default function StoryNavigation({ chatId, version, disabled, onHead, onChanged, onError }: {
-  chatId: string; version: number; disabled: boolean;
+export default function StoryNavigation({ chatId, head, version, disabled, onHead, onChanged, onError }: {
+  chatId: string; head: string | null; version: number; disabled: boolean;
   onHead: (id: string) => Promise<void>; onChanged: () => void; onError: (message: string) => void;
 }) {
   const [data, setData] = useState<Navigation | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     void api<Navigation>(`/conversations/${chatId}/navigation`).then(value => { if (active) setData(value); }).catch(error => { if (active) onError(error.message); });
@@ -17,6 +17,7 @@ export default function StoryNavigation({ chatId, version, disabled, onHead, onC
   const run = (action: Promise<unknown>) => { void action.then(onChanged).catch(error => onError(error.message)); };
   async function download(format: 'markdown' | 'native') {
     try {
+      await flushContentEdits();
       const response = await fetch(`/api/conversations/${chatId}/export?format=${format}`);
       if (!response.ok) throw new Error((await response.json()).error ?? '导出失败');
       const url = URL.createObjectURL(await response.blob());
@@ -28,18 +29,18 @@ export default function StoryNavigation({ chatId, version, disabled, onHead, onC
     <summary>场景与书签</summary>
     <div><button disabled={disabled} onClick={() => void download('markdown')}>导出当前分支 Markdown</button><button disabled={disabled} onClick={() => void download('native')}>导出完整故事包</button></div>
     {data && <>
-      <p>{data.scene.scenario || '场景未记录'}</p>
-      <small>时间：{data.scene.time || '未记录'} · 地点：{data.scene.location || '未记录'} · 在场人物：{data.scene.presentCharacters.join('、') || '未记录'}</small>
+      <AutoSaveField draftKey={`${chatId}:scene`} initial={data.scene.scenario} label="当前场景" placeholder="场景未记录" disabled={disabled} onError={onError} onSave={async (scenario, previous) => {
+        const current = await api(`/conversations/${chatId}`);
+        await api(`/conversations/${chatId}`, 'PUT', { ...current, scenario, expectedScenario: previous, expectedUpdatedAt: current.updatedAt }, { keepalive: true }); onChanged();
+      }} />
+      <div className="scene-fields">{(['time', 'location'] as const).map(field => <label key={field}>{field === 'time' ? '时间' : '地点'}<AutoSaveField key={`${head}:${field}`} draftKey={`${chatId}:${head}:scene-${field}`} initial={data.scene[field]} label={field === 'time' ? '当前时间' : '当前地点'} placeholder="未记录" singleLine disabled={disabled} onError={onError}
+        onSave={async (content, previous) => { await api(`/conversations/${chatId}/state/cell`, 'PATCH', { table: 'global_state', rowId: 1, column: field === 'time' ? 'cur_time' : 'current_location', content, previous, head }, { keepalive: true }); onChanged(); }} /></label>)}</div>
+      <small>在场人物：{data.scene.presentCharacters.join('、') || '未记录'}</small>
       {data.bookmarks.map(bookmark => <div key={bookmark.id}>
-        {editing === bookmark.id ? <InlineEdit initial={bookmark.name} label="重命名书签" singleLine disabled={disabled}
-          onCancel={() => setEditing(null)} onSave={async name => {
-            await api(`/conversations/${chatId}/bookmarks`, 'POST', { ...bookmark, name });
-            setEditing(null); onChanged();
-          }} /> : <>
-        <button disabled={disabled} onClick={() => run(onHead(bookmark.messageId))}>☆ {bookmark.name}</button>
-        <button disabled={disabled} onClick={() => setEditing(bookmark.id)}>重命名</button>
+        <AutoSaveField draftKey={`${chatId}:bookmark:${bookmark.id}`} initial={bookmark.name} label="书签名称" singleLine disabled={disabled} onError={onError}
+          onSave={async (name, previous) => { const saved = await api(`/conversations/${chatId}/bookmarks`, 'POST', { ...bookmark, name, previous }, { keepalive: true }); onChanged(); return saved.name; }} />
+        <button disabled={disabled} aria-label={`跳转到书签 ${bookmark.name}`} onClick={() => run(onHead(bookmark.messageId))}>跳转</button>
         <button disabled={disabled} onClick={() => run(api(`/conversations/${chatId}/bookmarks/${bookmark.id}`, 'DELETE'))}>删除书签</button>
-        </>}
       </div>)}
       {!data.bookmarks.length && <p className="muted">可从消息操作中添加书签。</p>}
     </>}

@@ -489,6 +489,24 @@ describe('branches and records',()=>{
   it('does not checkpoint an empty state initialization',async()=>{await normal();await server.records.generate(chat,'state',new AbortController().signal);expect(server.repository.latestState(chat)).toBeNull();});
 });
 describe('HTTP boundary',()=>{
+  it('content autosave rejects stale resource versions and obsolete message branches', async () => {
+    const repo = server.repository;
+    const original = repo.getCharacter(character)!;
+    const saved = await server.app.inject({ method: 'PUT', url: `/api/characters/${character}`, payload: { ...original, description: '已保存的描述', expectedUpdatedAt: original.updatedAt } });
+    expect(saved.statusCode).toBe(200);
+    const stale = await server.app.inject({ method: 'PUT', url: `/api/characters/${character}`, payload: { ...original, description: '过期编辑', expectedUpdatedAt: 'old-version' } });
+    expect(stale.statusCode).toBeGreaterThanOrEqual(400);
+    expect(repo.getCharacter(character)?.description).toBe('已保存的描述');
+    await normal();
+    const target = repo.getActiveBranch(chat).at(-1)!;
+    const body = { previous: target.content, content: '自动保存后的正文', head: target.id };
+    const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${target.id}/edit`, payload: body });
+    expect(edited.statusCode).toBe(200);
+    expect(repo.getMessage(target.id)?.content).toBe(target.content);
+    expect((await server.app.inject({ method: 'POST', url: `/api/messages/${target.id}/edit`, payload: { ...body, content: '迟到的编辑' } })).statusCode).toBeGreaterThanOrEqual(400);
+    expect(repo.getActiveBranch(chat).at(-1)?.content).toBe(body.content);
+    expect(settledStoryIds(repo, chat)).toHaveLength(1);
+  });
   it('does not return API keys or custom header values',async()=>{const response=await server.app.inject({method:'GET',url:'/api/connections'});expect(response.statusCode).toBe(200);expect(response.body).not.toContain('secret-do-not-return');expect(response.body).not.toContain('header-secret');});
   it.each(['https://evil.example','null','http://127.0.0.1.evil.example'])('rejects untrusted origin %s',async(origin)=>{const r=await server.app.inject({method:'POST',url:'/api/turns',headers:{origin},payload:{}});expect(r.statusCode).toBe(403);});
   it('rejects DNS rebinding hostnames',async()=>{expect((await server.app.inject({url:'/api/connections',headers:{host:'evil.example'}})).statusCode).toBe(403);});
