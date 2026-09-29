@@ -216,6 +216,7 @@ export interface Group {
   name: string;
   memberIds: string[];
   scenario: string;
+  avatarPath: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -224,6 +225,7 @@ export const groupInputSchema = z.object({
   name: z.string().trim().min(1).max(200),
   memberIds: z.array(z.string().min(1)).min(1),
   scenario: z.string().max(100_000).default(''),
+  avatarPath: z.string().nullable().default(null),
 });
 
 export interface NarratorProfile {

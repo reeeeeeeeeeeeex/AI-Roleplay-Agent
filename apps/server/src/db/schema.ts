@@ -83,6 +83,7 @@ export const groups = sqliteTable('groups', {
   name: text('name').notNull(),
   memberIds: text('member_ids', { mode: 'json' }).$type<string[]>().notNull(),
   scenario: text('scenario').notNull().default(''),
+  avatarPath: text('avatar_path'),
   legacyPayload: text('legacy_payload', { mode: 'json' }).$type<unknown>(),
   ...timestamps,
 });

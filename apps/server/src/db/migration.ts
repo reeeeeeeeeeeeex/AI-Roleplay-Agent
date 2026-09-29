@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS lore_entries (
 );
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, member_ids TEXT NOT NULL DEFAULT '[]',
-  scenario TEXT NOT NULL DEFAULT '', legacy_payload TEXT,
+  scenario TEXT NOT NULL DEFAULT '', avatar_path TEXT, legacy_payload TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS conversations (
@@ -116,6 +116,7 @@ export function migrateDatabase(database: Database.Database): void {
     ['turns', 'records_status', "TEXT NOT NULL DEFAULT 'idle'"],
     ['memories', 'coverage', 'TEXT'],
     ['turn_traces', 'context_report', 'TEXT'],
+    ['groups', 'avatar_path', 'TEXT'],
   ]) {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some((item) => item.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);

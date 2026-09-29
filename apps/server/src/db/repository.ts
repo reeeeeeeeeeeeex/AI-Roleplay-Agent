@@ -227,13 +227,13 @@ export class Repository {
 
   listGroups(): Group[] { return this.database.db.select().from(groups).orderBy(asc(groups.name)).all() as Group[]; }
   getGroup(groupId: string): Group | null { return this.database.db.select().from(groups).where(eq(groups.id, groupId)).get() as Group | undefined ?? null; }
-  createGroup(input: { name: string; memberIds: string[]; scenario: string }, legacyPayload: unknown = null): Group {
-    const timestamp = now(); const row = { id: id(), ...input, legacyPayload, createdAt: timestamp, updatedAt: timestamp };
+  createGroup(input: { name: string; memberIds: string[]; scenario: string; avatarPath?: string | null }, legacyPayload: unknown = null): Group {
+    const timestamp = now(); const row = { id: id(), ...input, avatarPath: input.avatarPath ?? null, legacyPayload, createdAt: timestamp, updatedAt: timestamp };
     this.database.db.insert(groups).values(row).run(); return this.getGroup(row.id)!;
   }
-  updateGroup(groupId: string, input: { name: string; memberIds: string[]; scenario: string }): Group | null {
+  updateGroup(groupId: string, input: { name: string; memberIds: string[]; scenario: string; avatarPath?: string | null }): Group | null {
     if (!this.getGroup(groupId)) return null;
-    this.database.db.update(groups).set({ ...input, updatedAt: now() }).where(eq(groups.id, groupId)).run(); return this.getGroup(groupId);
+    this.database.db.update(groups).set({ ...input, avatarPath: input.avatarPath ?? null, updatedAt: now() }).where(eq(groups.id, groupId)).run(); return this.getGroup(groupId);
   }
   deleteGroup(groupId: string): boolean { return this.database.db.delete(groups).where(eq(groups.id, groupId)).run().changes > 0; }
 

@@ -22,5 +22,21 @@ describe('turn contracts', () => {
     });
     expect(value.input?.voice).toBe('narrator');
   });
+
+  it('accepts group input with avatarPath', async () => {
+    const { groupInputSchema } = await import('./index.js');
+    const group = groupInputSchema.parse({
+      name: '探索小队',
+      memberIds: ['char-1', 'char-2'],
+      scenario: '森林探险',
+      avatarPath: '/api/assets/cover.png',
+    });
+    expect(group.avatarPath).toBe('/api/assets/cover.png');
+    const defaultGroup = groupInputSchema.parse({
+      name: '小队2',
+      memberIds: ['char-1'],
+    });
+    expect(defaultGroup.avatarPath).toBeNull();
+  });
 });
 

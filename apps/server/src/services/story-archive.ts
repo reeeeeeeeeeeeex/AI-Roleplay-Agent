@@ -84,7 +84,7 @@ export function readStoryArchive(value: unknown): StoryArchive {
     if (p.proposalId) requireRef(proposalIds, p.proposalId);
     for (const output of p.plan?.outputs ?? []) requireSpeaker(output.speaker);
   }
-  const avatarPaths = [...archive.characters, ...archive.personas].map(item => item.avatarPath).filter((path): path is string => Boolean(path));
+  const avatarPaths = [...archive.characters, ...archive.personas, ...(archive.group?.avatarPath ? [{ avatarPath: archive.group.avatarPath }] : [])].map(item => item.avatarPath).filter((path): path is string => Boolean(path));
   for (const path of avatarPaths) if (path.startsWith('/api/assets/') && !archive.assets[path]) archive.warnings.push(`本地图片未打包，导入后留空：${path}`);
   return archive;
 }
@@ -111,7 +111,7 @@ export function exportStory(repo: Repository, conversationId: string, assetDir: 
   for (const event of events) for (const output of (event.payload as any)?.plan?.outputs ?? []) if (output.speaker?.kind === 'character') characterIds.add(output.speaker.characterId);
   const characters = repo.getCharactersByIds([...characterIds]);
   const assets: Record<string, string> = {}; const warnings: string[] = [];
-  for (const item of [...characters, ...(persona ? [persona] : [])]) {
+  for (const item of [...characters, ...(persona ? [persona] : []), ...(group?.avatarPath ? [{ avatarPath: group.avatarPath }] : [])]) {
     const match = item.avatarPath?.match(assetUrl); if (!match || assets[item.avatarPath!]) continue;
     const path = join(assetDir, match[1]!);
     if (existsSync(path)) assets[item.avatarPath!] = readFileSync(path).toString('base64');
@@ -151,7 +151,7 @@ export function importStory(repo: Repository, value: unknown, assetDir: string) 
       for (const { id, ...item } of archive.characters) ids.set(id, repo.createCharacter({ ...item, avatarPath: avatar(item.avatarPath), legacyPayload: null }).id);
       for (const { id, ...item } of archive.personas) ids.set(id, repo.createPersona({ ...item, avatarPath: avatar(item.avatarPath), legacyPayload: null }).id);
       for (const item of archive.lorebooks) ids.set(item.id, repo.createLorebook({ ...item, legacyPayload: null, entries: item.entries.map(entry => ({ ...entry, legacyPayload: null })) }).id);
-      if (archive.group) { const { id, ...group } = archive.group; ids.set(id, repo.createGroup({ ...group, memberIds: group.memberIds.map(mapped) }).id); }
+      if (archive.group) { const { id, ...group } = archive.group; ids.set(id, repo.createGroup({ ...group, avatarPath: avatar(group.avatarPath), memberIds: group.memberIds.map(mapped) }).id); }
       const chat = repo.createConversation({ ...archive.conversation, title: archive.conversation.title, characterId: nullable(archive.conversation.characterId), groupId: nullable(archive.conversation.groupId), personaId: nullable(archive.conversation.personaId), lorebookIds: archive.conversation.lorebookIds.map(mapped) });
       ids.set(archive.conversation.id, chat.id);
       const db = repo.database.db;

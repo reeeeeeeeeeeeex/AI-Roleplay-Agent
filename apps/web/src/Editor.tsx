@@ -31,7 +31,7 @@ export const defaults: Record<Collection, any> = {
     headers: {},
   },
   lorebooks: { name: '', description: '', entries: [] },
-  groups: { name: '', memberIds: [], scenario: '' },
+  groups: { name: '', avatarPath: null, memberIds: [], scenario: '' },
   conversations: {
     title: '新的故事',
     kind: 'solo',
@@ -280,6 +280,12 @@ export default function Editor({
 
           {kind === 'groups' && (
             <>
+              <AvatarField
+                label="群封面图片"
+                value={value.avatarPath}
+                disabled={busy}
+                onChange={(url) => set('avatarPath', url)}
+              />
               {choices('memberIds', '成员（按选择顺序）', data.characters ?? [])}
               {field('scenario', '群聊场景', true)}
             </>
