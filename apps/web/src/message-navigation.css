@@ -1,0 +1,12 @@
+.messages-wrap { position: relative; flex: 1; min-height: 0; }
+.messages-wrap > .messages { height: 100%; padding-right: 54px; }
+.messages-older { display: block; margin: 0 auto 18px; color: var(--text-muted); font-size: 12px; }
+.message-navigation { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); display: grid; width: 32px; height: calc(var(--marker-count) * 28px); max-height: calc(100% - 24px); grid-template-rows: repeat(var(--marker-count), minmax(0, 1fr)); z-index: 2; }
+.message-navigation button { display: flex; align-items: center; justify-content: center; min-height: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; }
+.message-navigation i { flex-shrink: 0; width: 18px; height: 4px; background: var(--text-dim); opacity: .5; border-radius: 1px; transition: opacity .12s, background .12s; }
+.message-navigation button:hover, .message-navigation button:focus-visible, .message-navigation button.active { background: transparent; }
+.message-navigation button:hover i, .message-navigation button:focus-visible i, .message-navigation button.active i { opacity: 1; background: var(--text-primary); }
+@media (max-width: 700px) {
+  .messages-wrap > .messages { padding-right: 44px; }
+  .message-navigation { right: 4px; }
+}

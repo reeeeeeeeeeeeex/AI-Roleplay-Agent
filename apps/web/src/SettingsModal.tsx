@@ -10,6 +10,7 @@ export default function SettingsModal({
   onClose, generalSettings, onSaveGeneral, generationActive, connections,
   onEditConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
   avatarMode, setAvatarMode, avatarFit, setAvatarFit,
+  messageDisplayLimit, setMessageDisplayLimit,
 }: {
   onClose: () => void;
   generalSettings: GeneralSettings;
@@ -25,6 +26,8 @@ export default function SettingsModal({
   setAvatarMode: (mode: AvatarMode) => void;
   avatarFit: AvatarFit;
   setAvatarFit: (fit: AvatarFit) => void;
+  messageDisplayLimit: number;
+  setMessageDisplayLimit: (limit: number) => void;
 }) {
   const [tab, setTab] = useState('connections');
   const [writing, setWriting] = useState(generalSettings);
@@ -32,6 +35,7 @@ export default function SettingsModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [displayLimitDraft, setDisplayLimitDraft] = useState(String(messageDisplayLimit));
   useEffect(() => { setWriting(generalSettings); }, [generalSettings]);
   const locked = busy || generationActive;
 
@@ -138,6 +142,19 @@ export default function SettingsModal({
           </form>}
 
           {tab === 'appearance' && <div className="settings-section">
+            <label>聊天显示条数
+              <input type="number" min={1} max={1000} step={1} value={displayLimitDraft}
+                onChange={event => setDisplayLimitDraft(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                onBlur={() => {
+                  const value = Number(displayLimitDraft);
+                  if (!Number.isInteger(value) || value < 1 || value > 1000) {
+                    setDisplayLimitDraft(String(messageDisplayLimit)); setError('聊天显示条数请填写 1–1000 的整数。'); return;
+                  }
+                  setError(''); setMessageDisplayLimit(value);
+                }} />
+            </label>
+            <p className="muted">先显示最近的消息，向上滚动继续加载。右侧横条可跳转到最近 20 条用户消息。</p>
             <label>头像尺寸
               <select value={avatarMode} onChange={e => {
                 setAvatarMode(e.target.value as AvatarMode); localStorage.setItem('avatar-mode', e.target.value);

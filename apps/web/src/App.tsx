@@ -10,6 +10,8 @@ import StoryNavigation from './StoryNavigation.js';
 import StoryImport from './StoryImport.js';
 import InlineEdit from './InlineEdit.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
+import MessageNavigation from './MessageNavigation.js';
+import { useChatWindow } from './useChatWindow.js';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
@@ -79,14 +81,19 @@ export default function App() {
   const [personaCreateTarget, setPersonaCreateTarget] = useState<'global' | 'chat' | null>(null);
   const [showBranches, setShowBranches] = useState(false);
 
-  // Avatar display preferences
+  // Appearance preferences are local to this browser.
   const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => (localStorage.getItem('avatar-mode') as AvatarMode) || 'large');
   const [avatarFit, setAvatarFit] = useState<AvatarFit>(() => (localStorage.getItem('avatar-fit') as AvatarFit) || 'cover');
+  const [messageDisplayLimit, setMessageDisplayLimit] = useState(() => {
+    const value = Number(localStorage.getItem('chat-message-display-limit'));
+    return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : 100;
+  });
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  const bottom = useRef<HTMLDivElement>(null);
-  const followBottom = useRef(true);
-  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const { container: messageContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom,
+    olderCount, loadOlder, onScroll, scrollToLatest, scrollToMessage } = useChatWindow(
+    branch, chatId, messageDisplayLimit, drafts, `${page}:${avatarMode}:${avatarFit}`,
+  );
   const streamAbort = useRef<AbortController | null>(null);
 
   const queueDraft = (next: Record<number, LiveDraft> | ((current: Record<number, LiveDraft>) => Record<number, LiveDraft>)) => {
@@ -113,8 +120,6 @@ export default function App() {
     }
     return new Set([...replies.values()].filter(ids => ids.length > 1).map(ids => ids.at(-1)!));
   }, [branch]);
-
-  const scrollToLatest = () => { followBottom.current = true; setAwayFromBottom(false); bottom.current?.scrollIntoView({ behavior: 'auto' }); };
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
   const activePersona = data.personas?.find(p => p.id === (chat?.personaId ?? generalSettings.defaultPersonaId));
@@ -194,15 +199,10 @@ export default function App() {
     setDrafts({});
     pendingDraft.current = {};
     setLastTurn(null);
-    followBottom.current = true; setAwayFromBottom(false);
     setActivity([]);
     setReplyTarget('auto');
     if (chatId) { localStorage.setItem('selected-chat', chatId); act(refreshMessages(chatId)); }
   }, [chatId]);
-
-  useEffect(() => {
-    if (followBottom.current) bottom.current?.scrollIntoView({ behavior: 'auto' });
-  }, [branch.length, drafts]);
 
   useEffect(() => {
     try { localStorage.setItem('story-drafts', JSON.stringify(inputDrafts)); }
@@ -353,6 +353,7 @@ export default function App() {
 
   async function setHead(messageId: string | null) {
     await api(`/conversations/${chatId}/head`, 'POST', { messageId });
+    scrollToLatest();
     await refreshMessages(chatId!);
     await refresh();
     setRecordsVersion((v) => v + 1);
@@ -598,17 +599,16 @@ export default function App() {
             </div>
 
             <StoryNavigation key={chat.id} chatId={chat.id} version={recordsVersion} disabled={!!turn || sending} onHead={setHead} onChanged={() => setRecordsVersion(value => value + 1)} onError={setError} />
-            <section className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录" onScroll={event => {
-              const element = event.currentTarget;
-              followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
-              setAwayFromBottom(!followBottom.current);
-            }}>
+            <div className="messages-wrap">
+            <section ref={messageContainer} className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录"
+              onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && event.currentTarget.scrollTop < 100) loadOlder(); }}>
+              {olderCount > 0 && <button className="messages-older" onClick={loadOlder}>显示更早的消息（还有 {olderCount} 条）</button>}
               {!branch.length && (
                 <div className="scene-start">
                   <p>输入第一条消息开始对话。</p>
                 </div>
               )}
-              {branch.map((m) => {
+              {visibleMessages.map((m) => {
                 const swipes = messageIndex.siblings.get(`${m.parentId}:${m.role}`) ?? [];
                 const index = swipes.findIndex((n) => n.id === m.id);
                 const narrator = m.authorKind === 'narrator' || m.authorKind === 'user_narrator';
@@ -623,7 +623,7 @@ export default function App() {
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
-                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={m.id} id={`message-${m.id}`}>
+                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={m.id} id={`message-${m.id}`} data-message-id={m.id}>
                     <div
                       className={`avatar ${avatar ? 'clickable' : ''}`}
                       onClick={() => { if (avatar) setPreviewImage(avatar); }}
@@ -714,6 +714,8 @@ export default function App() {
               ))}
               <div ref={bottom} />
             </section>
+            <MessageNavigation markers={userMarkers} activeId={activeUserId} onJump={scrollToMessage} />
+            </div>
 
             <div className="composer-wrap">
               {awayFromBottom && <button onClick={scrollToLatest}>回到最新 ↓</button>}
@@ -1005,7 +1007,7 @@ export default function App() {
 
       {page === 'chat' && chat && panel && (
             <Records
-              onSource={messageId => { followBottom.current = false; setAwayFromBottom(true); document.getElementById(`message-${messageId}`)?.scrollIntoView({ block: 'center', behavior: 'auto' }); }}
+              onSource={scrollToMessage}
           chat={chat}
           generationMode={generalSettings.generationMode}
           version={recordsVersion}
@@ -1033,6 +1035,8 @@ export default function App() {
         setAvatarMode={setAvatarMode}
         avatarFit={avatarFit}
         setAvatarFit={setAvatarFit}
+        messageDisplayLimit={messageDisplayLimit}
+        setMessageDisplayLimit={value => { setMessageDisplayLimit(value); localStorage.setItem('chat-message-display-limit', String(value)); }}
         promptSettings={promptSettings}
         onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
       />}
