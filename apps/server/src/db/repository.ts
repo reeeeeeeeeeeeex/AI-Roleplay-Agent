@@ -60,6 +60,7 @@ function mapConversation(row: ConversationRow): Conversation {
     personaId: row.personaId,
     lorebookIds: row.lorebookIds,
     headMessageId: row.headMessageId,
+    historyStartMessageId: row.historyStartMessageId,
     scenario: row.scenario,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -103,10 +104,15 @@ export class Repository {
   constructor(readonly database: AppDatabase) {
     database.sqlite.transaction(() => {
       const settings = database.db.select().from(appSettings).all();
-      if (settings.some(row => row.key === 'general')) return;
+      const general = settings.find(row => row.key === 'general')?.value as Partial<GeneralSettings> | undefined;
+      if (general) {
+        if (general.historyMessageLimit === undefined) this.setGeneralSettings(generalSettingsSchema.parse({ ...general, historyMessageLimit: general.connectionId ? this.getRuntimeConnection(general.connectionId)?.historyMessageLimit ?? 0 : 0 }));
+        return;
+      }
       const previous = settings.find(row => row.key === 'defaultConnection')?.value;
       this.setGeneralSettings(generalSettingsSchema.parse({
         connectionId: typeof previous === 'string' && this.getRuntimeConnection(previous) ? previous : null,
+        historyMessageLimit: typeof previous === 'string' ? this.getRuntimeConnection(previous)?.historyMessageLimit ?? 0 : 0,
         narrator: settings.find(row => row.key === 'narrator')?.value,
       }));
       database.db.delete(appSettings).where(inArray(appSettings.key, ['defaultConnection', 'narrator'])).run();
@@ -136,8 +142,9 @@ export class Repository {
     return prompts;
   }
   resolveConnection(): RuntimeConnection | null {
-    const selected = this.getGeneralSettings().connectionId;
-    return selected ? this.getRuntimeConnection(selected) : null;
+    const settings = this.getGeneralSettings();
+    const connection = settings.connectionId ? this.getRuntimeConnection(settings.connectionId) : null;
+    return connection ? { ...connection, historyMessageLimit: settings.historyMessageLimit } : null;
   }
 
   listConnections(): ConnectionSummary[] {
@@ -271,7 +278,7 @@ export class Repository {
     const row = this.database.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
     return row ? mapConversation(row) : null;
   }
-  createConversation(input: Omit<Conversation, 'id' | 'headMessageId' | 'createdAt' | 'updatedAt'>): Conversation {
+  createConversation(input: Omit<Conversation, 'id' | 'headMessageId' | 'historyStartMessageId' | 'createdAt' | 'updatedAt'>): Conversation {
     const timestamp = now(); const conversationId = id();
     this.database.db.insert(conversations).values({
       id: conversationId, title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
@@ -282,7 +289,7 @@ export class Repository {
     }).run();
     return this.getConversation(conversationId)!;
   }
-  updateConversation(conversationId: string, input: Omit<Conversation, 'id' | 'headMessageId' | 'createdAt' | 'updatedAt'>): Conversation | null {
+  updateConversation(conversationId: string, input: Omit<Conversation, 'id' | 'headMessageId' | 'historyStartMessageId' | 'createdAt' | 'updatedAt'>): Conversation | null {
     if (!this.getConversation(conversationId)) return null;
     this.database.db.update(conversations).set({
       title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
@@ -315,6 +322,12 @@ export class Repository {
   setHead(conversationId: string, messageId: string | null): void {
     if (messageId && this.getMessage(messageId)?.conversationId !== conversationId) throw new Error('Invalid branch head.');
     this.database.db.update(conversations).set({ headMessageId: messageId, updatedAt: now() }).where(eq(conversations.id, conversationId)).run();
+  }
+  setHistoryStart(conversationId: string, messageId: string | null): Conversation {
+    if (!this.getConversation(conversationId)) throw new Error('Conversation not found.');
+    if (messageId && !this.getActiveBranch(conversationId).some(message => message.id === messageId && message.role !== 'system')) throw new Error('发送起点必须是当前分支中的故事消息。');
+    this.database.db.update(conversations).set({ historyStartMessageId: messageId, updatedAt: now() }).where(eq(conversations.id, conversationId)).run();
+    return this.getConversation(conversationId)!;
   }
   listSwipes(messageId: string): MessageNode[] {
     const message = this.getMessage(messageId); if (!message) return [];

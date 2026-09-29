@@ -1,10 +1,12 @@
 import { estimateTokens, type RetrievedContext, type StoryContextSource, type RuntimeCharacter } from '@new-ai-chat/agent-runtime';
 import type { MessageNode, ContextReport } from '@new-ai-chat/contracts';
+import { historyStartIndex } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 
 // Tools read this immutable request snapshot, never a newly selected chat or branch.
 export class StoryContext implements StoryContextSource {
   readonly history: MessageNode[];
+  readonly fixedHistory: boolean;
   readonly cast: RuntimeCharacter[];
   readonly state;
   readonly memory: RetrievedContext[];
@@ -13,10 +15,16 @@ export class StoryContext implements StoryContextSource {
   readonly lore;
   constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode) {
     const chat = repository.getConversation(conversationId)!;
-    const history = [...repository.getActiveBranch(conversationId).filter((m) => m.role !== 'system'), ...(virtualMessage ? [virtualMessage] : [])];
-    const ceiling = repository.resolveConnection()?.historyMessageLimit ?? 0;
+    const branch = [...repository.getActiveBranch(conversationId), ...(virtualMessage ? [virtualMessage] : [])];
+    const start = chat.historyStartMessageId ? repository.getMessage(chat.historyStartMessageId) : null;
+    const startIndex = start ? historyStartIndex(branch, start) : 0;
+    if (chat.historyStartMessageId && (!start || startIndex < 0)) throw new Error('固定发送起点不在当前分支，请重新选择起点或取消固定起点。');
+    this.fixedHistory = Boolean(start);
+    const history = branch.slice(startIndex).filter(message => message.role !== 'system');
+    const ceiling = this.fixedHistory ? 0 : repository.getGeneralSettings().historyMessageLimit;
     this.history = ceiling > 0 ? history.slice(-ceiling) : history;
-    this.contextReport.items.push(...history.filter(message => !this.history.includes(message)).map(message => ({ id: message.id, source: 'history' as const, title: `${message.role} · ${message.id.slice(0, 8)}`, role: message.role, included: false, reason: '历史消息上限', estimatedTokens: estimateTokens(message.content) + 32, messageIds: [message.id] })));
+    this.contextReport.items.push(...branch.filter(message => message.role !== 'system' && !this.history.includes(message)).map(message => ({ id: message.id, source: 'history' as const, title: `${message.role} · ${message.id.slice(0, 8)}`, role: message.role, included: false, reason: this.fixedHistory ? '固定发送起点之前' : '历史消息上限', estimatedTokens: estimateTokens(message.content) + 32, messageIds: [message.id] })));
+    if (start) this.contextReport.items.push({ id: 'history-start', source: 'control', title: '固定发送起点', role: 'user', included: false, reason: '从选定位置开始，覆盖全局条数上限；超出上下文时提示调整起点', estimatedTokens: 0, messageIds: [start.id] });
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
       .map(({ id, name, description, personality, scenario, exampleDialogue, systemPrompt, postHistoryInstructions }) => ({ id, name, description, personality, scenario: group || chat.scenario ? '' : scenario, exampleDialogue, systemPrompt, postHistoryInstructions }));

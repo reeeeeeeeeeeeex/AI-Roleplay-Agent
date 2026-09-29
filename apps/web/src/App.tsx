@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog } from 'lucide-react';
-import { defaultGeneralSettings, defaultPromptSettings, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord } from '@new-ai-chat/contracts';
+import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';
@@ -123,6 +123,8 @@ export default function App() {
   }, [branch]);
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
+  const historyStart = nodes.find(message => message.id === chat?.historyStartMessageId);
+  const historyStartPosition = historyStart ? historyStartIndex(branch, historyStart) : -1;
   const activePersona = data.personas?.find(p => p.id === (chat?.personaId ?? generalSettings.defaultPersonaId));
   useEffect(() => { setMessageEdit(null); }, [chatId, chat?.headMessageId]);
   const cast = chat?.kind === 'group'
@@ -358,6 +360,12 @@ export default function App() {
     await refreshMessages(chatId!);
     await refresh();
     setRecordsVersion((v) => v + 1);
+  }
+  async function setHistoryStart(messageId: string | null) {
+    if (!chatId) return;
+    const updated = await api<Conversation>(`/conversations/${chatId}/history-start`, 'POST', { messageId });
+    setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === updated.id ? updated : item) }));
+    setPromptPreview(null);
   }
 
   async function showPromptPreview() {
@@ -600,6 +608,11 @@ export default function App() {
             </div>
 
             <StoryNavigation key={chat.id} chatId={chat.id} version={recordsVersion} disabled={!!turn || sending} onHead={setHead} onChanged={() => setRecordsVersion(value => value + 1)} onError={setError} />
+            {chat.historyStartMessageId && <div className="history-start-banner" role="status">
+              <span>{historyStartPosition < 0 ? '固定发送起点不在当前分支，请重新选择或取消。' : `已固定发送起点 · 从此处起 ${branch.slice(historyStartPosition).filter(message => message.role !== 'system').length} 条消息，后续持续追加`}</span>
+              {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>查看起点</button>}
+              <button disabled={!!turn || sending} onClick={() => act(setHistoryStart(null))}>取消固定起点</button>
+            </div>}
             <div className="messages-wrap">
             <section ref={messageContainer} className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录"
               onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && event.currentTarget.scrollTop < 100) loadOlder(); }}>
@@ -664,6 +677,11 @@ export default function App() {
                         ? `${info.model} · 输入 ${totalInput ?? '未返回'} · 输出 ${info.usage?.output ?? '未返回'} · 缓存 ${info.usage?.cacheRead ?? '未返回'}${info.usage ? ` (${cacheRate}%)` : ''}`
                         : '生成信息不可用（旧消息）'}</small>}
                       {!editing && <div className="message-actions">
+                        {m.role !== 'system' && <button className={branch[historyStartPosition]?.id === m.id ? 'active' : ''} disabled={!!turn || sending}
+                          title="包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整"
+                          onClick={() => act(setHistoryStart(branch[historyStartPosition]?.id === m.id ? null : m.id))}>
+                          {branch[historyStartPosition]?.id === m.id ? '发送起点 · 取消' : '从此处开始发送'}
+                        </button>}
                         <button disabled={!!turn || sending} onClick={() => setMessageEdit({ id: m.id, action: 'fact', initial: window.getSelection()?.toString().trim() || m.content })}>固定事实</button>
                         {swipes.length > 1 && (
                           <>

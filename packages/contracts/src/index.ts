@@ -243,6 +243,7 @@ export const narratorProfileSchema = z.object({
 });
 
 export const generalSettingsSchema = z.object({
+  historyMessageLimit: z.number().int().min(0).max(10_000).default(0),
   connectionId: z.string().min(1).nullable().default(null),
   defaultPersonaId: z.string().min(1).nullable().default(null),
   generationMode: generationModeSchema.default('plain'),
@@ -256,6 +257,7 @@ export type GeneralSettings = z.infer<typeof generalSettingsSchema>;
 export const defaultGeneralSettings: GeneralSettings = generalSettingsSchema.parse({});
 
 export interface Conversation {
+  historyStartMessageId: string | null;
   id: string;
   title: string;
   kind: 'solo' | 'group';
@@ -499,3 +501,4 @@ export interface ApiErrorBody {
   error: string;
   details?: unknown;
 }
+export { historyStartIndex } from './history.js';

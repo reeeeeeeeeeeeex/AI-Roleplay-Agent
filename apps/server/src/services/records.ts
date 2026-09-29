@@ -43,9 +43,11 @@ export class RecordService {
       let coverage: MemoryCoverage | null = null;
       if (kind === 'memory') {
         const branch = this.repository.getActiveBranch(chat);
+        const included = new Set(request.history.map(message => message.id));
+        const excludedTurns = new Set(branch.filter(message => message.role !== 'system' && !included.has(message.id)).map(message => message.storyTurnId));
         const marker = beforeMemory?.coverage?.endMessageId;
         const after = marker ? branch.findIndex(message => message.id === marker) : beforeMemory?.storyTurnId ? branch.findLastIndex(message => message.storyTurnId === beforeMemory.storyTurnId) : -1;
-        const remaining = branch.slice(after + 1).filter(message => message.role !== 'system' && message.storyTurnId && completed.includes(message.storyTurnId));
+        const remaining = branch.slice(after + 1).filter(message => message.role !== 'system' && message.storyTurnId && completed.includes(message.storyTurnId) && !excludedTurns.has(message.storyTurnId));
         if (!remaining.length) return { unchanged: true };
         const storyIds = [...new Set(remaining.map(message => message.storyTurnId!))];
         let selected: MessageNode[] = [];

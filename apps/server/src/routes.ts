@@ -74,6 +74,11 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       headers: Object.fromEntries(Object.entries(input.headers).map(([key, value]) => [key, value === '[stored]' && sameEndpoint ? saved.headers[key] ?? '' : value])) }) };
   });
   app.get('/api/conversations/:id/messages', async (req) => ({ branch: repo.getActiveBranch(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })), nodes: repo.listMessages(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })) }));
+  app.post('/api/conversations/:id/history-start', async req => {
+    const chat = idOf(req); turns.assertIdle(chat);
+    const { messageId } = z.object({ messageId: z.string().nullable() }).parse(req.body);
+    return repo.setHistoryStart(chat, messageId);
+  });
   app.post('/api/conversations/:id/head', async (req) => { const id = idOf(req); turns.assertIdle(id); const value = z.object({ messageId: z.string().nullable() }).parse(req.body); repo.setHead(id,value.messageId); repo.addEvent(id,null,'branch.selected', value); return repo.getConversation(id); });
   app.post('/api/messages/:id/edit', async (req) => {
     const target = repo.getMessage(idOf(req)); if (!target) throw new Error('Message not found.'); turns.assertIdle(target.conversationId);

@@ -97,6 +97,7 @@ export const conversations = sqliteTable('conversations', {
   personaId: text('persona_id').references(() => personas.id, { onDelete: 'set null' }),
   lorebookIds: text('lorebook_ids', { mode: 'json' }).$type<string[]>().notNull(),
   headMessageId: text('head_message_id'),
+  historyStartMessageId: text('history_start_message_id'),
   completedTurns: integer('completed_turns').notNull().default(0),
   authorNote: text('author_note').notNull().default(''),
   scenario: text('scenario').notNull().default(''),

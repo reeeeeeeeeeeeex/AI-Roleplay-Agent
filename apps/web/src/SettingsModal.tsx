@@ -114,6 +114,8 @@ export default function SettingsModal({
                 <option value="coauthor">共同创作：AI 可描写主角行动和内心</option>
               </select>
             </label>
+            <label>发送最近多少条消息（0 不限）<input type="number" required min={0} max={10000} step={1} value={writing.historyMessageLimit} onChange={e => setWriting({ ...writing, historyMessageLimit: Number(e.target.value) })} /></label>
+            <p className="muted">按用户和 AI 的单条消息计数，包含本次输入。故事设置固定发送起点后，优先发送从起点开始的全部消息。这里只控制发送范围，不删除聊天记录；Memory、主角状态和世界书仍按原规则加入。</p>
             <label>旁白名称<input required maxLength={100} value={writing.narrator.name} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, name: e.target.value } })} /></label>
             <label>旁白风格<textarea rows={3} value={writing.narrator.style} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, style: e.target.value } })} /></label>
             <AvatarField

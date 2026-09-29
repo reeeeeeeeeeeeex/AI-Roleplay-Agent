@@ -73,6 +73,7 @@ export interface BaseAgentRequest {
   conversationKind?: 'solo' | 'group';
   scenario?: string;
   authorNote?: string;
+  fixedHistory?: boolean;
   streaming?: boolean;
   agencyMode: ProtagonistAgencyMode;
   narrator: RuntimeNarrator;

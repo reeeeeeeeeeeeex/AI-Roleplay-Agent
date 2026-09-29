@@ -107,16 +107,72 @@ async function normal(voice='protagonist',replyTarget:any={mode:'auto'}) {
 }
 it('general settings: migrates old global values and persists updates', async () => {
   const db = server.repository.database;
+  server.repository.updateConnection(connection, connectionInputSchema.parse({ ...server.repository.listConnections()[0]!, historyMessageLimit: 7 }));
   db.sqlite.prepare("DELETE FROM app_settings WHERE key = 'general'").run();
   const put = db.sqlite.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)');
   put.run('defaultConnection', JSON.stringify(connection));
   put.run('narrator', JSON.stringify({ name: '记录者', avatarPath: null, style: 'restrained' }));
   const migrated = new Repository(db).getGeneralSettings();
-  expect(migrated).toMatchObject({ connectionId: connection, generationMode: 'plain', streaming: true, agencyMode: 'protected', narrator: { name: '记录者' }, memoryTurnInterval: 10, stateTurnInterval: 0 });
+  expect(migrated).toMatchObject({ connectionId: connection, generationMode: 'plain', streaming: true, agencyMode: 'protected', narrator: { name: '记录者' }, memoryTurnInterval: 10, stateTurnInterval: 0, historyMessageLimit: 7 });
   const changed = { ...migrated, generationMode: 'plain', agencyMode: 'coauthor', memoryTurnInterval: 3 };
   expect((await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: changed })).statusCode).toBe(200);
   expect((await server.app.inject({ url: '/api/settings/general' })).json()).toEqual(changed);
   expect(new Repository(db).getGeneralSettings()).toEqual(changed);
+});
+
+it('fixed history start overrides the rolling count and appends without changing the history prefix', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), historyMessageLimit: 2, generationMode: 'plain' });
+  let parent: string | null = null;
+  for (let index = 0; index < 6; index++) {
+    const node = repo.createMessage({ conversationId: chat, parentId: parent, storyTurnId: null, role: index % 2 ? 'assistant' : 'user', authorKind: index % 2 ? 'character' : 'protagonist', speaker: index % 2 ? { kind: 'character', characterId: character } : null, content: `history-${index}`, providerState: null, legacyPayload: null });
+    parent = node.id;
+  }
+  repo.setHead(chat, parent);
+  const branch = repo.getActiveBranch(chat);
+  expect(new StoryContext(repo, chat).history.map(node => node.id)).toEqual(branch.slice(-2).map(node => node.id));
+  const selected = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/history-start`, payload: { messageId: branch[2]!.id } });
+  expect(selected.statusCode).toBe(200);
+  const request = await server.turns.request(chat, 'preview', new AbortController().signal);
+  expect(request.fixedHistory).toBe(true);
+  expect(request.history.map(node => node.id)).toEqual(branch.slice(2).map(node => node.id));
+  expect((await request.source.readRecentStory(100)).map(node => node.id)).toEqual(branch.slice(2).map(node => node.id));
+  const pi = new PiAgentRuntime();
+  const first = await pi.previewFirstRequest(request, 'plain');
+  expect(first.requestBody).not.toContain('history-0');
+  expect(first.requestBody).not.toContain('history-1');
+  expect(first.contextReport.items.find(item => item.id === branch[0]!.id)).toMatchObject({ included: false, reason: '固定发送起点之前' });
+  const next = await server.turns.request(chat, 'preview-next', new AbortController().signal, false, { voice: 'protagonist', text: 'history-6' });
+  const appended = await pi.previewFirstRequest(next, 'plain');
+  const input = JSON.parse(first.requestBody).input;
+  expect(JSON.parse(appended.requestBody).input.slice(0, 1 + request.history.length)).toEqual(input.slice(0, 1 + request.history.length));
+  expect(next.history).toHaveLength(5);
+  repo.setHistoryStart(chat, null);
+  expect(new StoryContext(repo, chat).history).toHaveLength(2);
+});
+
+it('fixed history start follows sibling replies and survives archive ID remapping', async () => {
+  const repo = server.repository;
+  await normal();
+  const original = repo.getActiveBranch(chat);
+  repo.setHistoryStart(chat, original[1]!.id);
+  const sibling = repo.createMessage({ ...original[1]!, content: '另一个版本' });
+  repo.setHead(chat, sibling.id);
+  expect(new StoryContext(repo, chat).history.map(node => node.id)).toEqual([sibling.id]);
+  repo.setHead(chat, original[0]!.id);
+  expect(new StoryContext(repo, chat).history).toEqual([]);
+  const before = await server.turns.request(chat, 'preview', new AbortController().signal);
+  expect(before.latestUserText).toBe('');
+  repo.setHead(chat, null);
+  expect(() => new StoryContext(repo, chat)).toThrow('固定发送起点不在当前分支');
+  repo.setHead(chat, sibling.id);
+  const archive = (await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).json();
+  const restored = await server.app.inject({ method: 'POST', url: '/api/imports/story/execute', payload: archive });
+  expect(restored.statusCode, restored.body).toBe(201);
+  const copy = restored.json();
+  expect(copy.historyStartMessageId).not.toBe(original[1]!.id);
+  expect(repo.getMessage(copy.historyStartMessageId)?.conversationId).toBe(copy.id);
+  expect(new StoryContext(repo, copy.id).history.map(node => node.content)).toEqual(['另一个版本']);
 });
 
 it('general settings: old and new stories share preview and generation settings', async () => {
@@ -191,7 +247,7 @@ it('default persona and story binding keep previews, generation and the latest i
   repo.setGeneralSettings({ ...repo.getGeneralSettings(), defaultPersonaId: second.id });
   expect(repo.resolvePersona(repo.getConversation(chat)!.personaId)?.id).toBe(first.id);
   expect(repo.resolvePersona(newChat.personaId)?.id).toBe(second.id);
-  repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.getRuntimeConnection(connection), name: 'Test', historyMessageLimit: 1 }));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), historyMessageLimit: 1 });
   const request = await server.turns.request(chat, 'preview', new AbortController().signal);
   expect(request.history).toHaveLength(1);
   expect(request.history[0]?.role).toBe('assistant');
@@ -456,7 +512,7 @@ describe('record truth and logical-turn safeguards', () => {
   it('v0.2 context report matches clipping and the preview equals the actual request body', async () => {
     await normal(); const repo = server.repository;
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false });
-    repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.listConnections()[0]!, historyMessageLimit: 1 }));
+    repo.setGeneralSettings({ ...repo.getGeneralSettings(), historyMessageLimit: 1 });
     repo.savePinnedFact(chat, '灯塔属于路易斯'); repo.createState(chat, null, blankState());
     const huge = repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'oversized-memory '.repeat(20_000) });
     const recent = repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: null, source: 'generated', content: '昨夜拜访灯塔' });

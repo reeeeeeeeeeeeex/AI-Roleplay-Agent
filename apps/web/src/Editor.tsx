@@ -270,7 +270,6 @@ export default function Editor({
                 {field('temperature', `温度（0–${temperatureMax}）`, false, 'number', { min: 0, max: temperatureMax, step: 0.1 })}
                 {field('maxTokens', '最大输出 tokens', false, 'number')}
                 {field('contextWindow', '上下文窗口 tokens（默认 128000）', false, 'number')}
-                {field('historyMessageLimit', '历史消息数上限（0 不限）', false, 'number')}
               </div>
               {select(
                 'reasoning',

@@ -106,6 +106,7 @@ export function migrateDatabase(database: Database.Database): void {
     ['connections', 'history_message_limit', 'INTEGER NOT NULL DEFAULT 0'],
     ['conversations', 'scenario', "TEXT NOT NULL DEFAULT ''"],
     ['conversations', 'author_note', "TEXT NOT NULL DEFAULT ''"],
+    ['conversations', 'history_start_message_id', 'TEXT'],
     ['conversations', 'generation_mode', "TEXT NOT NULL DEFAULT 'writer-agent'"],
     ['personas', 'legacy_payload', 'TEXT'],
     ['lorebooks', 'legacy_payload', 'TEXT'],

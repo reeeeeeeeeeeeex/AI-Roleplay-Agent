@@ -157,13 +157,16 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
     dynamicUsed += cost; return true;
   })];
   remaining -= dynamicUsed;
-  const ceiling = request.connection.historyMessageLimit ?? 0;
+  const ceiling = request.fixedHistory ? 0 : request.connection.historyMessageLimit ?? 0;
   const real = request.history.filter((m) => m.role !== 'system');
   const candidates = ceiling > 0 ? real.slice(-ceiling) : real;
   const history: MessageNode[] = [];
   for (const node of [...candidates].reverse()) {
     const cost = estimateTokens(node.content) + 32;
-    if (cost > remaining) break;
+    if (cost > remaining) {
+      if (request.fixedHistory) throw new Error('固定发送范围超过上下文预算，请向后调整发送起点、减少资料或增大上下文窗口。为保留固定前缀，未自动裁剪历史。');
+      break;
+    }
     history.unshift(node); remaining -= cost;
   }
   const items: ContextReportItem[] = [

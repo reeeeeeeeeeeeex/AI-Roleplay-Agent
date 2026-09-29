@@ -1282,6 +1282,13 @@ main {
 }
 
 /* Right Records Drawer */
+.history-start-banner {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 16px; border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary); font-size: 12px;
+}
+.history-start-banner span { flex: 1; }
+.message-actions button.active { color: var(--accent); }
 .records {
   width: 320px;
   flex-shrink: 0;

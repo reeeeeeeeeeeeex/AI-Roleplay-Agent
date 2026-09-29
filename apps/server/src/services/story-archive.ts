@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { characterInputSchema, personaInputSchema, lorebookInputSchema, groupInputSchema, conversationInputSchema, speakerRefSchema, turnPlanSchema, generationModeSchema, normalizeState } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
-import { messages, memories, stateSnapshots, proposals, sessionEvents } from '../db/schema.js';
+import { conversations, messages, memories, stateSnapshots, proposals, sessionEvents } from '../db/schema.js';
 
 const ref = z.string().min(1).max(200);
 const maybeRef = ref.nullable();
@@ -33,7 +33,7 @@ const payloads: Record<string, z.ZodType> = {
 
 const archiveSchema = z.object({
   format: z.literal('ai-roleplay-story'), version: z.literal(1),
-  conversation: conversationInputSchema.safeExtend({ id: ref, headMessageId: maybeRef }),
+  conversation: conversationInputSchema.safeExtend({ id: ref, headMessageId: maybeRef, historyStartMessageId: maybeRef.default(null) }),
   characters: z.array(characterInputSchema.omit({ legacyPayload: true }).extend({ id: ref })),
   personas: z.array(personaInputSchema.omit({ legacyPayload: true }).extend({ id: ref })),
   lorebooks: z.array(lorebookInputSchema.omit({ legacyPayload: true }).extend({ id: ref })),
@@ -57,6 +57,7 @@ export function readStoryArchive(value: unknown): StoryArchive {
   const requireRef = (ids: Set<string | number>, id: string | number | null | undefined) => { if (id != null && !ids.has(id)) throw new Error(`故事包缺少引用：${id}`); };
   const requireSpeaker = (speaker: { kind: string; characterId?: string } | null) => { if (speaker?.kind === 'character') requireRef(characterIds, speaker.characterId); };
   requireRef(nodeIds, archive.conversation.headMessageId);
+  requireRef(nodeIds, archive.conversation.historyStartMessageId);
   requireRef(characterIds, archive.conversation.characterId); requireRef(personaIds, archive.conversation.personaId);
   for (const id of archive.conversation.lorebookIds) requireRef(loreIds, id);
   if (archive.conversation.groupId !== (archive.group?.id ?? null)) throw new Error('故事包群组引用不一致。');
@@ -170,6 +171,7 @@ export function importStory(repo: Repository, value: unknown, assetDir: string) 
       }
       for (const item of archive.proposals) db.insert(proposals).values({ ...item, id: mapped(item.id), conversationId: chat.id, storyTurnId: mapped(item.storyTurnId), originHead: nullable(item.originHead), committedSnapshot: item.committedSnapshot ? { ...item.committedSnapshot, head: nullable(item.committedSnapshot.head), afterId: nullable(item.committedSnapshot.afterId), worldEventId: item.committedSnapshot.worldEventId === null ? null : eventIds.get(item.committedSnapshot.worldEventId) ?? null } : null }).run();
       repo.setHead(chat.id, nullable(archive.conversation.headMessageId));
+      db.update(conversations).set({ historyStartMessageId: nullable(archive.conversation.historyStartMessageId) }).where(eq(conversations.id, chat.id)).run();
       return repo.getConversation(chat.id)!;
     })();
   } catch (error) {

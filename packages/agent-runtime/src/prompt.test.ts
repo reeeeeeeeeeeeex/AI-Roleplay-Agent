@@ -13,6 +13,12 @@ const base = {
 };
 
 describe('ReST prompt assembly', () => {
+  it('keeps fixed history intact instead of silently sliding on token overflow', () => {
+    const node: MessageNode = { id: 'start', conversationId: 'chat', parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: '固定起点。', providerState: null, legacyPayload: null, createdAt: '' };
+    const request = { ...base, fixedHistory: true, connection: { ...base.connection, historyMessageLimit: 1 }, history: [node, { ...node, id: 'last', content: '后续消息。' }] };
+    expect(fitRequest(request).history).toEqual(request.history);
+    expect(() => fitRequest({ ...request, history: [{ ...node, content: '长篇剧情'.repeat(100_000) }] })).toThrow('固定发送范围超过上下文预算');
+  });
   it('keeps the stable prefix, group order, dynamic records and final controls in their documented positions', () => {
     const solo = buildStableSystemPrompt(base);
     expect(defaultPromptSettings.mainInstruction).toContain('Continue the current fictional roleplay as {{char}}');

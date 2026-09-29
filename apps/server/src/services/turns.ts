@@ -30,6 +30,7 @@ export class TurnService {
     const target = request.targetMessageId ? this.repository.getMessage(request.targetMessageId) : null;
     if (request.trigger === 'continue' || request.trigger === 'regenerate') {
       if (!target || target.conversationId !== chat.id || target.role !== 'assistant' || !fullHistory.some((m) => m.id === target.id)) throw new Error('Target must be an assistant message on the current branch.');
+      if (source.fixedHistory && !source.history.some(message => message.id === target.id)) throw new Error('目标消息位于固定发送起点之前，请先调整或取消起点。');
     }
     const storyTurnId = target?.storyTurnId ?? randomUUID();
     const turn = this.repository.createTurn(chat.id, storyTurnId, request.trigger);
@@ -90,11 +91,12 @@ export class TurnService {
       authorKind: virtualInput.voice === 'narrator' ? 'user_narrator' as const : 'protagonist' as const, speaker: null, content: virtualInput.text,
       providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() } : undefined;
     const source = new StoryContext(this.repository, chatId, virtualMessage);
-    const latest = virtualMessage ?? [...this.repository.getActiveBranch(chatId)].reverse().find((m) => m.role === 'user');
+    const latest = virtualMessage ?? [...(source.fixedHistory ? source.history : this.repository.getActiveBranch(chatId))].reverse().find((m) => m.role === 'user');
     const persona = this.repository.resolvePersona(chat.personaId);
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
       conversationKind: chat.kind, scenario: chat.scenario, streaming: settings.streaming,
       authorNote: chat.authorNote,
+      fixedHistory: source.fixedHistory,
       agencyMode: settings.agencyMode, narrator: settings.narrator, characters: source.cast, persona,
       history: source.history, stableLore: source.stableLore(), dynamicContext: await source.dynamic(auto ? source.history.slice(-3).map(m => m.content).join('\n') : latest?.content ?? ''),
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal,

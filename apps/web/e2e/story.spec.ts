@@ -37,6 +37,39 @@ test('startup distinguishes missing endpoints from required pairing', async ({ p
   await expect(page.getByRole('button', { name: '通用设置', exact: true })).toBeVisible();
 });
 
+test('global send count and fixed message start control the raw prompt range', async ({ page }) => {
+  await send(page, '仅早期历史包含蓝色车票。', 3);
+  await send(page, '现在进入旧书店。', 6);
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  await settings.getByRole('spinbutton', { name: '发送最近多少条消息（0 不限）', exact: true }).fill('2');
+  await settings.getByRole('combobox', { name: '生成模式', exact: true }).selectOption('plain');
+  await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('写作设置已保存');
+  await settings.getByRole('button', { name: '关闭设置' }).click();
+  const preview = async () => {
+    await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+    const raw = page.getByRole('region', { name: 'Raw input', exact: true }).locator('pre');
+    await expect(raw).toContainText('messages');
+    const value = (await raw.textContent())!;
+    await page.getByRole('button', { name: '关闭', exact: true }).click();
+    return value;
+  };
+  expect(await preview()).not.toContain('蓝色车票');
+  await page.locator('article.message').first().getByRole('button', { name: '从此处开始发送', exact: true }).click();
+  await expect(page.locator('.history-start-banner')).toContainText('6 条消息');
+  expect(await preview()).toContain('蓝色车票');
+  await page.reload();
+  await expect(page.locator('.history-start-banner')).toContainText('6 条消息');
+  await send(page, '继续沿着走廊向前。', 8);
+  await expect(page.locator('.history-start-banner')).toContainText('8 条消息');
+  expect(await preview()).toContain('蓝色车票');
+  await page.getByRole('button', { name: '取消固定起点', exact: true }).click();
+  await expect(page.locator('.history-start-banner')).toHaveCount(0);
+  expect(await preview()).not.toContain('蓝色车票');
+});
+
 test('record fields save directly on blur and when the drawer closes', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
