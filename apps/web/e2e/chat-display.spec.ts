@@ -79,8 +79,27 @@ test('chat window prepends without moving text and horizontal bars jump to older
   await page.screenshot({ path: info.outputPath('message-bars.png') });
 });
 
-test('streaming keeps the message being read in place', async ({ page, request }) => {
+test('appearance saves the display limit and plain thinking default across reloads', async ({ page, request }) => {
+  await openHistory(page, request);
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置' });
+  await settings.getByRole('button', { name: '外观', exact: true }).click();
+  await expect(settings.getByLabel('聊天显示条数')).toHaveValue('100');
+  await settings.getByLabel('聊天显示条数').fill('12');
+  await settings.getByLabel('普通模式默认展开思考（CoT）').uncheck();
+  await settings.getByRole('button', { name: '关闭设置' }).click();
+  await expect(page.locator('article.message')).toHaveCount(12);
+  await expect(page.locator('.message-thinking[open]')).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('article.message')).toHaveCount(12);
+  await expect(page.locator('.message-thinking[open]')).toHaveCount(0);
+  await page.locator('.message-thinking summary').last().click();
+  await expect(page.locator('.message-thinking[open]')).toHaveCount(1);
+});
+
+test('streaming respects collapsed thinking and keeps the message being read in place', async ({ page, request }) => {
   await page.addInitScript(() => {
+    localStorage.setItem('plain-thinking-expanded', 'false');
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
       if (String(input).includes('/api/turns/display-stream/events')) {
@@ -102,6 +121,7 @@ test('streaming keeps the message being read in place', async ({ page, request }
     (window as any).emitChatEvent('writer.delta', { outputIndex: 0, speaker: { kind: 'narrator' }, delta: '正在写作。' });
   });
   await expect(page.locator('.streaming .message-thinking pre')).toHaveText('流式思考。');
+  await expect(page.locator('.streaming .message-thinking')).not.toHaveAttribute('open');
   const region = page.getByRole('region', { name: '聊天记录' });
   await region.evaluate(element => { element.scrollTop = 200; element.dispatchEvent(new Event('scroll')); });
   await expect(page.getByRole('button', { name: '回到最新 ↓' })).toBeVisible();

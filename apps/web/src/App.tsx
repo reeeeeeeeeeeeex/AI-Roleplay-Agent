@@ -88,11 +88,12 @@ export default function App() {
     const value = Number(localStorage.getItem('chat-message-display-limit'));
     return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : 100;
   });
+  const [plainThinkingExpanded, setPlainThinkingExpanded] = useState(() => localStorage.getItem('plain-thinking-expanded') !== 'false');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const { container: messageContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom,
     olderCount, loadOlder, onScroll, scrollToLatest, scrollToMessage } = useChatWindow(
-    branch, chatId, messageDisplayLimit, drafts, `${page}:${avatarMode}:${avatarFit}`,
+    branch, chatId, messageDisplayLimit, drafts, `${page}:${avatarMode}:${avatarFit}:${plainThinkingExpanded}`,
   );
   const streamAbort = useRef<AbortController | null>(null);
 
@@ -650,7 +651,7 @@ export default function App() {
                         </strong>
                         <span>{narrator ? '旁白' : m.role === 'user' ? '主角' : 'Writer'}</span>
                       </header>
-                      {m.role === 'assistant' && info?.mode === 'plain' && <details className="message-thinking" open>
+                      {m.role === 'assistant' && info?.mode === 'plain' && <details className="message-thinking" open={plainThinkingExpanded}>
                         <summary>模型思考</summary>
                         <pre>{info.thinking || '模型未返回可见思考内容。'}</pre>
                       </details>}
@@ -705,7 +706,7 @@ export default function App() {
                       <strong>{speakerName(draft.speaker)}</strong>
                       <span>Writing</span>
                     </header>
-                    {generalSettings.generationMode === 'plain' && <details className="message-thinking" open>
+                    {generalSettings.generationMode === 'plain' && <details className="message-thinking" open={plainThinkingExpanded}>
                       <summary>模型思考</summary><pre>{draft.thinking || '模型尚未返回可见思考内容。'}</pre>
                     </details>}
                     <div className="prose">{draft.text}<span className="caret">▍</span></div>
@@ -1037,6 +1038,8 @@ export default function App() {
         setAvatarFit={setAvatarFit}
         messageDisplayLimit={messageDisplayLimit}
         setMessageDisplayLimit={value => { setMessageDisplayLimit(value); localStorage.setItem('chat-message-display-limit', String(value)); }}
+        plainThinkingExpanded={plainThinkingExpanded}
+        setPlainThinkingExpanded={value => { setPlainThinkingExpanded(value); localStorage.setItem('plain-thinking-expanded', String(value)); }}
         promptSettings={promptSettings}
         onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
       />}

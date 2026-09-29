@@ -10,7 +10,7 @@ export default function SettingsModal({
   onClose, generalSettings, onSaveGeneral, generationActive, connections,
   onEditConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
   avatarMode, setAvatarMode, avatarFit, setAvatarFit,
-  messageDisplayLimit, setMessageDisplayLimit,
+  messageDisplayLimit, setMessageDisplayLimit, plainThinkingExpanded, setPlainThinkingExpanded,
 }: {
   onClose: () => void;
   generalSettings: GeneralSettings;
@@ -28,6 +28,8 @@ export default function SettingsModal({
   setAvatarFit: (fit: AvatarFit) => void;
   messageDisplayLimit: number;
   setMessageDisplayLimit: (limit: number) => void;
+  plainThinkingExpanded: boolean;
+  setPlainThinkingExpanded: (expanded: boolean) => void;
 }) {
   const [tab, setTab] = useState('connections');
   const [writing, setWriting] = useState(generalSettings);
@@ -155,6 +157,10 @@ export default function SettingsModal({
                 }} />
             </label>
             <p className="muted">先显示最近的消息，向上滚动继续加载。右侧横条可跳转到最近 20 条用户消息。</p>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={plainThinkingExpanded} onChange={event => setPlainThinkingExpanded(event.target.checked)} />
+              普通模式默认展开思考（CoT）
+            </label>
             <label>头像尺寸
               <select value={avatarMode} onChange={e => {
                 setAvatarMode(e.target.value as AvatarMode); localStorage.setItem('avatar-mode', e.target.value);
