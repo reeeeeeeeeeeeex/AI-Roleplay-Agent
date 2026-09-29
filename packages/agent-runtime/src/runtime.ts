@@ -34,6 +34,10 @@ function visibleThinking(message: AssistantMessage | null): string {
   return message?.content.flatMap((item) => item.type === 'thinking' && !item.redacted ? [item.thinking] : []).join('') ?? '';
 }
 
+function toolErrorText(result: { content: unknown[] }): string {
+  return result.content.flatMap((part) => part && typeof part === 'object' && 'type' in part && part.type === 'text' && 'text' in part ? [String(part.text)] : []).join('\n');
+}
+
 function appendedReport(base: ContextReport, initial: number, messages: Context['messages']): ContextReport {
   return { items: [...base.items, ...messages.slice(initial).map((message, index) => ({
     id: `agent-append-${index}`, source: 'control' as const, title: `Agent 追加 · ${message.role}`,
@@ -88,10 +92,14 @@ function domainTools(source: StoryContextSource, overrides: BaseAgentRequest['to
   });
 }
 
-const speakerSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('narrator') }),
-  Type.Object({ kind: Type.Literal('character'), characterId: Type.String() }),
-]);
+function speakerSchema(characters: RuntimeCharacter[]) {
+  return Type.Union([
+    Type.Object({ kind: Type.Literal('narrator') }, { description: 'The scene narrator, distinct from every character card.' }),
+    ...characters.map((character) => Type.Object({
+      kind: Type.Literal('character'), characterId: Type.Literal(character.id),
+    }, { description: character.name })),
+  ]);
+}
 
 function planTool(name: 'submit_turn_plan' | 'select_output_voices', request: RouteRequest, capture: (plan: TurnPlan) => void): AgentTool {
   return {
@@ -101,7 +109,7 @@ function planTool(name: 'submit_turn_plan' | 'select_output_voices', request: Ro
     parameters: Type.Object({
       sceneObjective: Type.String({ maxLength: 2_000 }),
       outputs: Type.Array(Type.Object({
-        speaker: speakerSchema,
+        speaker: speakerSchema(request.characters),
         objective: Type.String({ maxLength: 1_000 }),
         brief: Type.String({ maxLength: 4_000 }),
       }), { minItems: 1, maxItems: 2 }),
@@ -123,7 +131,7 @@ function selectionTool(request: BaseAgentRequest, capture: (plan: TurnPlan) => v
     name: 'select_output_voices', label: 'Select output voices',
     description: 'Select one or two unique visible output voices for this turn. The narrator is always available.',
     parameters: Type.Object({
-      outputs: Type.Array(Type.Object({ speaker: speakerSchema, brief: Type.String({ maxLength: 1_000 }) }), { minItems: 1, maxItems: 2 }),
+      outputs: Type.Array(Type.Object({ speaker: speakerSchema(request.characters), brief: Type.String({ maxLength: 1_000 }) }), { minItems: 1, maxItems: 2 }),
     }),
     execute: async (_id, args) => {
       const input = args as { outputs: Array<{ speaker: SpeakerRef; brief: string }> };
@@ -133,7 +141,7 @@ function selectionTool(request: BaseAgentRequest, capture: (plan: TurnPlan) => v
         worldEventProposals: [], protagonistStateProposals: [], warnings: [],
       }, request.storyTurnId, request.characters);
       capture(plan);
-      return textResult({ accepted: true, currentSpeaker: plan.outputs[0]!.speaker, selected: plan.outputs.map((output) => output.speaker) });
+      return textResult({ accepted: true, currentSpeaker: plan.outputs[0]!.speaker, selected: plan.outputs.map((output) => output.speaker), instruction: 'Selection is complete. Write only the first selected voice now. Wait for a Writer Control message before writing the second voice. Do not select voices again.' });
     },
     executionMode: 'sequential',
   };
@@ -158,14 +166,16 @@ function routingStart(request: RouteRequest, fullPlanner: boolean, capture: (pla
   return { fitted, terminalName, tools, prompt };
 }
 
-function writerStart(request: BaseAgentRequest, selected: TurnPlan | null, prefix: string | undefined, capture: (plan: TurnPlan) => void) {
+function writerStart(request: BaseAgentRequest, selected: TurnPlan | null, capture: (plan: TurnPlan) => void) {
   const fallbackSpeaker = request.characters[0] ? { kind: 'character' as const, characterId: request.characters[0].id } : { kind: 'narrator' as const };
   const speaker = selected?.outputs[0]?.speaker ?? fallbackSpeaker;
-  const brief = selected?.outputs[0]?.brief ?? prefix ?? 'Choose the appropriate output voice before writing.';
+  const brief = selected
+    ? `${selected.outputs[0]!.brief}\nSpeaker selection is already complete. The assigned speaker is ${JSON.stringify(speaker)}. Write only this speaker's prose; do not call select_output_voices or change the assigned speaker. Wait for a Writer Control message before writing any second voice.`
+    : 'Choose the appropriate output voice with select_output_voices before writing. Use the exact speaker IDs in the tool schema.';
   const behavior = request.promptSettings?.writerInstruction ?? 'Select voices once when needed, then write the assigned prose in this same session.';
   const writer = buildWriterContext({ ...fitRequest(request, behavior), speaker, pendingSpeaker: !selected, brief, outputIndex: 0, mode: 'writer-agent' });
   writer.contextReport.items.splice(1, 0, { id: 'agent-behavior', source: 'system', title: 'Writer Agent 行为指令', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(behavior) });
-  const tools = [...domainTools(request.source, request.toolOverrides), selectionTool(request, capture)];
+  const tools = [...domainTools(request.source, request.toolOverrides), ...(!selected ? [selectionTool(request, capture)] : [])];
   return {
     writer,
     context: {
@@ -196,7 +206,7 @@ export class PiAgentRuntime implements AgentRuntime {
       const writer = buildWriterContext({ ...request, speaker, brief: '', outputIndex: 0, mode: 'plain' });
       return { phase: 'plain', requestBody: await this.gateway.captureRequestBody(request.connection, writer, { signal: request.signal, streaming: request.streaming ?? true, replayReasoning: false }), contextReport: writer.contextReport, speaker, pendingSelection: false, clipped };
     }
-    const start = writerStart(request, forcedPlan ?? null, undefined, () => {});
+    const start = writerStart(request, forcedPlan ?? null, () => {});
     return { phase: start.pendingSelection ? 'selection' : 'writing', requestBody: await this.gateway.captureRequestBody(request.connection, start.context, { signal: request.signal, streaming: request.streaming ?? true }), contextReport: start.writer.contextReport, speaker: start.speaker, pendingSelection: start.pendingSelection, clipped };
   }
 
@@ -214,6 +224,9 @@ export class PiAgentRuntime implements AgentRuntime {
     const called = new Set<string>();
     let activeTrace: string | null = null;
     let activeFirstThinking = false;
+    let finalMessage: AssistantMessage | null = null;
+    let activeToolError: string | undefined;
+    let toolStopError: string | undefined;
     const agent = new Agent({
       initialState: {
         systemPrompt: buildStableSystemPrompt(request, fullPlanner ? 'planner' : 'router'),
@@ -224,6 +237,7 @@ export class PiAgentRuntime implements AgentRuntime {
       },
       streamFn: (_model, context, options) => {
         activeFirstThinking = false;
+        activeToolError = undefined;
         activeTrace = request.trace?.start(fullPlanner ? 'planning' : 'selection', request.connection.model, undefined, request.contextReport) ?? null;
         return this.gateway.stream(request.connection, context, { ...options, signal: request.signal,
           streaming: request.streaming ?? true,
@@ -235,33 +249,57 @@ export class PiAgentRuntime implements AgentRuntime {
       },
       toolExecution: 'sequential',
       beforeToolCall: async ({ toolCall }) => {
-        onTool?.(toolCall.name, toolCall.arguments);
+        request.signal.throwIfAborted();
         const key = JSON.stringify([toolCall.name, toolCall.arguments]);
-        if (selected || called.has(key) || ++readCalls > 7) return { block: true, terminate: true, reason: 'Duplicate call or tool budget exceeded.' };
+        if (selected) return { block: true, reason: 'The plan is already complete.' };
+        if (called.has(key)) toolStopError = `Repeated tool call blocked: ${toolCall.name}.`;
+        if (toolStopError) return { block: true, terminate: true, reason: toolStopError };
         called.add(key);
         return undefined;
       },
-      shouldStopAfterTurn: () => selected !== null || ++turns >= 3,
+      shouldStopAfterTurn: () => selected !== null || Boolean(toolStopError) || ++turns >= 3,
     });
     agent.subscribe((event) => {
       if (event.type === 'message_update' && event.assistantMessageEvent.type === 'thinking_delta' && activeTrace) {
         if (request.streaming !== false && !activeFirstThinking) { activeFirstThinking = true; request.trace?.timing(activeTrace, { firstThinkingAt: new Date().toISOString() }); }
       }
-      if (event.type === 'message_end' && activeTrace) {
+      if (event.type === 'message_end' && event.message.role === 'assistant') {
+        finalMessage = event.message;
+        const thinking = visibleThinking(finalMessage);
+        if (activeTrace) {
+          if (thinking) request.trace?.thinking(activeTrace, thinking);
+          request.trace?.timing(activeTrace, { completedAt: new Date().toISOString() });
+        }
+      }
+      if (event.type === 'tool_execution_start') {
+        onTool?.(event.toolName, event.args);
+        if (++readCalls > 7) toolStopError = 'Planner tool call limit exceeded (7).';
+      }
+      if (event.type === 'tool_execution_end') {
+        const call = finalMessage?.content.find((part) => part.type === 'toolCall' && part.id === event.toolCallId);
+        if (activeTrace) request.trace?.tool(activeTrace, event.toolName, call?.type === 'toolCall' ? call.arguments : {}, event.result, !event.isError);
+        if (event.isError) activeToolError = toolErrorText(event.result);
+      }
+      if (event.type === 'turn_end' && activeTrace) {
         const message = event.message as AssistantMessage;
-        const thinking = visibleThinking(message);
-        if (thinking) request.trace?.thinking(activeTrace, thinking);
-        request.trace?.timing(activeTrace, { completedAt: new Date().toISOString() });
-        request.trace?.finish(activeTrace, message.stopReason === 'aborted' ? 'cancelled' : message.stopReason === 'error' ? 'failed' : 'completed', usageOf(message), message.errorMessage);
+        const error = message.errorMessage || toolStopError || activeToolError;
+        request.trace?.finish(activeTrace, message.stopReason === 'aborted' || request.signal.aborted ? 'cancelled' : error ? 'failed' : 'completed', usageOf(message), error);
         activeTrace = null;
       }
     });
     request.signal.throwIfAborted();
     const abort = () => agent.abort();
     request.signal.addEventListener('abort', abort, { once: true });
-    try { await agent.prompt(start.prompt); } finally { request.signal.removeEventListener('abort', abort); }
+    try { await agent.prompt(start.prompt); }
+    catch (error) {
+      if (activeTrace) request.trace?.finish(activeTrace, request.signal.aborted ? 'cancelled' : 'failed', undefined, error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally { request.signal.removeEventListener('abort', abort); }
     request.signal.throwIfAborted();
-    if (!selected) throw new Error(`${terminalName} was not called with a valid plan.`);
+    if (!selected) {
+      const message = agent.state.messages.findLast((item) => item.role === 'assistant') as AssistantMessage | undefined;
+      throw new Error(message?.errorMessage || toolStopError || activeToolError || `${terminalName} was not called with a valid plan.`);
+    }
     return selected;
   }
 
@@ -338,8 +376,10 @@ export class PiAgentRuntime implements AgentRuntime {
     let thinking = '';
     let activeTrace: string | null = null;
     let activeTiming: RequestTiming | null = null;
+    let activeToolError: string | undefined;
+    let toolStopError: string | undefined;
     const requestCounts = [0, 0];
-    const start = writerStart(request, selected, options.prefix, (plan) => { selected = plan; options.onPhase?.('writing', plan); });
+    const start = writerStart(request, selected, (plan) => { selected = plan; options.onPhase?.('writing', plan); });
     const context = start.writer;
     const tools = start.context.tools!;
     const phase = () => options.mode === 'writer-agent' && !selected ? 'selection' : options.mode === 'plain' ? 'plain' : 'writing';
@@ -347,6 +387,7 @@ export class PiAgentRuntime implements AgentRuntime {
       initialState: { systemPrompt: start.context.systemPrompt, model: this.gateway.createModel(request.connection), thinkingLevel: request.connection.reasoning, tools, messages: context.messages },
       streamFn: (_model, nextContext, streamOptions) => {
         requestCounts[outputIndex] = (requestCounts[outputIndex] ?? 0) + 1;
+        activeToolError = undefined;
         activeTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
         activeTrace = request.trace?.start(phase(), request.connection.model, selected?.outputs[outputIndex]?.speaker, appendedReport(context.contextReport, context.messages.length, nextContext.messages)) ?? null;
         return this.gateway.stream(request.connection, nextContext, {
@@ -362,17 +403,17 @@ export class PiAgentRuntime implements AgentRuntime {
       toolExecution: 'sequential',
       beforeToolCall: async ({ toolCall }) => {
         request.signal.throwIfAborted();
-        options.onTool?.(toolCall.name, toolCall.arguments, outputIndex);
-        if (toolCall.name === 'select_output_voices' && selected) return { block: true, terminate: true, reason: 'Speaker selection is already complete.' };
+        if (toolStopError) return { block: true, terminate: true, reason: toolStopError };
+        if (toolCall.name === 'select_output_voices' && selected) return { block: true, reason: 'Speaker selection is already complete. Keep the selected speakers and write the current speaker\'s prose now.' };
         const key = JSON.stringify([toolCall.name, toolCall.arguments]);
-        if (seen.has(key) || ++readCalls > 6) return { block: true, terminate: true, reason: 'Duplicate call or tool budget exceeded.' };
+        if (seen.has(key)) {
+          toolStopError = `Repeated tool call blocked: ${toolCall.name}. Use the existing result instead.`;
+          return { block: true, terminate: true, reason: toolStopError };
+        }
         seen.add(key); return undefined;
       },
-      afterToolCall: async ({ toolCall, result }) => {
-        if (activeTrace) request.trace?.tool(activeTrace, toolCall.name, toolCall.arguments, result, !(result as any).isError);
-        return undefined;
-      },
       shouldStopAfterTurn: ({ message }) => {
+        if (toolStopError) return true;
         const assistant = message as AssistantMessage;
         const text = visibleText(assistant).trim();
         if (text && selected && !assistant.content.some((item) => item.type === 'toolCall')) return true;
@@ -384,7 +425,6 @@ export class PiAgentRuntime implements AgentRuntime {
         const update = event.assistantMessageEvent as any;
         if (update.type === 'text_delta' && selected) {
           if (request.streaming !== false && activeTiming && !activeTiming.firstTextAt) { activeTiming.firstTextAt = new Date().toISOString(); if (activeTrace) request.trace?.timing(activeTrace, { firstTextAt: activeTiming.firstTextAt }); }
-          options.onDelta(selected.outputs[outputIndex]!.speaker, outputIndex, update.delta);
         }
         if (update.type === 'thinking_delta') {
           if (request.streaming !== false && activeTiming && !activeTiming.firstThinkingAt) { activeTiming.firstThinkingAt = new Date().toISOString(); if (activeTrace) request.trace?.timing(activeTrace, { firstThinkingAt: activeTiming.firstThinkingAt }); }
@@ -397,21 +437,38 @@ export class PiAgentRuntime implements AgentRuntime {
         const step = usageOf(finalMessage);
         if (thinking && activeTrace) request.trace?.thinking(activeTrace, thinking);
         if (activeTiming) activeTiming.completedAt = new Date().toISOString();
-        if (activeTrace) { request.trace?.timing(activeTrace, { completedAt: activeTiming?.completedAt ?? new Date().toISOString() }); request.trace?.finish(activeTrace, finalMessage.stopReason === 'aborted' ? 'cancelled' : finalMessage.stopReason === 'error' ? 'failed' : 'completed', step, finalMessage.errorMessage); activeTrace = null; }
-        if (text && selected && !['error', 'aborted'].includes(finalMessage.stopReason) && !finalMessage.content.some((item) => item.type === 'toolCall')) {
+        if (activeTrace) request.trace?.timing(activeTrace, { completedAt: activeTiming?.completedAt ?? new Date().toISOString() });
+        if (text && selected && !request.signal.aborted && !['error', 'aborted'].includes(finalMessage.stopReason) && !finalMessage.content.some((item) => item.type === 'toolCall')) {
           results[outputIndex] = { speaker: selected.outputs[outputIndex]!.speaker, text, thinking, timing: activeTiming!, requestCount: requestCounts[outputIndex]!, providerState: { version: 1, connectionId: request.connection.id, messages: agent.state.messages.slice(context.messages.length) }, usage: step };
+          // Tool-bearing intermediate prose belongs in the Agent transcript, never in the visible draft.
+          options.onDelta(selected.outputs[outputIndex]!.speaker, outputIndex, text);
         }
         thinking = ''; activeTiming = null;
+      }
+      if (event.type === 'tool_execution_start') {
+        options.onTool?.(event.toolName, event.args, outputIndex);
+        if (++readCalls > 6) toolStopError = 'Writer Agent tool call limit exceeded (6).';
+      }
+      if (event.type === 'tool_execution_end') {
+        const call = finalMessage?.content.find((part) => part.type === 'toolCall' && part.id === event.toolCallId);
+        if (activeTrace) request.trace?.tool(activeTrace, event.toolName, call?.type === 'toolCall' ? call.arguments : {}, event.result, !event.isError);
+        if (event.isError) activeToolError = toolErrorText(event.result);
+      }
+      if (event.type === 'turn_end' && activeTrace) {
+        const message = event.message as AssistantMessage;
+        const error = message.errorMessage || toolStopError || activeToolError;
+        request.trace?.finish(activeTrace, message.stopReason === 'aborted' || request.signal.aborted ? 'cancelled' : error ? 'failed' : 'completed', usageOf(message), error);
+        activeTrace = null;
       }
     });
     request.signal.throwIfAborted();
     const abort = () => agent.abort(); request.signal.addEventListener('abort', abort, { once: true });
-    const writerError = () => (agent.state.messages.findLast((message) => message.role === 'assistant') as AssistantMessage | undefined)?.errorMessage;
+    const writerError = () => (agent.state.messages.findLast((message) => message.role === 'assistant') as AssistantMessage | undefined)?.errorMessage || toolStopError || activeToolError;
     try {
       options.onPhase?.(selected ? 'writing' : 'selection', selected ?? undefined);
       await agent.continue();
       request.signal.throwIfAborted();
-      if (!selected) throw new Error('Writer Agent did not call select_output_voices with a valid selection.');
+      if (!selected) throw new Error(writerError() || 'Writer Agent did not call select_output_voices with a valid selection.');
       if (!results[0]) throw new Error(writerError() || 'Writer Agent returned no visible text.');
       options.onOutputComplete?.(results[0], 0);
       if (selected.outputs.length > 1) {
