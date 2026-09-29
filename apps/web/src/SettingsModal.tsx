@@ -115,7 +115,7 @@ export default function SettingsModal({
               </select>
             </label>
             <label>发送最近多少条消息（0 不限）<input type="number" required min={0} max={10000} step={1} value={writing.historyMessageLimit} onChange={e => setWriting({ ...writing, historyMessageLimit: Number(e.target.value) })} /></label>
-            <p className="muted">按用户和 AI 的单条消息计数，包含本次输入。故事设置固定发送起点后，优先发送从起点开始的全部消息。这里只控制发送范围，不删除聊天记录；Memory、主角状态和世界书仍按原规则加入。</p>
+            <p className="muted">设为 0 表示不限制发送条数，仍受模型上下文预算限制。大于 0 时发送最近 N 条用户或 AI 消息，包含本次输入。故事设置固定发送起点后，优先发送从起点开始的全部消息。这里只控制发送范围，不删除聊天记录；Memory、主角状态和世界书仍按原规则加入。</p>
             <label>旁白名称<input required maxLength={100} value={writing.narrator.name} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, name: e.target.value } })} /></label>
             <label>旁白风格<textarea rows={3} value={writing.narrator.style} onChange={e => setWriting({ ...writing, narrator: { ...writing.narrator, style: e.target.value } })} /></label>
             <AvatarField
@@ -128,7 +128,7 @@ export default function SettingsModal({
               <label>Memory 自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.memoryTurnInterval} onChange={e => setWriting({ ...writing, memoryTurnInterval: Number(e.target.value) })} /></label>
               <label>状态自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.stateTurnInterval} onChange={e => setWriting({ ...writing, stateTurnInterval: Number(e.target.value) })} /></label>
             </div>
-            <p className="muted">间隔按完整回合计算，每段故事分别记录进度。</p>
+            <p className="muted">以上两项设为 0 表示关闭对应的自动更新，仍可手动更新。大于 0 时按完整回合计算间隔，每段故事分别记录进度。</p>
             <button className="primary" disabled={locked} type="submit">保存写作设置</button>
           </form>}
 
@@ -160,7 +160,7 @@ export default function SettingsModal({
                   setError(''); setMessageDisplayLimit(value);
                 }} />
             </label>
-            <p className="muted">先显示最近的消息，向上滚动继续加载。右侧横条可跳转到最近 20 条用户消息。</p>
+            <p className="muted">默认 100 条，可设置 1–1000；不支持 0 表示无限。先显示最近的消息，向上滚动继续加载，仅影响页面显示，不影响发送给模型的条数。右侧横条可跳转到最近 20 条用户消息。</p>
             <label className="checkbox-row">
               <input type="checkbox" checked={plainThinkingExpanded} onChange={event => setPlainThinkingExpanded(event.target.checked)} />
               普通模式默认展开思考（CoT）
