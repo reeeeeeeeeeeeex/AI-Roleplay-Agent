@@ -15,6 +15,17 @@ import './branches.css';
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
 const studioCollections: Collection[] = ['characters', 'personas', 'groups', 'lorebooks'];
 
+function formatTime(isoString?: string) {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  } catch {
+    return isoString;
+  }
+}
+
 export default function App() {
   const [data, setData] = useState<Record<string, any[]>>({});
   const [chatId, setChatId] = useState<string | null>(() => localStorage.getItem('selected-chat'));
@@ -447,10 +458,15 @@ export default function App() {
           <Plus size={15} />开启新故事
         </button>
 
-        <div className="nav-label">
-          <span>故事列表</span>
-          <span>{data.conversations?.length ?? 0}</span>
-        </div>
+        <button
+          type="button"
+          className={`nav-label-btn ${page === 'conversations' ? 'selected' : ''}`}
+          onClick={() => { setPage('conversations'); setMobileNav(false); }}
+          title="查看全部故事卡片"
+        >
+          <span className="nav-label-title"><MessageSquare size={13} /> 故事列表</span>
+          <span className="nav-label-count">{data.conversations?.length ?? 0}</span>
+        </button>
         <nav className="story-list">
           {data.conversations?.map((c) => (
             <button className={page === 'chat' && c.id === chatId ? 'selected' : ''} key={c.id} onClick={() => act(selectChat(c.id))}>
@@ -499,7 +515,7 @@ export default function App() {
               </button>
             )}
             <button className="mobile-only" aria-label="打开导航" onClick={() => setMobileNav(true)}>☰</button>
-            <h1>{page === 'chat' ? chat?.title ?? '新故事' : page === 'import' ? '导入故事' : titles[page]}</h1>
+            <h1>{page === 'chat' ? chat?.title ?? '新故事' : page === 'import' ? '导入故事' : page === 'conversations' ? '故事列表' : titles[page]}</h1>
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
@@ -772,53 +788,163 @@ export default function App() {
         {page !== 'chat' && page !== 'import' && (
           <section className="management">
             <header>
-              <button className="primary" onClick={() => edit(page)}>
-                <Plus size={14} />创建{titles[page]}
+              <button className="primary" onClick={() => (page === 'conversations' ? newChat() : edit(page))}>
+                <Plus size={14} />{page === 'conversations' ? '开启新故事' : `创建${titles[page]}`}
               </button>
             </header>
             <div className="management-content">
-              {page === 'characters' || page === 'personas' ? (
+              {page === 'characters' || page === 'personas' || page === 'groups' || page === 'conversations' ? (
                 <div className="character-grid">
-                  {data[page]?.map((v) => (
-                    <article className="character-card" key={v.id}>
-                      <div
-                        className="character-card-image-wrap"
-                        onClick={() => { if (v.avatarPath) setPreviewImage(v.avatarPath); }}
-                        title={v.avatarPath ? '点击查看高清原图' : undefined}
-                      >
-                        {v.avatarPath ? (
-                          <>
-                            <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
-                            <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
-                          </>
-                        ) : (
-                          <div className="character-card-placeholder">
-                            {v.name?.slice(0, 1) || '卡'}
+                  {page === 'conversations' ? (
+                    data.conversations?.map((c) => {
+                      const isGroup = c.kind === 'group';
+                      const grp = isGroup ? (data.groups ?? []).find((g) => g.id === c.groupId) : null;
+                      const char = !isGroup ? (data.characters ?? []).find((ch) => ch.id === c.characterId) : null;
+                      const cover = isGroup
+                        ? (grp?.avatarPath || (data.characters ?? []).find((ch) => grp?.memberIds?.includes(ch.id) && ch.avatarPath)?.avatarPath)
+                        : char?.avatarPath;
+                      const memberNames = isGroup
+                        ? (grp?.memberIds ?? []).map((mid: string) => (data.characters ?? []).find((ch) => ch.id === mid)?.name).filter(Boolean).join('、')
+                        : null;
+                      return (
+                        <article className="character-card" key={c.id}>
+                          <div
+                            className="character-card-image-wrap"
+                            onClick={() => { if (cover) setPreviewImage(cover); }}
+                            title={cover ? '点击查看高清原图' : undefined}
+                          >
+                            {cover ? (
+                              <>
+                                <img className="character-card-bg-blur" src={cover} alt="" aria-hidden="true" />
+                                <img className="character-card-img" src={cover} alt={c.title} loading="lazy" />
+                              </>
+                            ) : (
+                              <div className="character-card-placeholder">
+                                {isGroup ? <Users size={28} /> : (c.title?.slice(0, 1) || '话')}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      <div className="character-card-body">
-                        <h3 className="character-card-title">{v.name}</h3>
-                        <p className="character-card-desc">{v.description || v.scenario || '暂无描述'}</p>
-                        <div className="character-card-footer">
-                          {page === 'characters' && (
-                            <button
-                              className="primary"
-                              onClick={() => edit('conversations', {
-                                ...defaults.conversations,
-                                title: `与 ${v.name} 的故事`,
-                                characterId: v.id,
-                              })}
-                            >
-                              开始聊天
-                            </button>
+                          <div className="character-card-body">
+                            <h3 className="character-card-title">{c.title}</h3>
+                            <div className="character-card-meta">
+                              <span className="badge">{isGroup ? `群聊 · ${grp?.name ?? '群组'}` : `单聊 · ${char?.name ?? '角色'}`}</span>
+                              <small className="time">{formatTime(c.updatedAt || c.createdAt)}</small>
+                            </div>
+                            <p className="character-card-desc">
+                              {c.scenario || (isGroup ? (memberNames ? `成员：${memberNames}` : grp?.scenario) : char?.description) || '暂无描述'}
+                            </p>
+                            <div className="character-card-footer">
+                              <button
+                                className="primary"
+                                onClick={() => {
+                                  void selectChat(c.id);
+                                  setPage('chat');
+                                }}
+                              >
+                                进入故事
+                              </button>
+                              <button onClick={() => edit('conversations', c)}>编辑</button>
+                              <button className="danger" onClick={() => act(remove('conversations', c))}>删除</button>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })
+                  ) : page === 'groups' ? (
+                    data.groups?.map((v) => {
+                      const memberNames = (v.memberIds ?? []).map((mid: string) => (data.characters ?? []).find((ch) => ch.id === mid)?.name).filter(Boolean).join('、');
+                      return (
+                        <article className="character-card" key={v.id}>
+                          <div
+                            className="character-card-image-wrap"
+                            onClick={() => { if (v.avatarPath) setPreviewImage(v.avatarPath); }}
+                            title={v.avatarPath ? '点击查看高清原图' : undefined}
+                          >
+                            {v.avatarPath ? (
+                              <>
+                                <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
+                                <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
+                              </>
+                            ) : (
+                              <div className="character-card-placeholder">
+                                <Users size={28} />
+                              </div>
+                            )}
+                          </div>
+                          <div className="character-card-body">
+                            <h3 className="character-card-title">{v.name}</h3>
+                            <div className="character-card-meta">
+                              <span className="badge">{v.memberIds?.length ?? 0} 位成员</span>
+                              <small className="time">{formatTime(v.updatedAt || v.createdAt)}</small>
+                            </div>
+                            <p className="character-card-desc">
+                              {memberNames ? `成员：${memberNames}。` : ''}{v.scenario || '暂无群聊场景描述'}
+                            </p>
+                            <div className="character-card-footer">
+                              <button
+                                className="primary"
+                                onClick={() => edit('conversations', {
+                                  ...defaults.conversations,
+                                  title: `${v.name} 的故事`,
+                                  kind: 'group',
+                                  groupId: v.id,
+                                })}
+                              >
+                                开启群聊
+                              </button>
+                              <button onClick={() => edit('groups', v)}>编辑</button>
+                              <button className="danger" onClick={() => act(remove('groups', v))}>删除</button>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })
+                  ) : (
+                    data[page]?.map((v) => (
+                      <article className="character-card" key={v.id}>
+                        <div
+                          className="character-card-image-wrap"
+                          onClick={() => { if (v.avatarPath) setPreviewImage(v.avatarPath); }}
+                          title={v.avatarPath ? '点击查看高清原图' : undefined}
+                        >
+                          {v.avatarPath ? (
+                            <>
+                              <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
+                              <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
+                            </>
+                          ) : (
+                            <div className="character-card-placeholder">
+                              {v.name?.slice(0, 1) || '卡'}
+                            </div>
                           )}
-                          <button onClick={() => edit(page, v)}>编辑</button>
-                          <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
                         </div>
-                      </div>
-                    </article>
-                  ))}
+                        <div className="character-card-body">
+                          <h3 className="character-card-title">{v.name}</h3>
+                          <div className="character-card-meta">
+                            <span className="badge">{page === 'characters' ? '角色' : '主角'}</span>
+                            <small className="time">{formatTime(v.updatedAt || v.createdAt)}</small>
+                          </div>
+                          <p className="character-card-desc">{v.description || v.scenario || '暂无描述'}</p>
+                          <div className="character-card-footer">
+                            {page === 'characters' && (
+                              <button
+                                className="primary"
+                                onClick={() => edit('conversations', {
+                                  ...defaults.conversations,
+                                  title: `与 ${v.name} 的故事`,
+                                  characterId: v.id,
+                                })}
+                              >
+                                开始聊天
+                              </button>
+                            )}
+                            <button onClick={() => edit(page, v)}>编辑</button>
+                            <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
+                          </div>
+                        </div>
+                      </article>
+                    ))
+                  )}
                 </div>
               ) : (
                 <div className="resource-list">
@@ -843,7 +969,7 @@ export default function App() {
                   ))}
                 </div>
               )}
-              {!data[page]?.length && <div className="empty">暂无{titles[page]}。点击右上角按钮创建。</div>}
+              {!data[page]?.length && <div className="empty">暂无{page === 'conversations' ? '故事' : titles[page]}。点击右上角按钮创建。</div>}
             </div>
           </section>
         )}

@@ -316,6 +316,47 @@ label.check input[type="checkbox"] {
   text-transform: uppercase;
 }
 
+.nav-label-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.12s;
+  text-align: left;
+}
+
+.nav-label-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.nav-label-btn.selected {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.nav-label-btn .nav-label-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-label-btn .nav-label-count {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
 .story-list {
   flex: 1;
   min-height: 80px;
@@ -1100,6 +1141,33 @@ main {
   margin: 0 0 6px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.character-card-meta .badge {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-card-meta .time {
+  font-size: 11px;
+  color: var(--text-dim);
   white-space: nowrap;
 }
 
