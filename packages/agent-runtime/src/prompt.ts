@@ -20,12 +20,23 @@ export function expandStoryMacros(text: string, userName: string, characterName:
   return text.replace(/\{\{(user|char|charIfNotGroup)\}\}/giu, (_match, key: string) => key.toLowerCase() === 'user' ? userName : characterName);
 }
 
-export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer' | 'planner' | 'router' = 'writer'): string {
+export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer' | 'planner' | 'router' | 'choices' = 'writer'): string {
   const promptSettings = request.promptSettings ?? defaultPromptSettings;
   const userName = request.persona?.name ?? 'Protagonist';
   const castNames = request.characters.map((c) => c.name).join(', ');
   const isGroup = request.conversationKind === 'group' || (!request.conversationKind && request.characters.length > 1);
   const expand = (text: string, character = castNames) => expandStoryMacros(text, userName, character);
+  if (mode === 'choices') return [
+    section('Action Choices', expand(promptSettings.mainInstruction)),
+    section('User Role', request.persona ? `${request.persona.name}\n${expand(request.persona.description)}` : 'The user controls the protagonist.'),
+    ...request.characters.flatMap(character => [
+      section(`Assistant Role: ${character.name}`, expand(character.description, character.name)),
+      section(`Assistant Personality: ${character.name}`, expand(character.personality, character.name)),
+      section('Scenario', expand(character.scenario, character.name)),
+    ]),
+    ...request.stableLore.map(item => section(item.title, expand(item.content))),
+    section('Additional Instruction', expand(promptSettings.additionalInstruction)),
+  ].filter(Boolean).join('\n\n');
   const characterSections = request.characters.map((character) => [
     section(`Assistant Role: ${character.name}`, expand(character.description, character.name)),
     section(isGroup ? `Assistant Personality: ${character.name}` : 'Assistant Personality', expand(character.personality, character.name)),
@@ -126,6 +137,14 @@ function syntheticContext(text: string): Message {
   return { role: 'assistant', content: [{ type: 'text', text }], api: 'new-ai-chat-context', provider: 'local', model: 'context', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop', timestamp: Date.now() };
 }
 
+export function buildActionChoiceContext(request: BaseAgentRequest, control: string) {
+  const messages = buildHistoryMessages(request);
+  const dynamic = buildDynamicContext(request);
+  if (dynamic) messages.push(syntheticContext(dynamic));
+  messages.push(...buildAuthorNoteMessages(request), { role: 'user', content: control, timestamp: Date.now() });
+  return { systemPrompt: buildStableSystemPrompt(request, 'choices'), messages };
+}
+
 export function buildAuthorNoteMessages(request: BaseAgentRequest): Message[] {
   const content = section("Author's Note", expandStoryMacros(request.authorNote ?? '', request.persona?.name ?? 'Protagonist', request.characters.map(character => character.name).join(', ')));
   // Pi only models user/assistant/tool messages. The gateway restores the System role
@@ -170,7 +189,7 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
     history.unshift(node); remaining -= cost;
   }
   const items: ContextReportItem[] = [
-    { id: 'system', source: 'system', title: '固定指令、身份与主角权限', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(buildStableSystemPrompt({ ...request, stableLore: [] }, request.promptMode ?? 'writer')) },
+    { id: 'system', source: 'system', title: request.promptMode === 'choices' ? '行动选项指令与身份' : '固定指令、身份与主角权限', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(buildStableSystemPrompt({ ...request, stableLore: [] }, request.promptMode ?? 'writer')) },
     ...request.stableLore.map(item => ({ id: item.sourceId ?? item.title, source: 'lore' as const, title: item.title, role: 'system' as const, included: true, reason: '常驻资料', estimatedTokens: estimateTokens(item.content) })),
     ...real.map(node => ({ id: node.id, source: 'history' as const, title: `${node.role} · ${node.id.slice(0, 8)}`, role: node.role, included: history.includes(node), reason: history.includes(node) ? '当前分支' : candidates.includes(node) ? '上下文预算' : '历史消息上限', estimatedTokens: estimateTokens(node.content) + 32, messageIds: [node.id] })),
     ...[...request.dynamicContext].sort((a, b) => b.priority - a.priority).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),

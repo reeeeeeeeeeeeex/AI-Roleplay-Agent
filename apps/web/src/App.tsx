@@ -12,6 +12,7 @@ import InlineEdit from './InlineEdit.js';
 import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
 import MessageNavigation from './MessageNavigation.js';
 import { useChatWindow } from './useChatWindow.js';
+import ActionChoices from './ActionChoices.js';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
@@ -46,6 +47,7 @@ export default function App() {
   const text = chatId ? inputDrafts[chatId] ?? '' : '';
   const setText = (value: string) => { if (chatId) setInputDrafts(old => ({ ...old, [chatId]: value })); };
   const [sending, setSending] = useState(false);
+  const [choicesBusy, setChoicesBusy] = useState(false);
   const sendPending = useRef(false);
   const [voice, setVoice] = useState('protagonist');
   const [replyTarget, setReplyTarget] = useState('auto');
@@ -304,16 +306,17 @@ export default function App() {
     };
   }
 
-  async function send(trigger: 'normal' | 'auto' | 'regenerate' | 'continue' = 'normal', targetMessageId?: string) {
+  async function send(trigger: 'normal' | 'auto' | 'regenerate' | 'continue' = 'normal', targetMessageId?: string, choiceText?: string) {
     if (!chat || turn || sendPending.current || messageEdit) return;
     sendPending.current = true;
     setSending(true);
     setError('');
     setNotice('');
     try {
-      const result = await api('/turns', 'POST', turnPayload(trigger, targetMessageId));
+      const payload = turnPayload(trigger, targetMessageId);
+      const result = await api('/turns', 'POST', choiceText === undefined ? payload : { ...payload, input: { voice: 'protagonist', text: choiceText } });
       // Clear only the accepted draft, never newer typing or another chat's input.
-      if (trigger === 'normal') setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
+      if (trigger === 'normal' && choiceText === undefined) setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
       if (chatRef.current !== chat.id) return;
       await refreshMessages(chat.id);
       await follow(result.id, chat.id);
@@ -737,6 +740,8 @@ export default function App() {
             </div>
 
             <div className="composer-wrap">
+              <ActionChoices key={`${chat.id}:${chat.headMessageId ?? ''}`} chatId={chat.id} head={chat.headMessageId} disabled={sending || !!turn || !!messageEdit}
+                onSend={value => send('normal', undefined, value)} onBusy={setChoicesBusy} onChanged={() => setRecordsVersion(version => version + 1)} />
               {awayFromBottom && <button onClick={scrollToLatest}>回到最新 ↓</button>}
               {!turn && lastTurn && ['partial', 'failed', 'cancelled'].includes(lastTurn.status) && <div className="turn-recovery">
                 <strong>{lastTurn.status === 'partial' ? '本轮部分完成，已完成回复已保留。' : '本轮未完成，用户消息已保留。'}</strong>
@@ -1032,7 +1037,7 @@ export default function App() {
           generationMode={generalSettings.generationMode}
           version={recordsVersion}
           activity={activity}
-          activeTurnId={turn?.id ?? null}
+          activeTurnId={turn?.id ?? (choicesBusy ? 'action-choices' : null)}
           disabled={!!turn}
           onError={setError}
           onChanged={() => setRecordsVersion((v) => v + 1)}

@@ -14,8 +14,9 @@ import { generalSettingsSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
+import type { ActionChoiceService } from './services/action-choices.js';
 
-export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig) {
+export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
   function idleAll() { for (const chat of repo.listConversations()) turns.assertIdle(chat.id); }
   const collections: Array<{ path: string; schema: z.ZodType; list: () => unknown; get: (id: string) => unknown; create: (v: any) => unknown; update: (id: string, v: any) => unknown; remove: (id: string) => unknown }> = [
@@ -52,6 +53,27 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     app.delete(`${base}/:id`, async (req) => { idleAll(); return { deleted: Boolean(collection.remove(idOf(req))) }; });
   }
   app.get('/api/settings/general', async () => repo.getGeneralSettings());
+  const choicePosition = z.object({ head: z.string().min(1).nullable() });
+  app.get('/api/conversations/:id/action-choices', async req => {
+    const query = z.object({ head: z.string().optional() }).parse(req.query);
+    return choices.get(idOf(req), query.head || null);
+  });
+  app.post('/api/conversations/:id/action-choices', async (req, reply) => {
+    const { head } = choicePosition.parse(req.body);
+    const controller = new AbortController();
+    const abort = () => { if (!reply.raw.writableEnded) controller.abort(); };
+    reply.raw.on('close', abort);
+    try { return await choices.generate(idOf(req), head, controller.signal); }
+    finally { reply.raw.off('close', abort); }
+  });
+  app.patch('/api/conversations/:id/action-choices', async req => {
+    const input = choicePosition.extend({ groupId: z.string(), index: z.number().int().min(0).max(3), previous: z.string(), text: z.string().trim().min(1).max(4000) }).parse(req.body);
+    return choices.edit(idOf(req), input.head, input.groupId, input.index, input.previous, input.text);
+  });
+  app.put('/api/conversations/:id/action-choices/selection', async req => {
+    const input = choicePosition.extend({ groupId: z.string() }).parse(req.body);
+    return choices.select(idOf(req), input.head, input.groupId);
+  });
   app.put('/api/settings/general', async req => {
     idleAll();
     return repo.setGeneralSettings(generalSettingsSchema.parse(req.body));

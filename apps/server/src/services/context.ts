@@ -13,7 +13,7 @@ export class StoryContext implements StoryContextSource {
   readonly facts: RetrievedContext[];
   readonly contextReport: ContextReport = { items: [] };
   readonly lore;
-  constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode, options: { maintenance?: 'memory' | 'state' | undefined } = {}) {
+  constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode, options: { maintenance?: 'memory' | 'state' | undefined; choiceHistoryLimit?: number } = {}) {
     const chat = repository.getConversation(conversationId)!;
     const settings = repository.getGeneralSettings();
     const branch = [...repository.getActiveBranch(conversationId), ...(virtualMessage ? [virtualMessage] : [])];
@@ -22,10 +22,10 @@ export class StoryContext implements StoryContextSource {
     if (chat.historyStartMessageId && (!start || startIndex < 0)) throw new Error('固定发送起点不在当前分支，请重新选择起点或取消固定起点。');
     this.fixedHistory = Boolean(start);
     const history = branch.slice(startIndex).filter(message => message.role !== 'system');
-    const ceiling = this.fixedHistory ? 0 : repository.getGeneralSettings().historyMessageLimit;
+    const ceiling = options.choiceHistoryLimit ?? (this.fixedHistory ? 0 : settings.historyMessageLimit);
     this.history = ceiling > 0 ? history.slice(-ceiling) : history;
-    this.contextReport.items.push(...branch.filter(message => message.role !== 'system' && !this.history.includes(message)).map(message => ({ id: message.id, source: 'history' as const, title: `${message.role} · ${message.id.slice(0, 8)}`, role: message.role, included: false, reason: this.fixedHistory ? '固定发送起点之前' : '历史消息上限', estimatedTokens: estimateTokens(message.content) + 32, messageIds: [message.id] })));
-    if (start) this.contextReport.items.push({ id: 'history-start', source: 'control', title: '固定发送起点', role: 'user', included: false, reason: '从选定位置开始，覆盖全局条数上限；超出上下文时提示调整起点', estimatedTokens: 0, messageIds: [start.id] });
+    this.contextReport.items.push(...branch.filter(message => message.role !== 'system' && !this.history.includes(message)).map(message => ({ id: message.id, source: 'history' as const, title: `${message.role} · ${message.id.slice(0, 8)}`, role: message.role, included: false, reason: !history.includes(message) ? '固定发送起点之前' : '历史消息上限', estimatedTokens: estimateTokens(message.content) + 32, messageIds: [message.id] })));
+    if (start) this.contextReport.items.push({ id: 'history-start', source: 'control', title: '固定发送起点', role: 'user', included: false, reason: options.choiceHistoryLimit === undefined ? '从选定位置开始，覆盖全局条数上限；超出上下文时提示调整起点' : '行动选项以固定起点为最早边界，再取独立历史条数', estimatedTokens: 0, messageIds: [start.id] });
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
       .map(({ id, name, description, personality, scenario, exampleDialogue, systemPrompt, postHistoryInstructions }) => ({ id, name, description, personality, scenario: group || chat.scenario ? '' : scenario, exampleDialogue, systemPrompt, postHistoryInstructions }));

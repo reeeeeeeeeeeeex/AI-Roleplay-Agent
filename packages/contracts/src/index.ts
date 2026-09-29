@@ -244,7 +244,34 @@ export const narratorProfileSchema = z.object({
   style: z.string().max(20_000).default('克制、具象、重视场景连续性，不替角色解释未表达的内心。'),
 });
 
+export const defaultActionChoicePrompt = '根据当前故事，为用户控制的主角提供可直接发送的下一步行动或对白。各选项应简洁、具体且方向不同，保持人物身份和场景连续性。只提出尚未发生的行动，不续写结果，不把候选当作已经发生的事实。使用与故事相同的语言。';
+export const actionChoiceSettingsSchema = z.object({
+  count: z.number().int().min(1).max(4).default(4),
+  historyMessageLimit: z.number().int().min(0).max(10_000).default(20),
+  connectionId: z.string().min(1).nullable().default(null),
+  temperature: connectionInputSchema.shape.temperature.nullable().default(null),
+  maxTokens: connectionInputSchema.shape.maxTokens.nullable().default(null),
+  contextWindow: connectionInputSchema.shape.contextWindow.nullable().default(null),
+  reasoning: connectionInputSchema.shape.reasoning.nullable().default(null),
+  streaming: z.boolean().nullable().default(null),
+  instruction: z.string().trim().min(1).max(20_000).default(defaultActionChoicePrompt),
+});
+export type ActionChoiceSettings = z.infer<typeof actionChoiceSettingsSchema>;
+export const defaultActionChoiceSettings = actionChoiceSettingsSchema.parse({});
+export interface ActionChoiceGroup {
+  id: string;
+  choices: string[];
+  createdAt: string;
+}
+export interface ActionChoiceCache {
+  groups: ActionChoiceGroup[];
+  selectedGroupId: string | null;
+}
+export const actionChoiceListSchema = z.array(z.string().trim().min(1).max(4000)).min(1).max(4)
+  .refine(choices => new Set(choices.map(text => text.normalize('NFKC').toLocaleLowerCase())).size === choices.length, '行动选项不能重复。');
+
 export const generalSettingsSchema = z.object({
+  actionChoices: actionChoiceSettingsSchema.default(defaultActionChoiceSettings),
   sendMemory: z.boolean().default(true),
   sendProtagonistState: z.boolean().default(true),
   historyMessageLimit: z.number().int().min(0).max(10_000).default(0),
@@ -368,7 +395,7 @@ export interface TurnTrace {
   id: string;
   conversationId: string;
   turnId: string;
-  phase: 'selection' | 'planning' | 'writing' | 'records' | 'plain';
+  phase: 'selection' | 'planning' | 'writing' | 'records' | 'plain' | 'choices';
   requestIndex: number;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   model: string;

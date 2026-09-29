@@ -126,6 +126,10 @@ export class Repository {
     const settings = generalSettingsSchema.parse(value);
     if (settings.connectionId && !this.getRuntimeConnection(settings.connectionId)) throw new Error('Connection not found.');
     if (settings.defaultPersonaId && !this.getPersona(settings.defaultPersonaId)) throw new Error('Persona not found.');
+    const choiceConnectionId = settings.actionChoices.connectionId ?? settings.connectionId;
+    const choiceConnection = choiceConnectionId ? this.getRuntimeConnection(choiceConnectionId) : null;
+    if (settings.actionChoices.connectionId && !choiceConnection) throw new Error('行动选项连接不存在。');
+    if (choiceConnection?.protocol === 'anthropic-messages' && (settings.actionChoices.temperature ?? choiceConnection.temperature) > 1) throw new Error('Anthropic 的行动选项温度不能超过 1。');
     this.database.db.insert(appSettings).values({ key: 'general', value: settings })
       .onConflictDoUpdate({ target: appSettings.key, set: { value: settings } }).run();
     return settings;
@@ -187,7 +191,10 @@ export class Repository {
   deleteConnection(connectionId: string): boolean {
     return this.database.sqlite.transaction(() => {
       const settings = this.getGeneralSettings();
-      if (settings.connectionId === connectionId) this.setGeneralSettings({ ...settings, connectionId: null });
+      if (settings.connectionId === connectionId || settings.actionChoices.connectionId === connectionId) this.setGeneralSettings({ ...settings,
+        connectionId: settings.connectionId === connectionId ? null : settings.connectionId,
+        actionChoices: { ...settings.actionChoices, connectionId: settings.actionChoices.connectionId === connectionId ? null : settings.actionChoices.connectionId },
+      });
       return this.database.db.delete(connections).where(eq(connections.id, connectionId)).run().changes > 0;
     })();
   }

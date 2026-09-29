@@ -14,6 +14,7 @@ import { RecordService } from './services/records.js';
 import { registerRoutes } from './routes.js';
 import { seedDemo } from './demo.js';
 import { InternalPluginHost } from './services/plugins.js';
+import { ActionChoiceService } from './services/action-choices.js';
 
 const same = (a: string,b: string) => { const left=Buffer.from(a); const right=Buffer.from(b); return left.length===right.length && timingSafeEqual(left,right); };
 export async function createApp(config: AppConfig = loadConfig(), runtime?: AgentRuntime, configurePlugins?: (registry: PluginRegistry) => void) {
@@ -29,6 +30,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
   let records: RecordService;
   const turns = new TurnService(repository,gateway,events,async (chat,signal,trace) => records.automatic(chat,signal,trace),pluginHost);
   records = new RecordService(repository,gateway,(chat,turn,signal,kind) => turns.request(chat,turn,signal,false,undefined,kind));
+  const choices = new ActionChoiceService(repository,gateway,events,turns);
   app.addHook('onRequest',async (req,reply) => {
     const host = req.headers.host ?? '';
     const hostname = host.startsWith('[') ? host.slice(0,host.indexOf(']')+1) : host.split(':')[0];
@@ -59,7 +61,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     if (!config.pairingToken || !same(token,config.pairingToken)) return reply.code(401).send({error:'Invalid pairing token.'});
     reply.header('Set-Cookie',`pair=${config.pairingToken}; HttpOnly; SameSite=Strict; Path=/`); return {paired:true};
   });
-  registerRoutes(app,repository,turns,records,config);
+  registerRoutes(app,repository,turns,records,config,choices);
   app.get('/api/turns/:id/events',async(req,reply)=>{
     const {id}=z.object({id:z.string()}).parse(req.params); if (!repository.getTurn(id)) return reply.code(404).send({error:'Turn not found.'});
     const after=Number(req.headers['last-event-id'] ?? (req.query as {after?:string}).after ?? 0);
@@ -85,6 +87,6 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     await app.register(fastifyStatic,{root:config.webDist,prefix:'/'});
     app.setNotFoundHandler((req,reply)=> req.url.startsWith('/api/') ? reply.code(404).send({error:'Not found.'}) : reply.sendFile('index.html'));
   }
-  app.addHook('onClose',async()=>{await turns.shutdown();database.sqlite.close();});
-  return { app,repository,turns,records,events,plugins,config };
+  app.addHook('onClose',async()=>{await choices.shutdown();await turns.shutdown();database.sqlite.close();});
+  return { app,repository,turns,records,choices,events,plugins,config };
 }

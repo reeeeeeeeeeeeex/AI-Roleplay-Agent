@@ -5,7 +5,7 @@ import { api } from './api.js';
 import ContextReport from './ContextReport.js';
 import './trace.css';
 
-const phases = { selection: '选择发言者', planning: 'Planner', writing: 'Writer', records: '记录更新', plain: '普通写作' };
+const phases = { selection: '选择发言者', planning: 'Planner', writing: 'Writer', records: '记录更新', plain: '普通写作', choices: '行动选项' };
 const statuses = { running: '运行中', completed: '完成', failed: '失败', cancelled: '已取消' };
 const format = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 const duration = (from?: string | null, to?: string | null) => from && to ? `${((Date.parse(to) - Date.parse(from)) / 1000).toFixed(2)} s` : '—';

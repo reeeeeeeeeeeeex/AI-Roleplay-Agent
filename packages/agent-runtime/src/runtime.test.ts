@@ -53,6 +53,26 @@ function setup(steps: Step[]) {
   return { runtime, request, network, bodies, traces, controller };
 }
 
+it('action choice requests omit writing instructions and history reasoning, and trace malformed results', async () => {
+  const { runtime, request, bodies, traces } = setup([{ text: '["观察门口。","询问来意。"]', thinking: '当前选择思考' }, { text: '["重复","重复"]' }]);
+  request.connection.model = 'deepseek-test';
+  request.authorNote = '选项作者注释';
+  request.characters = [{ ...character, description: '角色身份', exampleDialogue: '禁止发送示例', systemPrompt: '禁止发送卡片主指令' }];
+  request.promptSettings = { ...defaultPromptSettings, mainInstruction: '禁止发送正文主指令', additionalInstruction: '附加要求' };
+  request.history = [{ id: 'history', conversationId: 'chat', parentId: null, storyTurnId: null, role: 'assistant', authorKind: 'character', speaker: { kind: 'character', characterId: character.id }, content: '已发生正文', providerState: { reasoning_content: '禁止发送旧思考' }, legacyPayload: null, createdAt: new Date().toISOString() }];
+  request.stableLore = [{ source: 'lore', title: 'Book', content: '禁止发送整本世界书', priority: 1 }];
+  expect(await runtime.choices(request, 2, '可编辑选项指令')).toEqual(['观察门口。', '询问来意。']);
+  const body = JSON.parse(bodies[0]!);
+  expect(body.tools).toBeUndefined();
+  expect(body.messages[0].content).toContain('选项作者注释');
+  expect(bodies[0]).toContain('附加要求'); expect(bodies[0]).toContain('可编辑选项指令'); expect(bodies[0]).toContain('已发生正文');
+  expect(bodies[0]).not.toContain('禁止发送');
+  await expect(runtime.choices(request, 2, '可编辑选项指令')).rejects.toThrow();
+  expect(traces.map(trace => trace.status)).toEqual(['completed', 'failed']);
+  expect(traces[0]!.response).toContain('当前选择思考');
+  expect(traces[1]!.response).toContain('重复');
+});
+
 describe('Agent tool lifecycle', () => {
   it('keeps a rewrite speaker fixed and recovers from a hallucinated selection tool', async () => {
     const { runtime, request, bodies, traces, network } = setup([{ calls: [selection] }, { text: 'Rewritten story.' }]);

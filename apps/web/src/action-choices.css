@@ -1,0 +1,12 @@
+.action-choices { margin-bottom: 8px; }
+.action-choice-toolbar, .action-choice-navigation { display: flex; align-items: center; gap: 6px; }
+.action-choice-toolbar { justify-content: space-between; }
+.action-choice-toolbar > button { font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+.action-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 7px; max-height: 30vh; overflow-y: auto; }
+.action-choice-bubble { display: flex; align-items: flex-start; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); min-width: 0; }
+.action-choice-bubble .action-choice-text { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; border: 0; background: transparent; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+.action-choice-bubble .action-choice-edit { flex: 0 0 auto; border: 0; background: transparent; margin: 5px 5px 0 0; padding: 5px; }
+.action-choice-bubble textarea { width: 100%; border: 0; border-radius: inherit; resize: vertical; padding: 10px 12px; font: inherit; font-size: 13px; }
+.action-choice-navigation small { font-variant-numeric: tabular-nums; }
+.action-choices > small { display: block; margin-top: 5px; }
+@media (max-width: 600px) { .action-choice-grid { grid-template-columns: 1fr; } }

@@ -3,7 +3,7 @@ import type { AgentTraceEvent, TurnRecord, TurnTrace } from '@new-ai-chat/contra
 import type { Repository } from '../db/repository.js';
 import type { EventBroker } from './events.js';
 
-export function createTraceSink(repository: Repository, broker: EventBroker, turn: TurnRecord): RuntimeTraceSink & { flush(): void } {
+export function createTraceSink(repository: Repository, broker: EventBroker, turn: Pick<TurnRecord, 'id' | 'conversationId'>): RuntimeTraceSink & { flush(): void } {
   let requestIndex = 0;
   const buffers = new Map<string, { events: AgentTraceEvent[]; timer?: ReturnType<typeof setTimeout> }>();
   const emit = (type: string, payload: object) => broker.publish(turn.conversationId, turn.id, type, { turnId: turn.id, ...payload });

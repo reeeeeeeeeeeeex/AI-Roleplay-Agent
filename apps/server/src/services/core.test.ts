@@ -133,6 +133,55 @@ it('record maintenance retains its own records when both send switches are off',
   expect(maintain.mock.calls[0]![0].dynamicContext.map(item => item.source)).toEqual(['state']);
   expect(maintain.mock.calls[1]![0].dynamicContext.map(item => item.content)).toEqual(['已有记忆']);
 });
+
+it('action choices use independent settings and history, persist edited groups and never become story context', async () => {
+  const repo = server.repository;
+  let parent: string | null = null;
+  for (let index = 0; index < 25; index++) parent = repo.createMessage({ conversationId: chat, parentId: parent, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: `history-${index}`, providerState: null, legacyPayload: null }).id;
+  repo.setHead(chat, parent);
+  const branch = repo.getActiveBranch(chat);
+  repo.setHistoryStart(chat, branch[10]!.id);
+  const alternate = repo.createConnection(connectionInputSchema.parse({ name: 'Choices', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid', model: 'choices-model', temperature: 0.4 })).id;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), historyMessageLimit: 1, sendMemory: false, actionChoices: { ...repo.getGeneralSettings().actionChoices, connectionId: alternate, count: 1, temperature: 0.2, streaming: false } });
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'excluded-memory' });
+  const generate = vi.spyOn(runtime, 'choices');
+  const path = `/api/conversations/${chat}/action-choices`;
+  const first = (await server.app.inject({ method: 'POST', url: path, payload: { head: parent } })).json();
+  expect(first.groups[0].choices).toHaveLength(1);
+  expect(generate.mock.calls[0]![0].history.map(message => message.id)).toEqual(branch.slice(10).map(message => message.id));
+  expect(generate.mock.calls[0]![0]).toMatchObject({ streaming: false, connection: { id: alternate, temperature: 0.2 } });
+  expect(generate.mock.calls[0]![0].dynamicContext).toEqual([]);
+  const edited = await server.app.inject({ method: 'PATCH', url: path, payload: { head: parent, groupId: first.selectedGroupId, index: 0, previous: first.groups[0].choices[0], text: '唯一的候选行动' } });
+  expect(edited.statusCode).toBe(200);
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), actionChoices: { ...repo.getGeneralSettings().actionChoices, count: 4, historyMessageLimit: 2 } });
+  const second = (await server.app.inject({ method: 'POST', url: path, payload: { head: parent } })).json();
+  expect(second.groups.map((group: any) => group.choices.length)).toEqual([1, 4]);
+  expect(generate.mock.calls[1]![0].history).toHaveLength(2);
+  expect(JSON.stringify(generate.mock.calls[1])).not.toContain('唯一的候选行动');
+  await server.app.inject({ method: 'PUT', url: `${path}/selection`, payload: { head: parent, groupId: first.selectedGroupId } });
+  const restored = (await server.app.inject({ method: 'GET', url: `${path}?head=${parent}` })).json();
+  expect(restored.selectedGroupId).toBe(first.selectedGroupId);
+  expect(restored.groups[0].choices).toEqual(['唯一的候选行动']);
+  expect(generate).toHaveBeenCalledTimes(2);
+  expect(repo.getActiveBranch(chat)).toHaveLength(25);
+  expect(repo.listMemories(chat)).toHaveLength(1);
+  expect(settledStoryIds(repo, chat)).toEqual([]);
+});
+
+it('action choices reject duplicate generation and discard results after a branch change', async () => {
+  const repo = server.repository;
+  const message = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: 'start', providerState: null, legacyPayload: null });
+  repo.setHead(chat, message.id);
+  let release!: (choices: string[]) => void;
+  vi.spyOn(runtime, 'choices').mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  const pending = server.choices.generate(chat, message.id, new AbortController().signal);
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  await expect(server.choices.generate(chat, message.id, new AbortController().signal)).rejects.toThrow('正在生成');
+  repo.setHead(chat, null);
+  release(['一', '二', '三', '四']);
+  await expect(pending).rejects.toThrow('故事已改变');
+  expect(server.choices.get(chat, message.id).groups).toEqual([]);
+});
 it('general settings: migrates old global values and persists updates', async () => {
   const db = server.repository.database;
   server.repository.updateConnection(connection, connectionInputSchema.parse({ ...server.repository.listConnections()[0]!, historyMessageLimit: 7 }));

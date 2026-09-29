@@ -7,6 +7,11 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS imported_files (kind TEXT NOT NULL, source_hash TEXT NOT NULL, entity_id TEXT NOT NULL, PRIMARY KEY(kind, source_hash));
+CREATE TABLE IF NOT EXISTS action_choice_caches (
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  head_key TEXT NOT NULL, groups TEXT NOT NULL DEFAULT '[]', selected_group_id TEXT,
+  PRIMARY KEY (conversation_id, head_key)
+);
 
 CREATE TABLE IF NOT EXISTS connections (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, protocol TEXT NOT NULL,

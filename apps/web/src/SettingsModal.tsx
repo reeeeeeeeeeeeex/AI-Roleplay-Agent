@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Plus } from 'lucide-react';
 import { defaultPromptSettings, type GeneralSettings, type PromptSettings } from '@new-ai-chat/contracts';
 import AvatarField from './AvatarField';
+import ActionChoiceSettings from './ActionChoiceSettings';
 
 export type AvatarMode = 'compact' | 'large' | 'full';
 export type AvatarFit = 'cover' | 'contain';
@@ -56,7 +57,7 @@ export default function SettingsModal({
           <button aria-label="关闭设置" onClick={onClose}><X size={16} /></button>
         </header>
         <nav className="settings-nav">
-          {([['connections', '模型'], ['writing', '写作'], ['prompts', '提示词'], ['appearance', '外观']] as const).map(([id, label]) => (
+          {([['connections', '模型'], ['writing', '写作'], ['choices', '行动选项'], ['prompts', '提示词'], ['appearance', '外观']] as const).map(([id, label]) => (
             <button key={id} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setError(''); setNotice(''); }}>{label}</button>
           ))}
         </nav>
@@ -133,6 +134,13 @@ export default function SettingsModal({
             </div>
             <p className="muted">以上两项设为 0 表示关闭对应的自动更新，仍可手动更新。大于 0 时按完整回合计算间隔，每段故事分别记录进度。</p>
             <button className="primary" disabled={locked} type="submit">保存写作设置</button>
+          </form>}
+
+          {tab === 'choices' && <form className="settings-form" onSubmit={event => {
+            event.preventDefault(); void save(() => onSaveGeneral({ ...generalSettings, actionChoices: writing.actionChoices }), '行动选项设置已保存，下次生成时生效。');
+          }}>
+            <ActionChoiceSettings value={writing.actionChoices} onChange={actionChoices => setWriting({ ...writing, actionChoices })} connections={connections} currentConnectionId={generalSettings.connectionId} streaming={generalSettings.streaming} />
+            <button className="primary" disabled={locked} type="submit">保存行动选项设置</button>
           </form>}
 
           {tab === 'prompts' && <form className="settings-form" onSubmit={e => {

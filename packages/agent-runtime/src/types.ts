@@ -90,11 +90,11 @@ export interface BaseAgentRequest {
   continuation?: boolean;
   rewrite?: { instruction: string; originalText: string };
   contextReport?: ContextReport;
-  promptMode?: 'writer' | 'planner';
+  promptMode?: 'writer' | 'planner' | 'choices';
   trace?: RuntimeTraceSink;
 }
 
-export type TracePhase = 'selection' | 'planning' | 'writing' | 'records' | 'plain';
+export type TracePhase = 'selection' | 'planning' | 'writing' | 'records' | 'plain' | 'choices';
 export interface RuntimeTraceSink {
   event?(traceId: string, type: string, data: unknown): void;
   start(phase: TracePhase, model: string, speaker?: SpeakerRef, contextReport?: ContextReport): string;
@@ -154,6 +154,7 @@ export interface FirstRequestPreview {
 }
 
 export interface AgentRuntime {
+  choices(request: BaseAgentRequest, count: number, instruction: string): Promise<string[]>;
   previewFirstRequest(request: BaseAgentRequest, mode: GenerationMode, forcedPlan?: TurnPlan): Promise<FirstRequestPreview>;
   maintain(request: BaseAgentRequest, instruction: string): Promise<string>;
   plan(request: RouteRequest, onTool?: (name: string, args: unknown) => void): Promise<TurnPlan>;

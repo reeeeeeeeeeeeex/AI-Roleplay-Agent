@@ -2,6 +2,10 @@ import { fallbackPlan } from './plan.js';
 import { PiAgentRuntime } from './runtime.js';
 import type { AgentRuntime, AgentTurnResult, BaseAgentRequest, RouteRequest, WriterRequest, UnifiedWriterOptions } from './types.js';
 export class FakeRuntime implements AgentRuntime {
+  async choices(request: BaseAgentRequest, count: number): Promise<string[]> {
+    request.signal.throwIfAborted();
+    return ['拿起信封，看看署名。', '“这封信是什么时候送来的？”', '走到窗边，观察外面的街道。', '先坐下来，听听她的想法。'].slice(0, count);
+  }
   private readonly previewRuntime = new PiAgentRuntime();
   previewFirstRequest(request: BaseAgentRequest, mode: 'plain' | 'writer-agent' | 'planner', forcedPlan?: ReturnType<typeof fallbackPlan>) {
     return this.previewRuntime.previewFirstRequest(request, mode, forcedPlan);
