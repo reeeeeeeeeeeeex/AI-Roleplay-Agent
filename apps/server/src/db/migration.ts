@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { migrateRetiredOptions } from './retired-options.js';
+import { legacyLoreTitle } from '../lore-title.js';
 
 const migration = `
 PRAGMA foreign_keys = ON;
@@ -102,6 +103,20 @@ CREATE TABLE IF NOT EXISTS imports (
 export function migrateDatabase(database: Database.Database): void {
   database.exec(migration);
   migrateRetiredOptions(database);
+  const loreColumns = database.prepare('PRAGMA table_info(lore_entries)').all() as Array<{ name: string }>;
+  if (!loreColumns.some(column => column.name === 'title')) {
+    database.transaction(() => {
+      database.exec("ALTER TABLE lore_entries ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+      const update = database.prepare('UPDATE lore_entries SET title = ? WHERE id = ?');
+      const entries = database.prepare('SELECT id, legacy_payload FROM lore_entries WHERE legacy_payload IS NOT NULL').all() as Array<{ id: string; legacy_payload: string }>;
+      for (const entry of entries) {
+        let legacy: unknown;
+        try { legacy = JSON.parse(entry.legacy_payload); } catch { continue; }
+        const title = legacyLoreTitle(legacy);
+        if (title) update.run(title, entry.id);
+      }
+    })();
+  }
   // Additive migrations also support databases created by earlier v0.1 builds.
   for (const [table, column, definition] of [
     ['connections', 'context_window', 'INTEGER NOT NULL DEFAULT 128000'],

@@ -67,6 +67,7 @@ export const lorebooks = sqliteTable('lorebooks', {
 export const loreEntries = sqliteTable('lore_entries', {
   id: text('id').primaryKey(),
   lorebookId: text('lorebook_id').notNull().references(() => lorebooks.id, { onDelete: 'cascade' }),
+  title: text('title').notNull().default(''),
   keys: text('keys', { mode: 'json' }).$type<string[]>().notNull(),
   secondaryKeys: text('secondary_keys', { mode: 'json' }).$type<string[]>().notNull(),
   content: text('content').notNull(),

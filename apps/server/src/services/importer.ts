@@ -3,11 +3,13 @@ import { basename, dirname, extname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { characterInputSchema, conversationInputSchema, lorebookInputSchema, normalizeState } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
+import { legacyLoreTitle } from '../lore-title.js';
 import { scanImport, importName, type ImportFile } from './import-scan.js';
 
 const string = (value: unknown) => typeof value === 'string' ? value : '';
 function loreInput(name: string, source: any) {
   return lorebookInputSchema.parse({ name, legacyPayload: source, entries: Object.values(source.entries ?? {}).map((entry: any) => ({
+    title: legacyLoreTitle(entry),
     keys: entry.key ?? entry.keys ?? [], secondaryKeys: entry.selective === false ? [] : entry.keysecondary ?? entry.secondary_keys ?? [],
     content: string(entry.content), enabled: entry.disable !== true && entry.enabled !== false, constant: Boolean(entry.constant),
     order: Number.isFinite(entry.order) ? entry.order : entry.insertion_order ?? 100,

@@ -174,6 +174,7 @@ export const personaInputSchema = z.object({
 export interface LoreEntry {
   id: string;
   lorebookId: string;
+  title: string;
   keys: string[];
   secondaryKeys: string[];
   content: string;
@@ -196,6 +197,7 @@ export interface Lorebook {
 }
 
 export const loreEntryInputSchema = z.object({
+  title: z.string().default(''),
   keys: z.array(z.string()).default([]),
   secondaryKeys: z.array(z.string()).default([]),
   content: z.string().max(200_000),
