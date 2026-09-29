@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import type { Conversation, GenerationMode, PinnedFact } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
-import ContextReport from './ContextReport.js';
+import AgentTrace from './AgentTrace.js';
 import InlineEdit from './InlineEdit.js';
 
 const tableNames: Record<string, string> = {
@@ -15,17 +15,12 @@ const tableNames: Record<string, string> = {
   quests_events: '任务与事件',
   options: '选项',
 };
-const formatBody = (value: unknown) => {
-  if (typeof value !== 'string') return JSON.stringify(value, null, 2);
-  try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
-};
-
 export default function Records({
   chat,
   generationMode,
   version,
   activity,
-  liveThinking,
+  activeTurnId,
   disabled,
   onError,
   onChanged,
@@ -36,7 +31,7 @@ export default function Records({
   generationMode: GenerationMode;
   version: number;
   activity: any[];
-  liveThinking: string;
+  activeTurnId: string | null;
   disabled: boolean;
   onError: (text: string) => void;
   onChanged: () => void;
@@ -52,7 +47,6 @@ export default function Records({
   const [editState, setEditState] = useState(false);
   const [busy, setBusy] = useState(false);
   const [baselineMemory, setBaselineMemory] = useState('');
-  const [traces, setTraces] = useState<any[]>([]);
   const [facts, setFacts] = useState<PinnedFact[]>([]);
   const [newFact, setNewFact] = useState('');
   const [editingFact, setEditingFact] = useState<string | null>(null);
@@ -64,16 +58,14 @@ export default function Records({
       api(`/conversations/${chat.id}/memory`),
       api(`/conversations/${chat.id}/state`),
       api(`/conversations/${chat.id}/proposals`),
-      api(`/conversations/${chat.id}/traces`),
       api(`/conversations/${chat.id}/facts`),
     ])
-      .then(([m, s, p, t, f]) => {
+      .then(([m, s, p, f]) => {
         if (active) {
           setMemory(m);
           setState(s);
           setStateText(JSON.stringify(s.tables, null, 2));
           setProposals(p);
-          setTraces(t);
           setFacts(f);
         }
       })
@@ -232,7 +224,6 @@ export default function Records({
         {tab === 'planner' && (
           <>
             <h3 className="planner-status">{generationMode === 'plain' ? '普通写作' : generationMode === 'planner' ? 'Planner → Writer' : '统一 Writer Agent'}</h3>
-            {generationMode !== 'plain' && liveThinking && <details className="activity" open><summary>当前请求 · 可见思考</summary><pre>{liveThinking}</pre></details>}
             {proposals.map((p) => (
               <article className="proposal" key={p.id}>
                 <small className="muted">{p.kind === 'state' ? '状态提案' : '世界事件'} · {p.status}</small>
@@ -246,36 +237,8 @@ export default function Records({
                 </div>
               </article>
             ))}
-            <div style={{ marginTop: 14 }}>
-              <div className="nav-label" style={{ paddingLeft: 0 }}>模型请求 Trace（最近 20 回合）</div>
-              {[...new Set(traces.map((trace) => trace.turnId))].map((turnId) => {
-                const records = traces.filter((trace) => trace.turnId === turnId).sort((a, b) => a.requestIndex - b.requestIndex);
-                return <details className="activity trace-turn" key={turnId} open={turnId === traces[0]?.turnId}>
-                  <summary>回合 {turnId.slice(0, 8)} · {records.length} 次请求</summary>
-                  {records.map((trace) => {
-                    const usage = trace.usage;
-                    const totalInput = usage ? usage.input + usage.cacheRead + usage.cacheWrite : null;
-                    const cacheRate = totalInput && usage ? `${Math.round(usage.cacheRead / totalInput * 100)}%` : usage ? '0%' : '未返回';
-                    const elapsed = (start: string | null, end: string | null) => start && end ? `${(Date.parse(end) - Date.parse(start)) / 1000}s` : '未返回';
-                    const timing = trace.timing;
-                    const phaseName = ({ selection: '选人', planning: '规划', writing: '写作', records: '记录更新', plain: '普通写作' } as Record<string, string>)[trace.phase] ?? trace.phase;
-                    return <article className="trace-card" key={trace.id}>
-                    <header><strong>{phaseName}</strong><span>{trace.model} · 请求 {trace.requestIndex + 1} · {trace.status}</span></header>
-                    <small className="muted">工具 {trace.tools?.length ?? 0} · 总输入 {totalInput ?? '未返回'} · 输出 {usage?.output ?? '未返回'} · 缓存命中 {usage?.cacheRead ?? '未返回'} / {cacheRate}{usage?.cacheWrite ? ` · 缓存写入 ${usage.cacheWrite}` : ''}{usage?.reasoning !== undefined ? ` · 思考 ${usage.reasoning}` : ''}</small>
-                    <small className="muted">准备 {elapsed(timing?.preparedAt, timing?.sentAt)} · 响应头 {elapsed(timing?.sentAt, timing?.headersAt)} · 首次思考 {elapsed(timing?.sentAt, timing?.firstThinkingAt)} · 首次正文 {elapsed(timing?.sentAt, timing?.firstTextAt)} · 总耗时 {elapsed(timing?.sentAt, timing?.completedAt)}</small>
-                    {trace.speaker && <small className="muted">输出身份：{trace.speaker.kind === 'narrator' ? '旁白' : trace.speaker.characterId}</small>}
-                    <ContextReport report={trace.contextReport} />
-                    <details><summary>实际请求 Body</summary><pre>{trace.request ? formatBody(trace.request) : '不可用（旧回合未捕获）'}</pre></details>
-                    {trace.response && <details><summary>原始响应 Body</summary><pre>{formatBody(trace.response)}</pre></details>}
-                    <details><summary>工具调用与结果</summary><pre>{trace.tools?.length ? JSON.stringify(trace.tools, null, 2) : '无工具调用'}</pre></details>
-                    <details open><summary>可见思考</summary><pre>{trace.thinking || '模型未返回可见思考内容。'}</pre></details>
-                    {trace.error && <p className="warning">{trace.error}</p>}
-                  </article>;})}
-                </details>;
-              })}
-              {!traces.length && activity.map((event, index) => <details className="activity" key={event.id ?? index} open={index >= activity.length - 3}><summary>{event.type}</summary><pre>{JSON.stringify(event.payload, null, 2)}</pre></details>)}
-              {!traces.length && !activity.length && <p className="muted">本轮尚未产生请求记录。</p>}
-            </div>
+            <AgentTrace key={chat.id} chatId={chat.id} version={version} activeTurnId={activeTurnId} onError={onError} />
+            {activity.length > 0 && <details className="activity"><summary>当前回合事件 · 最近 80 条</summary><pre>{JSON.stringify(activity, null, 2)}</pre></details>}
           </>
         )}
 

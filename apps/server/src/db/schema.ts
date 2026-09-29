@@ -156,6 +156,7 @@ export const turnTraces = sqliteTable('turn_traces', {
   response: text('response', { mode: 'json' }).$type<unknown>(),
   tools: text('tools', { mode: 'json' }).$type<unknown[]>().notNull().default([]),
   thinking: text('thinking'),
+  events: text('events', { mode: 'json' }).$type<import('@new-ai-chat/contracts').AgentTraceEvent[]>().notNull().default([]),
   usage: text('usage', { mode: 'json' }).$type<unknown>(),
   timing: text('timing', { mode: 'json' }).$type<RequestTiming | null>(),
   error: text('error'),

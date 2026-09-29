@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { fallbackPlan, validatePlan, type AgentRuntime, type BaseAgentRequest, type TracePhase } from '@new-ai-chat/agent-runtime';
+import { fallbackPlan, validatePlan, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
 import type { TurnRequest, TurnRecord, TurnPlan, SpeakerRef, TurnProgress, InterruptedOutput } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 import { EventBroker } from './events.js';
+import { createTraceSink } from './trace.js';
 import { StoryContext } from './context.js';
 import type { InternalPluginHost } from './plugins.js';
 
@@ -124,6 +125,7 @@ export class TurnService {
     let expectedHead = progress.head;
     const offset = progress.completedMessageIds.length;
     let settled = false;
+    const traceSink = createTraceSink(this.repository, this.events, turn);
     const live = new Map<number, Omit<InterruptedOutput, 'outputIndex'>>();
     const emit = (type: string, data: unknown = {}) => this.events.publish(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
     const emitVolatile = (type: string, data: unknown = {}) => this.events.publishVolatile(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
@@ -136,31 +138,6 @@ export class TurnService {
       const mode = this.repository.getGeneralSettings().generationMode;
       let actualMode = mode;
       let plan: TurnPlan | null = turn.plan ?? (forced ? { ...fallbackPlan(turn.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : null);
-      let requestIndex = 0;
-      const traceSink = {
-        start: (phase: TracePhase, model: string, speaker?: SpeakerRef, contextReport?: BaseAgentRequest['contextReport']) => {
-          const index = requestIndex++;
-          const trace = this.repository.createTrace({ conversationId: turn.conversationId, turnId: turn.id, phase, requestIndex: index, status: 'running', model, speaker: speaker ?? null, request: null, contextReport: contextReport ?? null, response: null, tools: [], thinking: null, usage: null, timing: { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null }, error: null });
-          emit('trace.started', { traceId: trace.id, phase, requestIndex: index, model, speaker }); return trace.id;
-        },
-        request: (traceId: string, payload: unknown) => { this.repository.updateTrace(traceId, { request: payload }); emit('trace.request', { traceId }); },
-        response: (traceId: string, response: unknown) => { this.repository.updateTrace(traceId, { response }); emit('trace.response', { traceId }); },
-        thinking: (traceId: string, text: string) => { this.repository.updateTrace(traceId, { thinking: text }); emit('agent.thinking', { traceId, text }); },
-        timing: (traceId: string, timing: any) => {
-          const current = this.repository.listTraces(turn.id).find((item) => item.id === traceId);
-          if (current?.timing) this.repository.updateTrace(traceId, { timing: { ...current.timing, ...timing } });
-        },
-        tool: (traceId: string, name: string, args: unknown, result?: unknown, ok = true) => {
-          const current = this.repository.listTraces(turn.id).find((item) => item.id === traceId);
-          this.repository.updateTrace(traceId, { tools: [...(current?.tools ?? []), { name, arguments: args, result, ok }] });
-          emit('tool.called', { phase: 'writer', traceId, name, args, ok });
-        },
-        finish: (traceId: string, status: 'completed' | 'failed' | 'cancelled', usage?: any, error?: string) => {
-          const knownUsage = usage && [usage.input, usage.output, usage.cacheRead, usage.cacheWrite, usage.totalTokens].some((value: number) => value > 0) ? usage : null;
-          this.repository.updateTrace(traceId, { status, usage: knownUsage, error: error ?? null, completedAt: new Date().toISOString() });
-          emit('trace.completed', { traceId, status, usage, error });
-        },
-      };
       if (mode === 'plain' && !forced && !plan && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
       if (mode === 'plain' && !plan) { plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = []; }
       if (mode === 'planner' && !forced && !plan) {
@@ -265,6 +242,6 @@ export class TurnService {
       this.repository.updateTurn(turn.id, { status, progress, error: message, completedAt: new Date().toISOString() });
       this.repository.pruneTraces(turn.conversationId, 20);
       emit(`turn.${status}`, { error: message });
-    } finally { this.events.clearSnapshot(turn.id); }
+    } finally { traceSink.flush(); this.events.clearSnapshot(turn.id); }
   }
 }

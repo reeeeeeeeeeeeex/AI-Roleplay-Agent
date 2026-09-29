@@ -17,8 +17,33 @@ export type GatewayStreamOptions = SimpleStreamOptions & {
   tracePayload?: (payload: unknown) => void;
   traceResponse?: (response: unknown) => void;
   onSent?: () => void;
-  onHeaders?: () => void;
+  onHeaders?: (response: Response) => void;
 };
+
+function captureResponseStream(response: Response, capture: (body: string) => void): Response {
+  if (!response.body) { capture(''); return response; }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    chunks.push(decoder.decode());
+    capture(chunks.join(''));
+  };
+  return new Response(new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) { finish(); controller.close(); return; }
+        chunks.push(decoder.decode(value, { stream: true }));
+        controller.enqueue(value);
+      } catch (error) { finish(); controller.error(error); }
+    },
+    async cancel(reason) { finish(); await reader.cancel(reason); },
+  }), { status: response.status, statusText: response.statusText, headers: response.headers });
+}
 
 function estimateContextTokens(context: Context, replayReasoning: boolean): number {
   // Count model-facing content, not local contextReport, usage, timestamps, or tool details.
@@ -198,8 +223,8 @@ export class PiModelGateway {
       if (sequence) logRaw('Input', sequence, requestBody);
       tracePayload?.(requestBody); onSent?.();
       const response = await baseFetch(input, { ...init, body: requestBody });
-      onHeaders?.();
-      if (streaming) return response;
+      onHeaders?.(response);
+      if (streaming) return traceResponse ? captureResponseStream(response, traceResponse) : response;
       const responseBody = await response.text();
       if (sequence) logRaw('Output', sequence, responseBody);
       traceResponse?.(responseBody);

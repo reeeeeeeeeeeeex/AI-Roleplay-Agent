@@ -33,10 +33,11 @@ function setup(steps: Step[]) {
     return new Response(events.map(event => `data: ${JSON.stringify(event)}`).join('\n\n') + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
   });
   const runtime = new PiAgentRuntime(new PiModelGateway(network));
-  const traces: Array<{ status?: string; error?: string; tools: Array<{ name: string; args: unknown; result: unknown; ok: boolean | undefined }> }> = [];
+  const traces: Array<{ status?: string; error?: string; response?: unknown; events: Array<{ type: string; data: any }>; tools: Array<{ name: string; args: unknown; result: unknown; ok: boolean | undefined }> }> = [];
   const trace: RuntimeTraceSink = {
-    start: () => { traces.push({ tools: [] }); return String(traces.length - 1); },
-    request: () => {}, response: () => {}, thinking: () => {}, timing: () => {},
+    start: () => { traces.push({ tools: [], events: [] }); return String(traces.length - 1); },
+    request: () => {}, response: (id, value) => { traces[Number(id)]!.response = value; }, thinking: () => {}, timing: () => {},
+    event: (id, type, data) => { traces[Number(id)]!.events.push({ type, data: structuredClone(data) }); },
     tool: (id, name, args, result, ok) => { traces[Number(id)]!.tools.push({ name, args, result, ok }); },
     finish: (id, status, _usage, error) => { Object.assign(traces[Number(id)]!, { status, error }); },
   };
@@ -92,6 +93,12 @@ describe('Agent tool lifecycle', () => {
     expect(onDelta.mock.calls.map(call => call[2])).toEqual(['Character prose.', 'Narrator prose.']);
     expect(result.results.map(output => output.speaker)).toEqual(voices.map(output => output.speaker));
     expect(onOutputComplete.mock.calls.map(call => call[1])).toEqual([0, 1]);
+    expect(traces[0]!.events.find(event => event.type === 'message_update' && event.data.type === 'thinking_delta')?.data).toMatchObject({ delta: 'Choose voices.' });
+    expect(traces[0]!.events.filter(event => event.type.startsWith('tool_execution_')).map(event => event.type)).toEqual(['tool_execution_start', 'tool_execution_end']);
+    expect(traces[1]!.events.find(event => event.type === 'message_end')?.data.message.content).toContainEqual({ type: 'text', text: 'I will inspect memory.' });
+    expect(traces[0]!.response).toContain('data: [DONE]');
+    expect(traces[2]!.events.find(event => event.type === 'message_end')?.data.message.stopReason).toBe('stop');
+    expect(traces[0]!.events.filter(event => event.type === 'message_update').every(event => !('partial' in event.data))).toBe(true);
   });
 
   it('returns a corrective tool result for repeated selection without losing the selected speaker', async () => {

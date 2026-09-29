@@ -94,6 +94,7 @@ export interface BaseAgentRequest {
 
 export type TracePhase = 'selection' | 'planning' | 'writing' | 'records' | 'plain';
 export interface RuntimeTraceSink {
+  event?(traceId: string, type: string, data: unknown): void;
   start(phase: TracePhase, model: string, speaker?: SpeakerRef, contextReport?: ContextReport): string;
   request(traceId: string, payload: unknown): void;
   response(traceId: string, payload: unknown): void;

@@ -60,7 +60,6 @@ export default function App() {
   const [lastTurn, setLastTurn] = useState<TurnRecord | null>(null);
   const draftFrame = useRef<number | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
-  const [agentThinking, setAgentThinking] = useState('');
   const [phase, setPhase] = useState('');
   const [recordsVersion, setRecordsVersion] = useState(0);
   const [session, setSession] = useState<any>(null);
@@ -197,7 +196,6 @@ export default function App() {
     setLastTurn(null);
     followBottom.current = true; setAwayFromBottom(false);
     setActivity([]);
-    setAgentThinking('');
     setReplyTarget('auto');
     if (chatId) { localStorage.setItem('selected-chat', chatId); act(refreshMessages(chatId)); }
   }, [chatId]);
@@ -234,7 +232,7 @@ export default function App() {
         if (chatRef.current !== currentChat) return;
         const p = event.payload;
         if (!['writer.delta', 'thinking.delta', 'writer.snapshot'].includes(event.type)) setActivity((old) => [...old.slice(-79), event]);
-        if (event.type === 'turn.started') { setAgentThinking(''); setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 准备上下文' : generalSettings.generationMode === 'planner' ? 'Planner · 规划' : 'Writer Agent · 选择发言者'); }
+        if (event.type === 'turn.started') { setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 准备上下文' : generalSettings.generationMode === 'planner' ? 'Planner · 规划' : 'Writer Agent · 选择发言者'); }
         if (event.type === 'agent.phase') setPhase(p.phase === 'selection' ? 'Writer Agent · 选择发言者' : 'Writer Agent · 写作');
         if (event.type === 'agent.thinking') setPhase('Writer Agent · 思考');
         if (event.type === 'writer.started') {
@@ -246,7 +244,6 @@ export default function App() {
         }
         if (event.type === 'thinking.delta') {
           if (generalSettings.generationMode === 'plain') queueDraft(old => old[p.outputIndex] ? { ...old, [p.outputIndex]: { ...old[p.outputIndex]!, thinking: old[p.outputIndex]!.thinking + p.delta } } : old);
-          else setAgentThinking((old) => old + p.delta);
           setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 思考' : 'Writer Agent · 思考');
         }
         if (event.type === 'writer.snapshot') {
@@ -1013,7 +1010,7 @@ export default function App() {
           generationMode={generalSettings.generationMode}
           version={recordsVersion}
           activity={activity}
-          liveThinking={agentThinking}
+          activeTurnId={turn?.id ?? null}
           disabled={!!turn}
           onError={setError}
           onChanged={() => setRecordsVersion((v) => v + 1)}

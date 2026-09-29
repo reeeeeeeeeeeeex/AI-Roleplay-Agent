@@ -37,6 +37,44 @@ test('startup distinguishes missing endpoints from required pairing', async ({ p
   await expect(page.getByRole('button', { name: '通用设置', exact: true })).toBeVisible();
 });
 
+test('developer Trace viewer shows live thinking, tool results and exact raw input', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  const raw = '{\n  "model": "trace-test", "messages": [{"role":"user","content":"测试原文"}]\n}';
+  const at = '2026-09-29T12:00:00.000Z';
+  const base = { conversationId: 'chat', turnId: 'trace-turn', model: 'trace-test', phase: 'writing', speaker: { kind: 'narrator' }, createdAt: at, completedAt: at, timing: null, usage: null, error: null, request: raw, response: 'data: {"text":"工具响应"}\n\ndata: [DONE]\n\n', thinking: null, tools: [], contextReport: null };
+  const done = { ...base, id: 'trace-tools', requestIndex: 0, status: 'completed', events: [
+    { type: 'message_end', at, data: { message: { role: 'assistant', stopReason: 'toolUse', content: [{ type: 'thinking', thinking: '先检查记忆。' }, { type: 'text', text: '准备读取记忆。' }, { type: 'toolCall', id: 'call', name: 'read_memory', arguments: { limit: 2 } }] } } },
+    { type: 'tool_execution_start', at, data: { toolCallId: 'call', toolName: 'read_memory', args: { limit: 2 } } },
+    { type: 'tool_execution_end', at, data: { toolCallId: 'call', toolName: 'read_memory', isError: false, result: { content: [{ type: 'text', text: '工具返回的完整记忆。' }] } } },
+  ] };
+  const live = { ...base, id: 'trace-live', requestIndex: 1, status: 'running', completedAt: null };
+  let reads = 0;
+  await page.route(/\/api\/conversations\/[^/]+\/traces\?view=summary$/, route => route.fulfill({ json: [live, done].map(({ request, response, thinking, tools, contextReport, ...row }) => row) }));
+  await page.route('**/api/traces/**', route => {
+    if (route.request().url().includes('trace-tools')) return route.fulfill({ json: done });
+    const events = [{ type: 'message_update', at, data: { type: 'thinking_delta', contentIndex: 0, delta: ++reads > 1 ? '正在思考，继续检查。' : '正在思考' } }];
+    return route.fulfill({ json: { ...live, events } });
+  });
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__traceClipboard = text; } } }));
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(page.locator('.trace-thinking pre')).toContainText('正在思考，继续检查。');
+  await page.getByRole('button', { name: '放大 Trace' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Agent Trace' });
+  expect((await dialog.boundingBox())!.width).toBeGreaterThan(1100);
+  await dialog.getByRole('button', { name: /1\. Writer/ }).click();
+  await expect(dialog.locator('.trace-tool')).toContainText('工具返回的完整记忆。');
+  await expect(dialog.locator('.trace-text')).toContainText('准备读取记忆。');
+  await dialog.getByText('Raw input · 实际请求 Body', { exact: true }).click();
+  await dialog.getByRole('button', { name: '复制原文', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).__traceClipboard)).toBe(raw);
+  await dialog.getByText('Raw output · 原始响应 / SSE 流', { exact: true }).click();
+  await expect(dialog.locator('.trace-raw').filter({ hasText: 'Raw output' }).locator('pre')).toHaveText(done.response);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test('native narrator and user narration', async ({ page }, info) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await send(page, '我推开旧书店的门。', 3);

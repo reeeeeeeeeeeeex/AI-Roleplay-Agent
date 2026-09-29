@@ -97,7 +97,8 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const turn = repo.getTurn(idOf(req)); if (!turn) return reply.code(404).send({ error: 'Turn not found.' });
     return repo.listTraces(turn.id);
   });
-  app.get('/api/conversations/:id/traces', async req => repo.listConversationTraces(idOf(req)));
+  app.get('/api/conversations/:id/traces', async req => (req.query as { view?: string }).view === 'summary' ? repo.listTraceSummaries(idOf(req)) : repo.listConversationTraces(idOf(req)));
+  app.get('/api/traces/:id', async (req, reply) => repo.getTrace(idOf(req), (req.query as { view?: string }).view === 'live') ?? reply.code(404).send({ error: 'Trace not found.' }));
   app.post('/api/conversations/:id/prompt-preview', async (req) => {
     const chatId = idOf(req);
     const body = req.body && typeof req.body === 'object' ? req.body : {};

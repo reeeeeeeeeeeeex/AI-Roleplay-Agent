@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
 import { defaultPromptSettings, generalSettingsSchema, promptSettingsSchema, type GeneralSettings, type PromptSettings, type TurnTrace } from '@new-ai-chat/contracts';
 import type {
   Character,
@@ -360,13 +360,14 @@ export class Repository {
       request: this.traceSafe(input.request), response: this.traceSafe(input.response),
       contextReport: input.contextReport ?? null,
       tools: this.traceSafe(input.tools) as unknown[], thinking: input.thinking,
+      events: this.traceSafe(input.events ?? []) as TurnTrace['events'],
       usage: input.usage, timing: input.timing, error: input.error, createdAt: now(), completedAt: null,
     };
     this.database.db.insert(turnTraces).values(row).run();
     return row as TurnTrace;
   }
-  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'thinking' | 'usage' | 'timing' | 'error' | 'completedAt'>>): TurnTrace | null {
-    const patch = { ...values, request: values.request === undefined ? undefined : this.traceSafe(values.request), response: values.response === undefined ? undefined : this.traceSafe(values.response), tools: values.tools === undefined ? undefined : this.traceSafe(values.tools) as unknown[] };
+  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'events' | 'thinking' | 'usage' | 'timing' | 'error' | 'completedAt'>>): TurnTrace | null {
+    const patch = { ...values, request: values.request === undefined ? undefined : this.traceSafe(values.request), response: values.response === undefined ? undefined : this.traceSafe(values.response), tools: values.tools === undefined ? undefined : this.traceSafe(values.tools) as unknown[], events: values.events === undefined ? undefined : this.traceSafe(values.events) as TurnTrace['events'] };
     this.database.db.update(turnTraces).set(patch).where(eq(turnTraces.id, traceId)).run();
     const row = this.database.db.select().from(turnTraces).where(eq(turnTraces.id, traceId)).get();
     return row ? row as TurnTrace : null;
@@ -374,8 +375,18 @@ export class Repository {
   listTraces(turnId: string): TurnTrace[] {
     return this.database.db.select().from(turnTraces).where(eq(turnTraces.turnId, turnId)).orderBy(asc(turnTraces.requestIndex)).all() as TurnTrace[];
   }
+  getTrace(traceId: string, live = false) {
+    const { request, response, contextReport, ...liveColumns } = getTableColumns(turnTraces);
+    return this.database.db.select(live ? liveColumns : getTableColumns(turnTraces)).from(turnTraces).where(eq(turnTraces.id, traceId)).get() ?? null;
+  }
+  listTraceSummaries(conversationId: string) {
+    const { request, response, contextReport, tools, events, thinking, ...columns } = getTableColumns(turnTraces);
+    return this.database.db.select(columns).from(turnTraces).where(eq(turnTraces.conversationId, conversationId)).orderBy(desc(turnTraces.createdAt), desc(turnTraces.requestIndex)).all();
+  }
   listConversationTraces(conversationId: string, limit = 20): TurnTrace[] {
-    return this.database.db.select().from(turnTraces).where(eq(turnTraces.conversationId, conversationId)).orderBy(desc(turnTraces.createdAt)).limit(limit * 8).all() as TurnTrace[];
+    const rows = this.database.db.select().from(turnTraces).where(eq(turnTraces.conversationId, conversationId)).orderBy(desc(turnTraces.createdAt)).all() as TurnTrace[];
+    const ids = new Set([...new Set(rows.map(row => row.turnId))].slice(0, limit));
+    return rows.filter(row => ids.has(row.turnId));
   }
   pruneTraces(conversationId: string, keepTurns = 20): void {
     const turnsWithTraces = this.database.db.select({ turnId: turnTraces.turnId }).from(turnTraces)

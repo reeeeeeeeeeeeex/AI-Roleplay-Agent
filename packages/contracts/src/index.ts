@@ -347,6 +347,12 @@ export interface ContextReportItem {
 }
 export interface ContextReport { items: ContextReportItem[] }
 
+export interface AgentTraceEvent {
+  type: string;
+  at: string;
+  data: unknown;
+}
+
 export interface TurnTrace {
   id: string;
   conversationId: string;
@@ -360,6 +366,7 @@ export interface TurnTrace {
   contextReport?: ContextReport | null;
   response: unknown | null;
   tools: Array<{ name: string; arguments: unknown; result?: unknown; ok?: boolean }>;
+  events: AgentTraceEvent[];
   thinking: string | null;
   usage: AgentUsage | null;
   timing: RequestTiming | null;
@@ -367,6 +374,8 @@ export interface TurnTrace {
   createdAt: string;
   completedAt: string | null;
 }
+
+export type TraceSummary = Omit<TurnTrace, 'request' | 'response' | 'contextReport' | 'tools' | 'events' | 'thinking'>;
 
 export interface MemoryCoverage {
   startMessageId: string;

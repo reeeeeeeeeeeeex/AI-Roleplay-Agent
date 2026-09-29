@@ -8,6 +8,7 @@ import { characterInputSchema, connectionInputSchema, conversationInputSchema, t
 import { settledStoryIds, applyProposal } from './records.js';
 import { StoryContext } from './context.js';
 import { Repository } from '../db/repository.js';
+import { createTraceSink } from './trace.js';
 
 class InspectRuntime extends FakeRuntime {
   requests: BaseAgentRequest[]=[];
@@ -27,6 +28,65 @@ beforeEach(async()=>{
   chat=server.repository.createConversation(conversationInputSchema.parse({title:'Test story',kind:'solo',characterId:character})).id;
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
+
+it('developer Trace exposes live model and tool events before a turn completes', async () => {
+  const repo = server.repository;
+  repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.listConnections()[0]!, protocol: 'openai-chat-completions', reasoning: 'high' }));
+  let release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const encode = (delta: unknown, finish_reason: string | null = null) => `data: ${JSON.stringify({ id: 'trace-test', object: 'chat.completion.chunk', model: 'test', choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+  const firstRaw = encode({ reasoning_content: '先读取记忆。', tool_calls: [{ index: 0, id: 'memory-call', type: 'function', function: { name: 'read_memory', arguments: '{}' } }] }) + encode({}, 'tool_calls') + 'data: [DONE]\n\n';
+  const lastRaw = encode({ reasoning_content: '现在写正文。' }) + encode({ content: 'Trace 测试正文。' }) + encode({}, 'stop') + 'data: [DONE]\n\n';
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(firstRaw, { headers: { 'content-type': 'text/event-stream' } })).mockImplementationOnce(async () => new Response(new ReadableStream({
+    async start(stream) {
+      stream.enqueue(new TextEncoder().encode(encode({ reasoning_content: '现在写正文。' })));
+      await waiting;
+      stream.enqueue(new TextEncoder().encode(encode({ content: 'Trace 测试正文。' }) + encode({}, 'stop') + 'data: [DONE]\n\n'));
+      stream.close();
+    },
+  }), { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'upstream-trace', authorization: 'not-a-trace-header' } }));
+  vi.stubGlobal('fetch', fetchMock);
+  const pi = new PiAgentRuntime(); runtime.writeTurn = pi.writeTurn.bind(pi);
+  const turn = server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'normal', input: { text: '测试', voice: 'protagonist' }, replyTarget: { mode: 'explicit', speaker: { kind: 'character', characterId: character } } }));
+  try {
+    await vi.waitFor(() => {
+      const live = repo.listTraces(turn.id)[1];
+      expect(live?.events.some(event => event.type === 'message_update' && (event.data as any).delta === '现在写正文。')).toBe(true);
+    });
+    const traces = repo.listTraces(turn.id);
+    expect(repo.getTurn(turn.id)?.status).toBe('running');
+    expect(traces[0]?.tools[0]).toMatchObject({ name: 'read_memory', ok: true });
+    expect(traces[0]?.response).toBe(firstRaw);
+    const summary = (await server.app.inject({ method: 'GET', url: `/api/conversations/${chat}/traces?view=summary` })).json();
+    expect(summary[0]).not.toHaveProperty('request'); expect(summary[0]).not.toHaveProperty('events');
+    const live = (await server.app.inject({ method: 'GET', url: `/api/traces/${traces[1]!.id}?view=live` })).json();
+    expect(live.status).toBe('running'); expect(live).not.toHaveProperty('request');
+    expect(live.events.find((event: any) => event.type === 'http.response').data).toMatchObject({ status: 200, requestId: 'upstream-trace' });
+    expect(JSON.stringify(live)).not.toContain('not-a-trace-header');
+  } finally { release(); await server.turns.idle(chat); }
+  const trace = repo.listTraces(turn.id)[1]!;
+  expect(trace.status).toBe('completed'); expect(trace.response).toBe(lastRaw);
+  expect(trace.events.find(event => event.type === 'message_end' && (event.data as any).message.role === 'assistant')?.data).toMatchObject({ message: { stopReason: 'stop', content: expect.arrayContaining([{ type: 'text', text: 'Trace 测试正文。' }]) } });
+  expect(repo.getActiveBranch(chat).at(-1)?.content).toBe('Trace 测试正文。');
+});
+
+it('developer Trace retains cancelled partial events and redacts structured secrets', async () => {
+  const repo = server.repository;
+  const turn = repo.createTurn(chat, 'trace-story', 'auto');
+  const sink = createTraceSink(repo, server.events, turn);
+  const id = sink.start('writing', 'test');
+  const data = { type: 'thinking_delta', contentIndex: 0, delta: '已经返回的思考', signature: 'private-signature' };
+  sink.event!(id, 'message_update', data);
+  data.delta = 'later mutation';
+  sink.event!(id, 'tool_execution_start', { toolCallId: 'call', toolName: 'read_memory', args: {} });
+  sink.finish(id, 'cancelled', undefined, 'Cancelled');
+  const restored = new Repository(server.repository.database).listTraces(turn.id)[0]!;
+  expect(restored.events[0]?.data).toEqual({ type: 'thinking_delta', contentIndex: 0, delta: '已经返回的思考', signature: '[redacted]' });
+  expect(restored.status).toBe('cancelled');
+  expect((await server.app.inject({ method: 'GET', url: `/api/traces/${id}` })).json().events).toEqual(restored.events);
+  sink.flush();
+});
+
 it('model settings: discovers models with saved credentials without saving the draft', async () => {
   const fetchMock = vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'model-b' }, { id: 'model-a' }, { id: 'model-a' }] }));
   vi.stubGlobal('fetch', fetchMock);

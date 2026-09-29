@@ -116,6 +116,7 @@ export function migrateDatabase(database: Database.Database): void {
     ['turns', 'records_status', "TEXT NOT NULL DEFAULT 'idle'"],
     ['memories', 'coverage', 'TEXT'],
     ['turn_traces', 'context_report', 'TEXT'],
+    ['turn_traces', 'events', "TEXT NOT NULL DEFAULT '[]'"],
     ['groups', 'avatar_path', 'TEXT'],
   ]) {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;

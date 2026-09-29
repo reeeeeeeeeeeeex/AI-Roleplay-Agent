@@ -102,11 +102,28 @@ describe('gateway transport contract', () => {
       }
       expect(text).toBe('OK'); expect(thinking).toBe('think');
       expect(requests).toEqual([sentBodies.at(-1)]);
-      if (streaming) { expect(writes).toEqual([]); expect(responses).toEqual([]); }
+      if (streaming) { expect(writes).toEqual([]); expect(responses).toEqual([rawResponses.at(-1)]); }
       else { expect(writes.join('')).toContain(sentBodies.at(-1)); expect(writes.join('')).toContain(rawResponses.at(-1)); expect(responses).toEqual([rawResponses.at(-1)]); }
     }
     write.mockRestore();
     expect(captured).toBe(sentBodies[0]);
     expect(sent).toEqual([true, false]);
+  });
+
+  it('retains the exact partial SSE when a stream is aborted', async () => {
+    const controller = new AbortController();
+    const raw = 'data: {"id":"partial","object":"chat.completion.chunk","model":"test","choices":[{"index":0,"delta":{"reasoning_content":"正在检查"},"finish_reason":null}]}\n\n';
+    const gateway = new PiModelGateway(async () => new Response(new ReadableStream({
+      start(stream) {
+        stream.enqueue(new TextEncoder().encode(raw));
+        controller.signal.addEventListener('abort', () => stream.error(new DOMException('Aborted', 'AbortError')), { once: true });
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } }));
+    const connection: RuntimeConnection = { id: 'test', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 1, maxTokens: 100, reasoning: 'high' };
+    const captured: unknown[] = [];
+    for await (const event of gateway.stream(connection, context, { signal: controller.signal, traceResponse: value => captured.push(value) })) {
+      if (event.type === 'thinking_delta') controller.abort();
+    }
+    expect(captured).toEqual([raw]);
   });
 });
