@@ -244,7 +244,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   });
   app.post('/api/imports/preview', async (req) => { const input=z.object({ sourcePath:z.string().default(config.defaultImportPath) }).parse(req.body); return (await scanImport(input.sourcePath)).preview; });
   app.post('/api/imports/execute', async (req) => { idleAll(); const input=z.object({ sourcePath:z.string(), sourceHash:z.string().length(64) }).parse(req.body); return executeImport(repo,input.sourcePath,input.sourceHash,config.assetDir); });
-  app.post('/api/assets/upload', async (req, reply) => {
+  app.post('/api/assets/upload', { bodyLimit: 25 * 1024 * 1024 }, async (req, reply) => {
     const { dataUrl } = z.object({
       filename: z.string().min(1).max(255).optional(),
       dataUrl: z.string().min(1).max(25_000_000),

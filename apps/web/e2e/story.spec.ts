@@ -50,6 +50,29 @@ test('deleting a persona sends no JSON header with an empty body', async ({ page
   expect((await (await request.get('/api/personas')).json()).some((item: { id: string }) => item.id === persona.id)).toBe(false);
 });
 
+test('replacing a persona image saves an upload larger than the normal JSON limit', async ({ page, request }) => {
+  const oldImage = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=';
+  const oldUrl = (await (await request.post('/api/assets/upload', { data: { filename: 'old.png', dataUrl: `data:image/png;base64,${oldImage}` } })).json()).url;
+  const persona = await (await request.post('/api/personas', { data: { name: '换图测试主角', avatarPath: oldUrl } })).json();
+  await page.reload();
+  await page.locator('.studio-nav button').filter({ hasText: '主角' }).first().click();
+  await page.getByRole('button', { name: persona.name, exact: true }).click();
+  const editor = page.getByRole('dialog', { name: '编辑主角', exact: true });
+  await expect(editor.getByRole('button', { name: '更换图片' })).toBeVisible();
+  const uploaded = page.waitForResponse(response => response.url().endsWith('/api/assets/upload'));
+  await editor.locator('input[type="file"]').setInputFiles({
+    name: 'portrait.png', mimeType: 'image/png',
+    buffer: Buffer.concat([Buffer.from(oldImage, 'base64'), Buffer.alloc(1_600_000)]),
+  });
+  const response = await uploaded;
+  expect(response.status()).toBe(200);
+  const { url } = await response.json();
+  expect(url).not.toBe(oldUrl);
+  await expect(editor.locator('.avatar-field-preview img')).toHaveAttribute('src', url);
+  await expect.poll(async () => (await (await request.get(`/api/personas/${persona.id}`)).json()).avatarPath).toBe(url);
+  expect((await request.get(url)).status()).toBe(200);
+});
+
 test('global send count and fixed message start control the raw prompt range', async ({ page }) => {
   await send(page, '仅早期历史包含蓝色车票。', 3);
   await send(page, '现在进入旧书店。', 6);

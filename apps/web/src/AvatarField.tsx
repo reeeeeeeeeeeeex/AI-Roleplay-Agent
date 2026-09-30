@@ -20,6 +20,11 @@ export default function AvatarField({
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > 18_000_000) {
+      setError('图片不能超过 18 MB。');
+      event.target.value = '';
+      return;
+    }
     setError('');
     setUploading(true);
 
