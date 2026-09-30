@@ -189,7 +189,7 @@ export default function Editor({
   return (
     <>
       <div className="modal-shade" style={{ zIndex }} onClick={event => { if (event.target === event.currentTarget) void close(); }}>
-        <section className="modal" role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
+        <section className={`modal${kind === 'conversations' || kind === 'characters' ? ' editor-wide-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
           <header>
             <h2>{record.current?.id ? titles[kind] : `创建${titles[kind]}`}</h2>
             <button onClick={() => void close()} aria-label="关闭">✕</button>

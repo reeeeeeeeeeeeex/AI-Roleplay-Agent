@@ -1528,6 +1528,19 @@ button.character-card-desc.content-link, button.resource-desc.content-link { dis
   flex-direction: column;
 }
 
+.modal.editor-wide-modal, .modal.lorebook-modal {
+  width: min(1080px, 100%);
+  height: min(880px, 92dvh);
+  max-height: 94dvh;
+}
+
+.editor-wide-modal > form { flex: 1; min-height: 0; }
+.editor-wide-modal textarea { min-height: 180px; }
+
+@media (max-width: 600px) {
+  .editor-wide-modal > form { padding: 12px; }
+}
+
 .modal > header {
   height: 48px;
   min-height: 48px;
