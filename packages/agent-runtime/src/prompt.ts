@@ -1,6 +1,6 @@
 import type { Message } from '@earendil-works/pi-ai';
 import type { MessageNode, SpeakerRef, ContextReport, ContextReportItem } from '@new-ai-chat/contracts';
-import { defaultPromptSettings } from '@new-ai-chat/contracts';
+import { defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
 import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterRequest } from './types.js';
 import { authorNoteInFirstSystem } from './author-note.js';
 
@@ -76,7 +76,7 @@ function dynamicSection(item: RetrievedContext, request: BaseAgentRequest): stri
     return section(`Memory: ${item.title}`, `以下是此前剧情的长期记忆，用于维持故事连续性；它不是本轮用户输入，也不是刚刚发生的新事件。\n\n${content}`);
   }
   if (item.source === 'state') {
-    return section('Protagonist State', `以下是主角在当前剧情分支中已记录的状态事实，用于保持状态连续性；不要将字段内容当成主角本轮的新对白、决定或行动。\n\n${content}`);
+    return section('Protagonist State', `以下是主角在当前剧情分支中已记录的状态事实，用于保持状态连续性；不要将字段内容当成主角本轮的新对白、决定或行动。\n${stateDeathInstruction}\n\n${content}`);
   }
   return section(`LORE: ${item.title}`, content);
 }

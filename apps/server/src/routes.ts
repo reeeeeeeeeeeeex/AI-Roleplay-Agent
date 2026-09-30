@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { characterInputSchema, connectionInputSchema, conversationInputSchema, groupInputSchema, lorebookInputSchema, personaInputSchema, normalizeState, applyStateOperations, blankState, turnRequestSchema, promptSettingsSchema } from '@new-ai-chat/contracts';
+import { characterInputSchema, connectionInputSchema, conversationInputSchema, groupInputSchema, lorebookInputSchema, personaInputSchema, normalizeState, applyStateOperations, blankState, stateColumns, turnRequestSchema, promptSettingsSchema } from '@new-ai-chat/contracts';
 import type { Repository } from './db/repository.js';
 import type { TurnService } from './services/turns.js';
 import { RecordService, applyProposal, settledStoryIds } from './services/records.js';
@@ -213,6 +213,21 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const result = applyStateOperations(tables, [{ op: 'updateRow', table: value.table, rowId: value.rowId, cells: { [value.column]: value.content } }]);
     return result.changed ? repo.createState(chat, settledStoryIds(repo, chat).at(-1) ?? null, result.tables) : { tables };
   });
+  app.route({ method: ['PATCH', 'DELETE'], url: '/api/conversations/:id/state/row', handler: async req => {
+    const chat = idOf(req); turns.assertIdle(chat);
+    const value = z.object({
+      head: z.string().nullable(), table: z.enum(['important_characters', 'protagonist_skills', 'inventory', 'quests_events']),
+      rowId: z.number().int().positive(), previous: z.record(z.string(), z.unknown()), cells: z.record(z.string(), z.unknown()).optional(),
+    }).parse(req.body);
+    const tables = repo.latestState(chat)?.tables ?? blankState();
+    const row = tables[value.table].find(item => item.row_id === value.rowId);
+    if (repo.getConversation(chat)?.headMessageId !== value.head || !row || row.row_id !== value.previous.row_id || stateColumns[value.table].some(column => (row[column] ?? '') !== (value.previous[column] ?? ''))) throw new Error('这条记录或分支已变化，未覆盖现有内容。请重新打开后核对。');
+    const operation = req.method === 'DELETE'
+      ? { op: 'deleteRow', table: value.table, rowId: value.rowId }
+      : { op: 'updateRow', table: value.table, rowId: value.rowId, cells: value.cells };
+    const result = applyStateOperations(tables, [operation], { allowImportantCharacterDeletion: true });
+    return result.changed ? repo.createState(chat, settledStoryIds(repo, chat).at(-1) ?? null, result.tables) : { tables };
+  } });
   for (const kind of ['memory','state'] as const) app.post(`/api/conversations/:id/${kind}/generate`, async (req) => { const chat=idOf(req); turns.assertIdle(chat); return records.generate(chat,kind,AbortSignal.timeout(120_000)); });
   app.get('/api/conversations/:id/proposals', async (req) => repo.listProposals(idOf(req)));
   app.post('/api/proposals/:id/:action', async (req) => { const value = z.object({ id:z.string(), action:z.enum(['apply','reject','undo']) }).parse(req.params); const proposal=repo.getProposal(value.id); if (!proposal) throw new Error('Proposal not found.'); turns.assertIdle(proposal.conversationId); return applyProposal(repo,value.id,value.action); });

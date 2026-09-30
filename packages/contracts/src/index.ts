@@ -431,7 +431,7 @@ export interface PinnedFact {
 export interface StoryBookmark { id: string; name: string; messageId: string }
 export interface StoryNavigation {
   bookmarks: StoryBookmark[];
-  scene: { scenario: string; time: string; location: string; presentCharacters: string[] };
+  scene: { scenario: string; time: string; location: string; importantCharacters: string[] };
 }
 
 export interface MemoryEntry {

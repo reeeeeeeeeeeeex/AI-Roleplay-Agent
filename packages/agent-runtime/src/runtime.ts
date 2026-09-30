@@ -1,7 +1,7 @@
 import { Agent, type AgentEvent, type AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type AssistantMessage, type AssistantMessageEvent, type Context, type Message } from '@earendil-works/pi-ai';
 import type { RequestTiming, SpeakerRef, TurnPlan, ContextReport } from '@new-ai-chat/contracts';
-import { actionChoiceListSchema, defaultPromptSettings } from '@new-ai-chat/contracts';
+import { actionChoiceListSchema, defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
 import { buildActionChoiceContext } from './prompt.js';
 import { buildAuthorNoteMessages, buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest, latestUserAnchor, estimateTokens } from './prompt.js';
 import { fallbackPlan, validatePlan } from './plan.js';
@@ -101,7 +101,7 @@ function domainTools(source: StoryContextSource, overrides: BaseAgentRequest['to
     },
     {
       name: 'read_state', label: 'Read protagonist state',
-      description: 'Read the current validated protagonist state snapshot.',
+      description: `Read the current validated protagonist state snapshot. ${stateDeathInstruction}`,
       parameters: Type.Object({}),
       execute: async () => textResult(await source.readState()),
     },

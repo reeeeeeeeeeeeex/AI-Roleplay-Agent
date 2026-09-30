@@ -70,6 +70,22 @@ it('developer Trace exposes live model and tool events before a turn completes',
   expect(repo.getActiveBranch(chat).at(-1)?.content).toBe('Trace 测试正文。');
 });
 
+it('row edits repair incomplete records atomically and reject stale deletion', async () => {
+  const tables = blankState();
+  tables.inventory = [{ row_id: 1, item_name: '', quantity: '', category: '贵重品', description: '资金' }];
+  server.repository.createState(chat, null, tables);
+  const body = { head: server.repository.getConversation(chat)!.headMessageId, table: 'inventory', rowId: 1, previous: tables.inventory[0] };
+  const url = `/api/conversations/${chat}/state/row`;
+  const result = await server.app.inject({ method: 'PATCH', url, payload: { ...body, cells: { item_name: '资金', quantity: '1', category: '贵重品', description: '资金' } } });
+  expect(result.statusCode).toBe(200);
+  const previous = result.json().tables.inventory[0];
+  expect(previous).toMatchObject({ item_name: '资金', quantity: '1' });
+  expect((await server.app.inject({ method: 'DELETE', url, payload: body })).statusCode).not.toBe(200);
+  expect((await server.app.inject({ method: 'DELETE', url, payload: { ...body, previous, head: 'obsolete-branch' } })).statusCode).not.toBe(200);
+  const removed = await server.app.inject({ method: 'DELETE', url, payload: { ...body, previous } });
+  expect(removed.statusCode).toBe(200); expect(removed.json().tables.inventory).toEqual([]);
+});
+
 it('developer Trace retains cancelled partial events and redacts structured secrets', async () => {
   const repo = server.repository;
   const turn = repo.createTurn(chat, 'trace-story', 'auto');
@@ -658,8 +674,8 @@ describe('record truth and logical-turn safeguards', () => {
     const book = repo.createLorebook(lorebookInputSchema.parse({ name: '灯塔世界', entries: [{ keys: ['灯塔'], content: '灯塔临海' }] }));
     const group = repo.createGroup({ name: '旅途', memberIds: [character], scenario: '海边' });
     repo.updateConversation(chat, { ...repo.getConversation(chat)!, kind: 'group', characterId: null, groupId: group.id, lorebookIds: [book.id], authorNote: '让海边场景保持安静。' });
-    const state = blankState(); state.global_state[0]!.current_location = '灯塔'; state.global_state[0]!.cur_time = '夜间';
-    state.important_characters.push({ row_id: 1, name: 'Sina', is_absent: '否' }); repo.createState(chat, turn.storyTurnId, state);
+    const state = blankState(); state.global_state[0]!.current_location = '灯塔'; state.global_state[0]!.current_time = '夜间';
+    state.important_characters.push({ row_id: 1, name: 'Sina', is_dead: '否' }); repo.createState(chat, turn.storyTurnId, state);
     await server.records.generate(chat, 'memory', new AbortController().signal);
     repo.savePinnedFact(chat, '灯塔临海', old[0]!.id); repo.saveBookmark(chat, '发现信件', old.at(-1)!.id);
     repo.createProposals(chat, { ...turn.plan!, worldEventProposals: [{ summary: '桥已封闭', evidence: '公告' }] });
@@ -683,7 +699,7 @@ describe('record truth and logical-turn safeguards', () => {
     expect(repo.getActiveBranch(copy.id)).toHaveLength(3);
     expect(repo.listMemories(copy.id)[0]?.coverage?.endMessageId).toBe(bookmark.messageId);
     expect(repo.listPinnedFacts(copy.id)[0]?.sourceMessageId).toBe(repo.getActiveBranch(copy.id)[0]?.id);
-    expect(repo.navigation(copy.id).scene).toMatchObject({ location: '灯塔', time: '夜间', presentCharacters: ['Sina'] });
+    expect(repo.navigation(copy.id).scene).toMatchObject({ location: '灯塔', time: '夜间', importantCharacters: ['Sina'] });
     expect(repo.currentWorld(copy.id)[0]?.summary).toBe('桥已封闭');
     applyProposal(repo, repo.listProposals(copy.id)[0]!.id, 'undo'); expect(repo.currentWorld(copy.id)).toEqual([]);
     const copiedCharacter = repo.getCharacter(repo.getGroup(copy.groupId)!.memberIds[0]!)!;

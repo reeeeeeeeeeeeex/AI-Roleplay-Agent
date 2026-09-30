@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { characterInputSchema, personaInputSchema, lorebookInputSchema, groupInputSchema, conversationInputSchema, speakerRefSchema, turnPlanSchema, generationModeSchema, normalizeState } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 import { retireProposalOptions } from '../db/retired-options.js';
+import { normalizeLegacyStateProposal } from '../db/state-fields.js';
 import { conversations, messages, memories, stateSnapshots, proposals, sessionEvents } from '../db/schema.js';
 
 const ref = z.string().min(1).max(200);
@@ -51,7 +52,7 @@ type StoryArchive = z.infer<typeof archiveSchema>;
 
 export function readStoryArchive(value: unknown): StoryArchive {
   const archive = archiveSchema.parse(value);
-  archive.proposals = archive.proposals.map(retireProposalOptions);
+  archive.proposals = archive.proposals.map(proposal => normalizeLegacyStateProposal(retireProposalOptions(proposal)));
   const unique = (rows: Array<{ id: string | number }>) => { const ids = new Set(rows.map(row => row.id)); if (ids.size !== rows.length) throw new Error('故事包存在重复 ID。'); return ids; };
   const nodeIds = unique(archive.messages), characterIds = unique(archive.characters), personaIds = unique(archive.personas), loreIds = unique(archive.lorebooks);
   const recordIds = new Set([...unique(archive.memories), ...unique(archive.states)]), proposalIds = unique(archive.proposals);

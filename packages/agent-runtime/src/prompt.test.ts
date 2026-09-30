@@ -69,6 +69,8 @@ describe('ReST prompt assembly', () => {
     const stateMsg = textOf(plain.messages[1]);
     expect(stateMsg).toContain('[Protagonist State]\n以下是主角在当前剧情分支中已记录的状态事实');
     expect(stateMsg).toContain('HP: 100');
+    expect(stateMsg).toContain('is_dead means confirmed death only');
+    expect(stateMsg).toContain('absence, disappearance, or being off-screen is not evidence of death');
 
     const memoryMsg = textOf(plain.messages[2]);
     expect(memoryMsg).toContain('[Memory: Chapter 1]\n以下是此前剧情的长期记忆');

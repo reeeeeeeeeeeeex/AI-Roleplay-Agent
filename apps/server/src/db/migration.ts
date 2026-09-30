@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { migrateRetiredOptions } from './retired-options.js';
+import { migrateStateFields } from './state-fields.js';
 import { legacyLoreTitle } from '../lore-title.js';
 
 const migration = `
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS imports (
 export function migrateDatabase(database: Database.Database): void {
   database.exec(migration);
   migrateRetiredOptions(database);
+  migrateStateFields(database);
   const loreColumns = database.prepare('PRAGMA table_info(lore_entries)').all() as Array<{ name: string }>;
   if (!loreColumns.some(column => column.name === 'title')) {
     database.transaction(() => {

@@ -34,8 +34,8 @@ export default function StoryNavigation({ chatId, head, version, disabled, onHea
         await api(`/conversations/${chatId}`, 'PUT', { ...current, scenario, expectedScenario: previous, expectedUpdatedAt: current.updatedAt }, { keepalive: true }); onChanged();
       }} />
       <div className="scene-fields">{(['time', 'location'] as const).map(field => <label key={field}>{field === 'time' ? '时间' : '地点'}<AutoSaveField key={`${head}:${field}`} draftKey={`${chatId}:${head}:scene-${field}`} initial={data.scene[field]} label={field === 'time' ? '当前时间' : '当前地点'} placeholder="未记录" singleLine disabled={disabled} onError={onError}
-        onSave={async (content, previous) => { await api(`/conversations/${chatId}/state/cell`, 'PATCH', { table: 'global_state', rowId: 1, column: field === 'time' ? 'cur_time' : 'current_location', content, previous, head }, { keepalive: true }); onChanged(); }} /></label>)}</div>
-      <small>在场人物：{data.scene.presentCharacters.join('、') || '未记录'}</small>
+        onSave={async (content, previous) => { await api(`/conversations/${chatId}/state/cell`, 'PATCH', { table: 'global_state', rowId: 1, column: field === 'time' ? 'current_time' : 'current_location', content, previous, head }, { keepalive: true }); onChanged(); }} /></label>)}</div>
+      <small>重要角色：{data.scene.importantCharacters.join('、') || '未记录'}</small>
       {data.bookmarks.map(bookmark => <div key={bookmark.id}>
         <AutoSaveField draftKey={`${chatId}:bookmark:${bookmark.id}`} initial={bookmark.name} label="书签名称" singleLine disabled={disabled} onError={onError}
           onSave={async (name, previous) => { const saved = await api(`/conversations/${chatId}/bookmarks`, 'POST', { ...bookmark, name, previous }, { keepalive: true }); onChanged(); return saved.name; }} />

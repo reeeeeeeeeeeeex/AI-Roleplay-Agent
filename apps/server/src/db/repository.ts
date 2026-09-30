@@ -527,8 +527,8 @@ export class Repository {
     const state = this.latestState(conversationId)?.tables;
     return { bookmarks: this.listBookmarks(conversationId), scene: {
       scenario: chat.scenario || (chat.groupId ? this.getGroup(chat.groupId)?.scenario : chat.characterId ? this.getCharacter(chat.characterId)?.scenario : '') || '',
-      time: String(state?.global_state[0]?.cur_time ?? ''), location: String(state?.global_state[0]?.current_location ?? ''),
-      presentCharacters: (state?.important_characters ?? []).filter(row => row.is_absent === '否').map(row => String(row.name ?? '')).filter(Boolean),
+      time: String(state?.global_state[0]?.current_time ?? ''), location: String(state?.global_state[0]?.current_location ?? ''),
+      importantCharacters: (state?.important_characters ?? []).map(row => String(row.name ?? '')).filter(Boolean),
     } };
   }
   private checkpointFilter(conversationId: string) {
