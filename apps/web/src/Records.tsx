@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import type { Conversation, GenerationMode, PinnedFact, StateTableName } from '@new-ai-chat/contracts';
+import { stateColumnLabels, type Conversation, type GenerationMode, type PinnedFact, type StateTableName } from '@new-ai-chat/contracts';
 import StateCollectionRow from './StateCollectionRow.js';
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
@@ -164,8 +164,8 @@ export default function Records({
                         .filter(([key]) => key !== 'row_id')
                         .map(([key, value]) => (
                           <div key={key}>
-                            <dt>{key}</dt>
-                            <dd><AutoSaveField key={`${chat.headMessageId}:${table}:${row.row_id}:${key}`} draftKey={`${chat.id}:${chat.headMessageId}:state:${table}:${row.row_id}:${key}`} initial={String(value ?? '')} label={`${tableNames[table]} ${row.row_id} ${key}`} disabled={disabled || busy} onError={onError}
+                            <dt>{stateColumnLabels[table as StateTableName]?.[key] ?? key}</dt>
+                            <dd><AutoSaveField key={`${chat.headMessageId}:${table}:${row.row_id}:${key}`} draftKey={`${chat.id}:${chat.headMessageId}:state:${table}:${row.row_id}:${key}`} initial={String(value ?? '')} label={`${tableNames[table]} ${row.row_id} ${stateColumnLabels[table as StateTableName]?.[key] ?? key}`} disabled={disabled || busy} onError={onError}
                               onSave={async (content, previous) => {
                                 const saved = await api(`/conversations/${chat.id}/state/cell`, 'PATCH', { table, rowId: row.row_id, column: key, content, previous, head: chat.headMessageId }, { keepalive: true });
                                 setState(saved); onChanged();

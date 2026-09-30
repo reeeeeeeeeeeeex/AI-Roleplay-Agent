@@ -163,7 +163,7 @@ export function importStory(repo: Repository, value: unknown, assetDir: string) 
       const db = repo.database.db;
       for (const item of archive.messages) db.insert(messages).values({ ...item, id: mapped(item.id), conversationId: chat.id, parentId: nullable(item.parentId), storyTurnId: nullable(item.storyTurnId), speaker: speaker(item.speaker), providerState: null, legacyPayload: null }).run();
       for (const item of archive.memories) db.insert(memories).values({ ...item, id: mapped(item.id), conversationId: chat.id, storyTurnId: nullable(item.storyTurnId), coverage: item.coverage ? { startMessageId: mapped(item.coverage.startMessageId), endMessageId: mapped(item.coverage.endMessageId), storyTurnIds: item.coverage.storyTurnIds.map(mapped) } : null }).run();
-      for (const item of archive.states) db.insert(stateSnapshots).values({ ...item, id: mapped(item.id), conversationId: chat.id, storyTurnId: nullable(item.storyTurnId), version: 1 }).run();
+      for (const item of archive.states) db.insert(stateSnapshots).values({ ...item, id: mapped(item.id), conversationId: chat.id, storyTurnId: nullable(item.storyTurnId), version: 2 }).run();
       const eventIds = new Map<number, number>();
       for (const event of archive.events) {
         const p = { ...event.payload as Record<string, any> };

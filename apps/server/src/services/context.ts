@@ -1,6 +1,6 @@
 import { estimateTokens, type RetrievedContext, type StoryContextSource, type RuntimeCharacter } from '@new-ai-chat/agent-runtime';
 import type { MessageNode, ContextReport } from '@new-ai-chat/contracts';
-import { historyStartIndex } from '@new-ai-chat/contracts';
+import { historyStartIndex, stateColumnLabels } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 
 // Tools read this immutable request snapshot, never a newly selected chat or branch.
@@ -59,7 +59,7 @@ export class StoryContext implements StoryContextSource {
       return { item, index, score: terms.filter(term => content.includes(term)).length };
     }).filter(hit => hit.score > 0).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, limit).map(hit => hit.item);
   }
-  async readState() { return this.state; }
+  async readState() { return this.state ? { ...this.state, column_labels: stateColumnLabels } : null; }
   async readCast() { return this.cast; }
   stableLore(): RetrievedContext[] { return this.lore.filter((e) => e.constant).sort((a, b) => a.order - b.order).map((e) => ({ source: 'lore', title: e.title, content: e.content, priority: 1000 - e.order, sourceId: e.id })); }
   async dynamic(query: string): Promise<RetrievedContext[]> {
@@ -68,6 +68,6 @@ export class StoryContext implements StoryContextSource {
     const lore = await this.searchLore(query, 12);
     const excluded: RetrievedContext[] = [...this.memory.filter(item => !recent.includes(item) && !older.includes(item)), ...this.lore.filter(item => !item.constant && !lore.some(match => match.sourceId === item.id)).map(item => ({ source: 'lore' as const, title: item.title, content: item.content, sourceId: item.id, priority: 0 }))];
     this.contextReport.items.push(...excluded.map(item => ({ id: item.sourceId!, source: item.source, title: item.title, role: 'assistant' as const, included: false, reason: item.source === 'memory' ? '非最近两阶段，且未进入相关旧记忆前三项' : '未匹配 Lore 关键词或超过检索上限', estimatedTokens: estimateTokens(item.content) + estimateTokens(item.title) })));
-    return [...this.facts, ...lore, ...recent, ...older, ...(this.world.length ? [{ source: 'lore' as const, title: 'Applied world facts', content: JSON.stringify(this.world), priority: 1100 }] : []), ...(this.state ? [{ source: 'state' as const, title: 'Current state', content: JSON.stringify(this.state.tables), priority: 500, sourceId: this.state.id }] : [])];
+    return [...this.facts, ...lore, ...recent, ...older, ...(this.world.length ? [{ source: 'lore' as const, title: 'Applied world facts', content: JSON.stringify(this.world), priority: 1100 }] : []), ...(this.state ? [{ source: 'state' as const, title: 'Current state', content: JSON.stringify({ tables: this.state.tables, column_labels: stateColumnLabels }), priority: 500, sourceId: this.state.id }] : [])];
   }
 }

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { stateColumns, type StateRow, type StateTableName } from '@new-ai-chat/contracts';
+import { stateColumns, stateColumnLabels, type StateRow, type StateTableName } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import { useContentAutosave } from './useContentAutosave.js';
 
@@ -48,7 +48,7 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
       </>}
     </div>
     <dl>{stateColumns[table].map(column => <div key={column}>
-      <dt>{column}</dt>
+      <dt>{stateColumnLabels[table]?.[column] ?? column}</dt>
       <dd className="record-field">{column === 'is_dead' ? <select aria-label={column} disabled={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })}>
         <option value="">未知</option><option value="否">否 · 未死亡</option><option value="是">是 · 已确认死亡</option>
       </select> : <textarea aria-label={column} placeholder="—" rows={1} readOnly={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })} />}</dd>

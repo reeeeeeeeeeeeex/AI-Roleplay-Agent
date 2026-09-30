@@ -1,19 +1,25 @@
 import { z } from 'zod';
-import type { ProtagonistTables, StateRow, StateTableName } from './index.js';
+import type { Persona, ProtagonistTables, StateRow, StateTableName } from './index.js';
 const stateTableNames = ['global_state', 'protagonist_info', 'important_characters', 'protagonist_skills', 'inventory', 'quests_events'] as const;
 
 // Public data columns retained for interoperable snapshots; executor is implemented independently.
 export const stateColumns: Record<StateTableName, string[]> = {
   global_state: ['current_location', 'current_time', 'previous_scene_time', 'elapsed_time'],
-  protagonist_info: ['character_name', 'gender_age', 'appearance', 'occupation', 'past_experience', 'personality'],
+  protagonist_info: ['character_name', 'gender_age', 'appearance', 'occupation', 'personality', 'current_outfit', 'past_experience_before_story', 'past_experience_in_story'],
   important_characters: ['name', 'gender_age', 'brief_introduction', 'appearance', 'key_items', 'is_dead', 'past_experience'],
   protagonist_skills: ['skill_name', 'skill_type', 'skill_level', 'effect_description'],
   inventory: ['item_name', 'quantity', 'description', 'category'],
   quests_events: ['quest_name', 'quest_type', 'issuer', 'detail_description', 'current_progress', 'time_limit', 'reward', 'penalty'],
 };
+export const stateColumnLabels: Partial<Record<StateTableName, Record<string, string>>> = {
+  global_state: { previous_scene_time: 'Previous Scene Time / 上一个场景的时间', elapsed_time: 'Elapsed Scene Time / 经过的时间' },
+  protagonist_info: { occupation: 'Occupation / 身份与地位', current_outfit: 'Current Outfit / 当前穿搭', past_experience_before_story: 'Past Experience Before Story / 故事前经历', past_experience_in_story: 'Past Experience in Story / 故事中经历' },
+};
+export const modelStateColumns = Object.fromEntries(Object.entries(stateColumns).map(([table, columns]) =>
+  [table, columns.filter(column => !(table === 'protagonist_info' && column === 'past_experience_before_story'))])) as Record<StateTableName, string[]>;
 const legacyColumns: Partial<Record<StateTableName, Record<string, string>>> = {
   global_state: { cur_time: 'current_time', prev_scene_time: 'previous_scene_time' },
-  protagonist_info: { char_name: 'character_name' }, important_characters: { brief_intro: 'brief_introduction' },
+  protagonist_info: { char_name: 'character_name', past_experience: 'past_experience_in_story' }, important_characters: { brief_intro: 'brief_introduction' },
   protagonist_skills: { effect_desc: 'effect_description' }, quests_events: { detail_desc: 'detail_description' },
 };
 // Only persisted snapshots/imports use aliases; new model operations must use canonical names.
@@ -38,6 +44,17 @@ export type StateOperation = z.infer<typeof stateOperationSchema>;
 
 export function blankState(): ProtagonistTables {
   return Object.fromEntries(stateTableNames.map((table) => [table, singletons.has(table) ? [{ row_id: 1, ...Object.fromEntries(stateColumns[table].map((c) => [c, ''])) }] : []])) as ProtagonistTables;
+}
+export function seedStateFromPersona(persona: Pick<Persona, 'name' | 'stateTemplate'>): ProtagonistTables {
+  const tables = blankState();
+  const template = persona.stateTemplate;
+  const row = tables.protagonist_info[0]!;
+  row.character_name = persona.name;
+  for (const column of ['gender_age', 'appearance', 'occupation', 'personality', 'current_outfit', 'past_experience_before_story'] as const) {
+    row[column] = String(template?.[column] ?? '');
+  }
+  tables.protagonist_skills = (template?.skills ?? []).filter(skill => skill.skill_name.trim() && skill.skill_type.trim()).map((skill, index) => ({ row_id: index + 1, ...skill }));
+  return tables;
 }
 export function normalizeState(input: unknown): ProtagonistTables {
   // Old story archives may contain the retired suggestions table. Never import it as story truth.
@@ -66,7 +83,7 @@ export function normalizeState(input: unknown): ProtagonistTables {
   return result;
 }
 const key = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase();
-export function applyStateOperations(input: ProtagonistTables, operations: unknown, options: { allowImportantCharacterDeletion?: boolean } = {}): { tables: ProtagonistTables; changed: boolean } {
+export function applyStateOperations(input: ProtagonistTables, operations: unknown, options: { allowImportantCharacterDeletion?: boolean; allowUserAuthoredBackground?: boolean } = {}): { tables: ProtagonistTables; changed: boolean } {
   const parsed = z.array(stateOperationSchema).max(100).parse(operations);
   const tables = structuredClone(input);
   for (const { table, op, rowId, cells } of parsed) {
@@ -76,7 +93,10 @@ export function applyStateOperations(input: ProtagonistTables, operations: unkno
     if (op === 'insertRow' && rowId !== undefined) throw new Error('Inserted row IDs are assigned locally.');
     if (op === 'deleteRow' && cells !== undefined) throw new Error('Delete operations cannot supply cells.');
     if (op !== 'deleteRow' && !cells) throw new Error('Cells are required.');
-    for (const column of Object.keys(cells ?? {})) if (!stateColumns[table].includes(column)) throw new Error(`Unknown or immutable column: ${column}`);
+    for (const column of Object.keys(cells ?? {})) {
+      if (!stateColumns[table].includes(column)) throw new Error(`Unknown or immutable column: ${column}`);
+      if (table === 'protagonist_info' && column === 'past_experience_before_story' && !options.allowUserAuthoredBackground) throw new Error('Past Experience Before Story can only be edited by the user.');
+    }
     const index = tables[table].findIndex((row) => row.row_id === rowId);
     if (op !== 'insertRow' && index < 0) throw new Error('Unknown row.');
     if (op === 'deleteRow') { tables[table].splice(index, 1); continue; }

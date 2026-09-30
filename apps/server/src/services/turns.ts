@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { fallbackPlan, validatePlan, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
-import type { TurnRequest, TurnRecord, TurnPlan, SpeakerRef, TurnProgress, InterruptedOutput } from '@new-ai-chat/contracts';
+import { seedStateFromPersona, type TurnRequest, type TurnRecord, type TurnPlan, type SpeakerRef, type TurnProgress, type InterruptedOutput } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 import { EventBroker } from './events.js';
 import { createTraceSink } from './trace.js';
@@ -48,6 +48,10 @@ export class TurnService {
         parent = target.parentId; continueText = target.content;
       }
       this.repository.setHead(chat.id, request.trigger === 'continue' ? target!.id : parent);
+      if (request.input && request.trigger === 'normal' && !this.repository.latestState(chat.id)) {
+        const persona = this.repository.resolvePersona(chat.personaId);
+        if (persona) this.repository.createState(chat.id, null, seedStateFromPersona(persona));
+      }
     })();
     const progress: TurnProgress = { request, head: this.repository.getConversation(chat.id)!.headMessageId, parent, oldHead: chat.headMessageId,
       prefix: continueText, swipe, completedMessageIds: [], interruptedOutputs: [] };

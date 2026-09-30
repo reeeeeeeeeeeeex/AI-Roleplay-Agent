@@ -18,7 +18,7 @@ export const titles: Record<Collection, string> = {
 
 export const defaults: Record<Collection, any> = {
   characters: { name: '', avatarPath: null, description: '', personality: '', scenario: '', firstMessage: '', exampleDialogue: '', systemPrompt: '', postHistoryInstructions: '' },
-  personas: { name: '', avatarPath: null, description: '' },
+  personas: { name: '', avatarPath: null, description: '', stateTemplate: { gender_age: '', appearance: '', occupation: '', personality: '', current_outfit: '', past_experience_before_story: '', skills: [] } },
   connections: {
     name: '',
     protocol: 'openai-chat-completions',
@@ -184,12 +184,18 @@ export default function Editor({
     <JsonField key={key} label={label} initial={value[key]} onChange={(v) => set(key, v)} />
   );
 
+  const template = value.stateTemplate ?? defaults.personas.stateTemplate;
+  const templateField = (key: string, label: string, multiline = false) => <label key={key}>{label}
+    {multiline ? <textarea rows={3} value={template[key] ?? ''} onChange={event => set('stateTemplate', { ...template, [key]: event.target.value })} />
+      : <input value={template[key] ?? ''} onChange={event => set('stateTemplate', { ...template, [key]: event.target.value })} />}
+  </label>;
+
   if (kind === 'lorebooks') return <LorebookEditor initial={initial} onSave={onSave} onClose={onClose} zIndex={zIndex} />;
 
   return (
     <>
       <div className="modal-shade" style={{ zIndex }} onClick={event => { if (event.target === event.currentTarget) void close(); }}>
-        <section className={`modal${kind === 'conversations' || kind === 'characters' ? ' editor-wide-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
+        <section className={`modal${kind === 'conversations' || kind === 'characters' || kind === 'personas' ? ' editor-wide-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
           <header>
             <h2>{record.current?.id ? titles[kind] : `创建${titles[kind]}`}</h2>
             <button onClick={() => void close()} aria-label="关闭">✕</button>
@@ -251,6 +257,27 @@ export default function Editor({
           )}
 
           {(kind === 'characters' || kind === 'personas') && field('description', '描述', true)}
+
+          {kind === 'personas' && <fieldset>
+            <legend>初始主角状态</legend>
+            <p className="muted">首次发送消息时复制到当前故事，之后由故事独立更新。姓名沿用上方名称。</p>
+            {templateField('gender_age', '性别／年龄')}
+            {templateField('appearance', '外貌', true)}
+            {templateField('occupation', 'Occupation / 身份与地位')}
+            {templateField('personality', '性格', true)}
+            {templateField('current_outfit', 'Current Outfit / 当前穿搭', true)}
+            {templateField('past_experience_before_story', 'Past Experience Before Story / 故事前经历', true)}
+            <h3>初始技能</h3>
+            {(template.skills ?? []).map((skill: any, index: number) => <fieldset key={index}>
+              <legend>技能 {index + 1}</legend>
+              {([['skill_name', '技能名称'], ['skill_type', '技能类型'], ['skill_level', '等级／阶段'], ['effect_description', '效果描述']] as const).map(([key, label]) => <label key={key}>{label}<input value={skill[key] ?? ''} onChange={event => {
+                const skills = [...template.skills]; skills[index] = { ...skill, [key]: event.target.value };
+                set('stateTemplate', { ...template, skills });
+              }} /></label>)}
+              <button type="button" onClick={() => set('stateTemplate', { ...template, skills: template.skills.filter((_: any, i: number) => i !== index) })}>删除技能</button>
+            </fieldset>)}
+            <button type="button" onClick={() => set('stateTemplate', { ...template, skills: [...(template.skills ?? []), { skill_name: '', skill_type: '', skill_level: '', effect_description: '' }] })}>添加技能</button>
+          </fieldset>}
 
           {kind === 'characters' && (
             <>

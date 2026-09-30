@@ -158,18 +158,37 @@ export interface Persona {
   id: string;
   name: string;
   description: string;
+  stateTemplate: PersonaStateTemplate;
   avatarPath: string | null;
   legacyPayload?: unknown;
   createdAt: string;
   updatedAt: string;
 }
 
+export const personaStateTemplateSchema = z.object({
+  gender_age: z.string().max(100_000).default(''),
+  appearance: z.string().max(100_000).default(''),
+  occupation: z.string().max(100_000).default(''),
+  personality: z.string().max(100_000).default(''),
+  current_outfit: z.string().max(100_000).default(''),
+  past_experience_before_story: z.string().max(100_000).default(''),
+  skills: z.array(z.object({
+    skill_name: z.string().max(1000).default(''),
+    skill_type: z.string().max(1000).default(''),
+    skill_level: z.string().max(1000).default(''),
+    effect_description: z.string().max(100_000).default(''),
+  })).max(100).default([]),
+});
+export type PersonaStateTemplate = z.infer<typeof personaStateTemplateSchema>;
+
 export const personaInputSchema = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().max(100_000).default(''),
+  stateTemplate: personaStateTemplateSchema.default(() => ({ gender_age: '', appearance: '', occupation: '', personality: '', current_outfit: '', past_experience_before_story: '', skills: [] })),
   avatarPath: z.string().nullable().default(null),
   legacyPayload: z.unknown().default(null),
 });
+export type PersonaInput = z.infer<typeof personaInputSchema>;
 
 export interface LoreEntry {
   id: string;
@@ -461,7 +480,7 @@ export interface ProtagonistStateSnapshot {
   id: string;
   conversationId: string;
   storyTurnId: string | null;
-  version: 1;
+  version: 1 | 2;
   tables: ProtagonistTables;
   createdAt: string;
 }

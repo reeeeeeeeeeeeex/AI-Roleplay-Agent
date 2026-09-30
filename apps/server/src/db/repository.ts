@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
-import { defaultPromptSettings, generalSettingsSchema, promptSettingsSchema, type GeneralSettings, type PromptSettings, type TurnTrace } from '@new-ai-chat/contracts';
+import { defaultPromptSettings, generalSettingsSchema, personaInputSchema, personaStateTemplateSchema, promptSettingsSchema, type GeneralSettings, type PromptSettings, type TurnTrace } from '@new-ai-chat/contracts';
 import type {
   Character,
   CharacterInput,
@@ -218,15 +218,15 @@ export class Repository {
     return this.database.db.delete(characters).where(eq(characters.id, characterId)).run().changes > 0;
   }
 
-  listPersonas(): Persona[] { return this.database.db.select().from(personas).orderBy(asc(personas.name)).all() as Persona[]; }
-  getPersona(personaId: string): Persona | null { return this.database.db.select().from(personas).where(eq(personas.id, personaId)).get() as Persona | undefined ?? null; }
-  createPersona(input: { name: string; description: string; avatarPath: string | null; legacyPayload?: unknown }): Persona {
-    const timestamp = now(); const row = { id: id(), ...input, createdAt: timestamp, updatedAt: timestamp };
+  listPersonas(): Persona[] { return this.database.db.select().from(personas).orderBy(asc(personas.name)).all().map(row => ({ ...row, stateTemplate: personaStateTemplateSchema.parse(row.stateTemplate) })) as Persona[]; }
+  getPersona(personaId: string): Persona | null { const row = this.database.db.select().from(personas).where(eq(personas.id, personaId)).get(); return row ? { ...row, stateTemplate: personaStateTemplateSchema.parse(row.stateTemplate) } as Persona : null; }
+  createPersona(input: { name: string; description: string; avatarPath: string | null; stateTemplate?: unknown; legacyPayload?: unknown }): Persona {
+    const timestamp = now(); const row = { id: id(), ...personaInputSchema.parse(input), createdAt: timestamp, updatedAt: timestamp };
     this.database.db.insert(personas).values(row).run(); return this.getPersona(row.id)!;
   }
-  updatePersona(personaId: string, input: { name: string; description: string; avatarPath: string | null; legacyPayload?: unknown }): Persona | null {
+  updatePersona(personaId: string, input: { name: string; description: string; avatarPath: string | null; stateTemplate?: unknown; legacyPayload?: unknown }): Persona | null {
     if (!this.getPersona(personaId)) return null;
-    this.database.db.update(personas).set({ ...input, updatedAt: now() }).where(eq(personas.id, personaId)).run(); return this.getPersona(personaId);
+    this.database.db.update(personas).set({ ...personaInputSchema.parse(input), updatedAt: now() }).where(eq(personas.id, personaId)).run(); return this.getPersona(personaId);
   }
   resolvePersona(personaId: string | null): Persona | null {
     const selected = personaId ?? this.getGeneralSettings().defaultPersonaId;
@@ -438,16 +438,16 @@ export class Repository {
   latestState(conversationId: string): ProtagonistStateSnapshot | null {
     const active = this.checkpointFilter(conversationId);
     const row = this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().find((item) => active(item.id));
-    return row ? { ...row, version: 1 } : null;
+    return row ? { ...row, version: row.version as 1 | 2 } : null;
   }
   createState(conversationId: string, storyTurnId: string | null, tables: ProtagonistTables): ProtagonistStateSnapshot {
-    const row = { id: id(), conversationId, storyTurnId, version: 1 as const, tables, createdAt: now() };
+    const row = { id: id(), conversationId, storyTurnId, version: 2 as const, tables, createdAt: now() };
     this.database.db.insert(stateSnapshots).values(row).run();
     this.addEvent(conversationId, null, 'checkpoint', { id: row.id, head: this.getConversation(conversationId)?.headMessageId ?? null }); return row;
   }
   listStateSnapshots(conversationId: string): ProtagonistStateSnapshot[] {
     const active = this.checkpointFilter(conversationId);
-    return this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter((row) => active(row.id)).map((row) => ({ ...row, version: 1 }));
+    return this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter((row) => active(row.id)).map((row) => ({ ...row, version: row.version as 1 | 2 }));
   }
 
   createProposals(conversationId: string, plan: TurnPlan): void {
