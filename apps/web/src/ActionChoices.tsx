@@ -100,7 +100,7 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
   }
   return <section className="action-choices" aria-label="行动选项">
     <div className="action-choice-toolbar">
-      <button type="button" disabled={disabled} aria-expanded={open} onClick={() => void toggle()}>行动选项 {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
+      <button type="button" disabled={disabled} aria-expanded={open} onClick={() => void toggle()}>行动选项 {open ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button>
       {open && <div className="action-choice-navigation">
         <button type="button" aria-label="上一组选项" disabled={disabled || busy || selectedIndex === 0} onClick={() => void navigate(-1)}><ChevronLeft size={16} /></button>
         <small>{cache.groups.length ? `${selectedIndex + 1} / ${cache.groups.length}` : '尚无选项'}</small>
