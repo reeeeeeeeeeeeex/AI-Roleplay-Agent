@@ -171,7 +171,7 @@ export default function SettingsModal({
                   setError(''); setMessageDisplayLimit(value);
                 }} />
             </label>
-            <p className="muted">默认 100 条，可设置 1–1000；不支持 0 表示无限。先显示最近的消息，向上滚动继续加载，仅影响页面显示，不影响发送给模型的条数。右侧横条可跳转到最近 20 条用户消息。</p>
+            <p className="muted">默认 100 条，可设置 1–1000；向上滚动继续加载，仅影响页面显示，不影响发送给模型的条数。</p>
             <label className="checkbox-row">
               <input type="checkbox" checked={plainThinkingExpanded} onChange={event => setPlainThinkingExpanded(event.target.checked)} />
               普通模式默认展开思考（CoT）
