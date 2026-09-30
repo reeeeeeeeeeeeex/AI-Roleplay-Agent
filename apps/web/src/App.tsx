@@ -544,8 +544,7 @@ export default function App() {
               </button>
             )}
             <button className="mobile-only" aria-label="打开导航" onClick={() => setMobileNav(true)}>☰</button>
-            <h1>{page === 'chat' && chat ? <AutoSaveField key={chat.id} draftKey={`story-title:${chat.id}`} initial={chat.title} label="故事标题" singleLine disabled={!!turn || sending} onError={setError}
-              onSave={async title => { const saved = await api(`/conversations/${chat.id}`, 'PUT', { ...chat, title, expectedUpdatedAt: chat.updatedAt }, { keepalive: true }); setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? saved : item) })); }} /> : page === 'chat' ? '新故事' : page === 'import' ? '导入故事' : page === 'conversations' ? '故事列表' : titles[page]}</h1>
+            <h1>{page === 'chat' ? chat?.title ?? '新故事' : page === 'import' ? '导入故事' : page === 'conversations' ? '故事列表' : titles[page]}</h1>
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
