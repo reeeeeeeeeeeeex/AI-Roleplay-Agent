@@ -37,6 +37,19 @@ test('startup distinguishes missing endpoints from required pairing', async ({ p
   await expect(page.getByRole('button', { name: '通用设置', exact: true })).toBeVisible();
 });
 
+test('deleting a persona sends no JSON header with an empty body', async ({ page, request }) => {
+  const persona = await (await request.post('/api/personas', { data: { name: '待删除主角' } })).json();
+  await page.reload();
+  await page.locator('.studio-nav button').filter({ hasText: '主角' }).first().click();
+  const card = page.locator('.character-card').filter({ hasText: persona.name });
+  const deletion = page.waitForRequest(req => req.url().endsWith(`/api/personas/${persona.id}`) && req.method() === 'DELETE');
+  page.once('dialog', dialog => dialog.accept());
+  await card.getByRole('button', { name: '删除', exact: true }).click();
+  expect((await deletion).headers()['content-type']).toBeUndefined();
+  await expect(card).toHaveCount(0);
+  expect((await (await request.get('/api/personas')).json()).some((item: { id: string }) => item.id === persona.id)).toBe(false);
+});
+
 test('global send count and fixed message start control the raw prompt range', async ({ page }) => {
   await send(page, '仅早期历史包含蓝色车票。', 3);
   await send(page, '现在进入旧书店。', 6);
