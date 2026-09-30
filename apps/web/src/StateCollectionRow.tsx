@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { stateColumns, type StateRow, type StateTableName } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import { useContentAutosave } from './useContentAutosave.js';
@@ -7,7 +7,8 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
   chatId: string; head: string | null; table: StateTableName; row: StateRow; disabled: boolean;
   onSaved: (state: any) => void; onError: (message: string) => void;
 }) {
-  const [editing, setEditing] = useState(false), [confirmDelete, setConfirmDelete] = useState(false), [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false), [deleting, setDeleting] = useState(false);
+  const container = useRef<HTMLElement>(null);
   const edit = useContentAutosave({
     initial: row, draftKey: `${chatId}:${head}:state-row:${table}:${row.row_id}`, onError,
     onSave: async (value, previous) => {
@@ -17,9 +18,16 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
       return { saved: saved.tables[table].find((item: StateRow) => item.row_id === row.row_id) as StateRow };
     },
   });
-  useEffect(() => { if (edit.dirty) setEditing(true); }, [edit.dirty]);
+  useLayoutEffect(() => {
+    const element = container.current!;
+    const resize = () => element.querySelectorAll('textarea').forEach(field => { field.style.height = '0px'; field.style.height = `${field.scrollHeight}px`; });
+    resize();
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => { if (width !== element.clientWidth) { width = element.clientWidth; resize(); } });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [edit.value]);
   const locked = disabled || deleting || edit.status === 'saving';
-  async function finish() { if (await edit.flush()) setEditing(false); }
   async function remove() {
     setDeleting(true);
     try {
@@ -27,8 +35,8 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
       edit.discard(); onSaved(saved);
     } catch (cause) { onError((cause as Error).message); setDeleting(false); }
   }
-  return <article className="state-row" data-table={table} onBlur={event => {
-    if (editing && !locked && !confirmDelete && !event.currentTarget.contains(event.relatedTarget as Node | null)) void finish();
+  return <article ref={container} className="state-row" data-table={table} onBlur={event => {
+    if (!locked && !confirmDelete && !event.currentTarget.contains(event.relatedTarget as Node | null)) void edit.flush();
   }}>
     <div className="state-row-actions">
       {confirmDelete ? <>
@@ -36,19 +44,17 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
         <button disabled={locked} onClick={() => void remove()}>确认删除</button>
         <button disabled={locked} onClick={() => setConfirmDelete(false)}>保留</button>
       </> : <>
-        <button disabled={locked} onClick={() => editing ? void finish() : setEditing(true)}>{editing ? '完成' : '编辑'}</button>
-        {editing && <button disabled={locked} onClick={() => { edit.discard(); setEditing(false); }}>取消</button>}
         <button disabled={locked} onClick={() => setConfirmDelete(true)}>删除</button>
       </>}
     </div>
     <dl>{stateColumns[table].map(column => <div key={column}>
       <dt>{column}</dt>
-      <dd>{editing ? column === 'is_dead' ? <select aria-label={column} disabled={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })}>
+      <dd className="record-field">{column === 'is_dead' ? <select aria-label={column} disabled={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })}>
         <option value="">未知</option><option value="否">否 · 未死亡</option><option value="是">是 · 已确认死亡</option>
-      </select> : <textarea aria-label={column} rows={2} disabled={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })} /> : String(row[column] ?? '') || '—'}</dd>
+      </select> : <textarea aria-label={column} placeholder="—" rows={1} readOnly={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })} />}</dd>
       {column === 'is_dead' && <small className="muted">仅表示是否死亡；离场、失踪或未出现不等于死亡。</small>}
     </div>)}</dl>
-    {editing && <small className="muted">整条记录一起编辑，离开此记录自动保存。</small>}
+    {edit.status === 'saving' && <small role="status">保存中…</small>}
     {edit.error && <p role="alert" className="error">{edit.error}</p>}
   </article>;
 }

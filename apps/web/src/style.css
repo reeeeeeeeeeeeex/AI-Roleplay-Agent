@@ -2048,5 +2048,4 @@ fieldset label {
 .state-row dl { margin-top: 6px; }
 .state-row dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 .state-row textarea, .state-row select { width: 100%; box-sizing: border-box; }
-.state-row textarea { resize: vertical; min-height: 64px; }
 .state-row .error { color: var(--danger, #ef4444); font-size: 12px; }
