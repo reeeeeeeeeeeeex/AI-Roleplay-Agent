@@ -50,7 +50,7 @@ test('deleting a persona sends no JSON header with an empty body', async ({ page
   expect((await (await request.get('/api/personas')).json()).some((item: { id: string }) => item.id === persona.id)).toBe(false);
 });
 
-test('replacing a persona image saves an upload larger than the normal JSON limit', async ({ page, request }) => {
+test('replacing a persona image preserves the original 20 MB file', async ({ page, request }) => {
   const oldImage = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=';
   const oldUrl = (await (await request.post('/api/assets/upload', { data: { filename: 'old.png', dataUrl: `data:image/png;base64,${oldImage}` } })).json()).url;
   const persona = await (await request.post('/api/personas', { data: { name: '换图测试主角', avatarPath: oldUrl } })).json();
@@ -60,17 +60,20 @@ test('replacing a persona image saves an upload larger than the normal JSON limi
   const editor = page.getByRole('dialog', { name: '编辑主角', exact: true });
   await expect(editor.getByRole('button', { name: '更换图片' })).toBeVisible();
   const uploaded = page.waitForResponse(response => response.url().endsWith('/api/assets/upload'));
+  const image = Buffer.concat([Buffer.from(oldImage, 'base64'), Buffer.alloc(20_000_000)]);
   await editor.locator('input[type="file"]').setInputFiles({
     name: 'portrait.png', mimeType: 'image/png',
-    buffer: Buffer.concat([Buffer.from(oldImage, 'base64'), Buffer.alloc(1_600_000)]),
+    buffer: image,
   });
   const response = await uploaded;
   expect(response.status()).toBe(200);
-  const { url } = await response.json();
-  expect(url).not.toBe(oldUrl);
+  expect(response.request().headers()['content-type']).toBe('application/octet-stream');
+  await expect.poll(async () => (await (await request.get(`/api/personas/${persona.id}`)).json()).avatarPath).not.toBe(oldUrl);
+  const url = (await (await request.get(`/api/personas/${persona.id}`)).json()).avatarPath;
   await expect(editor.locator('.avatar-field-preview img')).toHaveAttribute('src', url);
-  await expect.poll(async () => (await (await request.get(`/api/personas/${persona.id}`)).json()).avatarPath).toBe(url);
-  expect((await request.get(url)).status()).toBe(200);
+  const imageResponse = await request.get(url);
+  expect(imageResponse.status()).toBe(200);
+  expect((await imageResponse.body()).equals(image)).toBe(true);
 });
 
 test('global send count and fixed message start control the raw prompt range', async ({ page }) => {

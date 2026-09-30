@@ -244,15 +244,21 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   });
   app.post('/api/imports/preview', async (req) => { const input=z.object({ sourcePath:z.string().default(config.defaultImportPath) }).parse(req.body); return (await scanImport(input.sourcePath)).preview; });
   app.post('/api/imports/execute', async (req) => { idleAll(); const input=z.object({ sourcePath:z.string(), sourceHash:z.string().length(64) }).parse(req.body); return executeImport(repo,input.sourcePath,input.sourceHash,config.assetDir); });
-  app.post('/api/assets/upload', { bodyLimit: 25 * 1024 * 1024 }, async (req, reply) => {
-    const { dataUrl } = z.object({
-      filename: z.string().min(1).max(255).optional(),
-      dataUrl: z.string().min(1).max(25_000_000),
-    }).parse(req.body);
-    const match = /^data:image\/(png|jpe?g|webp);base64,(.+)$/u.exec(dataUrl);
-    if (!match) return reply.code(400).send({ error: '仅支持 PNG、JPEG 或 WebP 格式的图片。' });
-    const ext = match[1] === 'jpeg' ? 'jpg' : match[1]!;
-    const buffer = Buffer.from(match[2]!, 'base64');
+  const imageUploadLimit = 100 * 1024 * 1024;
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: imageUploadLimit }, (_req, body, done) => done(null, body));
+  app.post('/api/assets/upload', { bodyLimit: imageUploadLimit }, async (req, reply) => {
+    let buffer: Buffer;
+    if (Buffer.isBuffer(req.body)) buffer = req.body;
+    else {
+      const { dataUrl } = z.object({ dataUrl: z.string().min(1).max(25_000_000) }).parse(req.body);
+      const match = /^data:image\/(png|jpe?g|webp);base64,(.+)$/u.exec(dataUrl);
+      if (!match) return reply.code(400).send({ error: '仅支持 PNG、JPEG 或 WebP 格式的图片。' });
+      buffer = Buffer.from(match[2]!, 'base64');
+    }
+    const ext = buffer.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) ? 'png'
+      : buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff ? 'jpg'
+      : buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP' ? 'webp' : null;
+    if (!ext) return reply.code(400).send({ error: '仅支持 PNG、JPEG 或 WebP 格式的图片。' });
     const hash = createHash('sha256').update(buffer).digest('hex');
     const targetName = `${hash}.${ext}`;
     await mkdir(config.assetDir, { recursive: true });

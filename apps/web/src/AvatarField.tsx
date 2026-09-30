@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react';
-import { api } from './api';
 import { Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
 
 export default function AvatarField({
@@ -20,8 +19,8 @@ export default function AvatarField({
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > 18_000_000) {
-      setError('图片不能超过 18 MB。');
+    if (file.size > 100 * 1024 * 1024) {
+      setError('图片不能超过 100 MB。');
       event.target.value = '';
       return;
     }
@@ -29,19 +28,10 @@ export default function AvatarField({
     setUploading(true);
 
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error('读取本地文件失败'));
-        reader.readAsDataURL(file);
-      });
-
-      const res = await api<{ url: string }>('/assets/upload', 'POST', {
-        filename: file.name,
-        dataUrl,
-      });
-
-      onChange(res.url);
+      const response = await fetch('/api/assets/upload', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? `上传失败 (${response.status})`);
+      onChange(result.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : '上传头像失败');
     } finally {
