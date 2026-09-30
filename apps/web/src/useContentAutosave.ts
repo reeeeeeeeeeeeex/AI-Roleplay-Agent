@@ -85,5 +85,11 @@ export function useContentAutosave<T>({ initial, draftKey, onSave, onError, enab
     if (enabled) { editors.add(save); window.addEventListener('pagehide', leave); }
     return () => { mounted.current = false; editors.delete(save); window.removeEventListener('pagehide', leave); if (enabled) leave(); };
   }, [enabled]);
-  return { value: draft.value, change, flush, status, error, dirty: !equal(draft.value, draft.previous) };
+  function discard() {
+    if (pending.current) return;
+    requested.current = false; forceRequested.current = false;
+    update({ value: options.current.initial, previous: options.current.initial });
+    setStatus('idle'); setError('');
+  }
+  return { value: draft.value, change, flush, discard, status, error, dirty: !equal(draft.value, draft.previous) };
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import type { Conversation, GenerationMode, PinnedFact } from '@new-ai-chat/contracts';
+import type { Conversation, GenerationMode, PinnedFact, StateTableName } from '@new-ai-chat/contracts';
+import StateCollectionRow from './StateCollectionRow.js';
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
 import AgentTrace from './AgentTrace.js';
@@ -155,7 +156,9 @@ export default function Records({
                     <span>{tableNames[table] ?? table}</span>
                     <small>{(rows as any[]).length}</small>
                   </summary>
-                  {(rows as any[]).map((row) => (
+                  {(rows as any[]).map((row) => table !== 'global_state' && table !== 'protagonist_info' ? (
+                    <StateCollectionRow key={`${chat.headMessageId}:${row.row_id}`} chatId={chat.id} head={chat.headMessageId} table={table as StateTableName} row={row} disabled={disabled || busy} onError={onError} onSaved={saved => { setState(saved); onChanged(); }} />
+                  ) : (
                     <dl key={row.row_id}>
                       {Object.entries(row)
                         .filter(([key]) => key !== 'row_id')

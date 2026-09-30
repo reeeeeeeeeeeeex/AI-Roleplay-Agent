@@ -82,14 +82,68 @@ test('record fields save directly on blur and when the drawer closes', async ({ 
   await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('修订后的记忆\n保留换行。');
   await expect(page.getByRole('button', { name: '编辑数据', exact: true })).toHaveCount(0);
   await page.getByRole('textbox', { name: '全局状态 1 current_location', exact: true }).fill('旧书店');
-  await page.getByRole('textbox', { name: '全局状态 1 cur_time', exact: true }).fill('午夜');
+  await page.getByRole('textbox', { name: '全局状态 1 current_time', exact: true }).fill('午夜');
   await page.getByRole('button', { name: '关闭记录面板' }).click();
-  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0]).toMatchObject({ current_location: '旧书店', cur_time: '午夜' });
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0]).toMatchObject({ current_location: '旧书店', current_time: '午夜' });
   await page.reload();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await expect(memory).toHaveValue('修订后的记忆\n保留换行。');
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '全局状态 1 current_location', exact: true })).toHaveValue('旧书店');
+});
+
+test('collection rows edit together and delete invalid drafts without saving them', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: {
+    inventory: [{ row_id: 1, item_name: '', quantity: '', category: '贵重品', description: '资金' }],
+    important_characters: [{ row_id: 1, name: 'Sina', gender_age: 'adult', is_absent: '是' }],
+  } } });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  await page.locator('summary').filter({ hasText: '背包物品' }).click();
+  const row = page.locator('.state-row[data-table="inventory"]');
+  await row.getByRole('button', { name: '编辑', exact: true }).click();
+  await row.getByRole('textbox', { name: 'item_name', exact: true }).fill('金币');
+  await row.getByRole('textbox', { name: 'quantity', exact: true }).fill('50');
+  expect((await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.inventory[0].item_name).toBe('');
+  await page.getByRole('heading', { name: '故事记录', exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.inventory[0]).toMatchObject({ item_name: '金币', quantity: '50' });
+  await row.getByRole('button', { name: '编辑', exact: true }).click();
+  await row.getByRole('textbox', { name: 'item_name', exact: true }).fill('');
+  await row.getByRole('button', { name: '删除', exact: true }).click();
+  await row.getByRole('button', { name: '确认删除', exact: true }).click();
+  await expect(row).toHaveCount(0);
+  await page.locator('summary').filter({ hasText: '重要角色' }).click();
+  const character = page.locator('.state-row[data-table="important_characters"]');
+  await character.getByRole('button', { name: '编辑', exact: true }).click();
+  await expect(character.getByRole('combobox', { name: 'is_dead' })).toHaveValue('');
+  await character.getByRole('button', { name: '删除', exact: true }).click();
+  await character.getByRole('button', { name: '确认删除', exact: true }).click();
+  await expect(character).toHaveCount(0);
+  await page.reload();
+  expect((await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.inventory).toEqual([]);
+});
+
+test('collection row save failure retains the whole draft for retry', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { protagonist_skills: [{ row_id: 1, skill_name: '飞行', skill_type: '魔法' }] } } });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  await page.locator('summary').filter({ hasText: '主角技能' }).click();
+  const row = page.locator('.state-row[data-table="protagonist_skills"]');
+  await row.getByRole('button', { name: '编辑', exact: true }).click();
+  await row.getByRole('textbox', { name: 'effect_description', exact: true }).fill('暂时悬浮');
+  await page.route('**/api/conversations/*/state/row', route => route.fulfill({ status: 500, json: { error: '测试保存失败' } }));
+  await page.getByRole('heading', { name: '故事记录', exact: true }).click();
+  await expect(row.getByRole('alert')).toContainText('草稿已保留');
+  await expect(row.getByRole('textbox', { name: 'effect_description', exact: true })).toHaveValue('暂时悬浮');
+  await page.unroute('**/api/conversations/*/state/row');
+  await row.getByRole('button', { name: '完成', exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.protagonist_skills[0].effect_description).toBe('暂时悬浮');
 });
 
 test('failed record autosave keeps the draft after leaving the drawer', async ({ page, request }, info) => {

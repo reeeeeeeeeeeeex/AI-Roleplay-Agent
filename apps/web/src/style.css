@@ -2041,3 +2041,12 @@ fieldset label {
     justify-content: flex-end;
   }
 }
+/* Collection records commit as one row, so required fields can be repaired together. */
+.state-row { margin: 12px 0; }
+.state-row-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+.state-row-actions button { padding: 4px 8px; font-size: 12px; }
+.state-row dl { margin-top: 6px; }
+.state-row dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.state-row textarea, .state-row select { width: 100%; box-sizing: border-box; }
+.state-row textarea { resize: vertical; min-height: 64px; }
+.state-row .error { color: var(--danger, #ef4444); font-size: 12px; }
