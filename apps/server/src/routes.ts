@@ -186,7 +186,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     if (head !== undefined && repo.getConversation(chat)?.headMessageId !== head) throw new Error('分支已变化，未写入其他分支。');
     return repo.createMemory({ conversationId: chat, content, source: mode === 'replace' ? 'manual' : 'generated', stage: (repo.listMemories(chat,1)[0]?.stage ?? 0)+1, storyTurnId: settledStoryIds(repo,chat).at(-1) ?? null });
   });
-  app.get('/api/conversations/:id/state', async (req) => repo.latestState(idOf(req)) ?? { tables: blankState(), version: 1 });
+  app.get('/api/conversations/:id/state', async (req) => repo.latestState(idOf(req)) ?? { tables: blankState(), version: 2 });
   app.get('/api/conversations/:id/state/history', async req => repo.listStateSnapshots(idOf(req)));
   app.post('/api/conversations/:id/state/restore', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
@@ -210,7 +210,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const tables = repo.latestState(chat)?.tables ?? blankState();
     const row = tables[value.table as keyof typeof tables]?.find(item => item.row_id === value.rowId);
     if (repo.getConversation(chat)?.headMessageId !== value.head || !row || String(row[value.column] ?? '') !== value.previous) throw new Error('状态或分支已变化，请刷新后重试。未覆盖现有内容。');
-    const result = applyStateOperations(tables, [{ op: 'updateRow', table: value.table, rowId: value.rowId, cells: { [value.column]: value.content } }]);
+    const result = applyStateOperations(tables, [{ op: 'updateRow', table: value.table, rowId: value.rowId, cells: { [value.column]: value.content } }], { allowUserAuthoredBackground: true });
     return result.changed ? repo.createState(chat, settledStoryIds(repo, chat).at(-1) ?? null, result.tables) : { tables };
   });
   app.route({ method: ['PATCH', 'DELETE'], url: '/api/conversations/:id/state/row', handler: async req => {

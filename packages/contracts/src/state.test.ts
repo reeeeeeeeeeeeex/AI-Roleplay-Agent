@@ -31,7 +31,7 @@ describe('six-table atomic state',()=>{
   it.each(tables)('rejects missing update row in %s',(table)=>{expect(()=>applyStateOperations(seeded(),[{table,op:'updateRow',rowId:999,cells:{}}])).toThrow();});
   it.each(tables)('rejects structured cell values in %s',(table)=>{expect(()=>applyStateOperations(seeded(),[{table,op:'updateRow',rowId:1,cells:{[stateColumns[table][0]!]:{nested:true}}}])).toThrow();});
   it.each(tables)('same-value update does not checkpoint %s',(table)=>{const state=seeded();const column=stateColumns[table][0]!;expect(applyStateOperations(state,[{table,op:'updateRow',rowId:1,cells:{[column]:state[table][0]![column]}}]).changed).toBe(false);});
-  it.each(tables.flatMap((table)=>stateColumns[table].map((column)=>({table,column}))))('accepts an evidenced scalar update $table.$column',({table,column})=>{const state=seeded();const value=column==='quantity'?'2':column==='is_dead'?'是':'updated';const result=applyStateOperations(state,[{table,op:'updateRow',rowId:1,cells:{[column]:value}}]);expect(result.changed).toBe(true);expect(result.tables[table][0]![column]).toBe(value);});
+  it.each(tables.flatMap((table)=>stateColumns[table].filter(column => !(table === 'protagonist_info' && column === 'past_experience_before_story')).map((column)=>({table,column}))))('accepts an evidenced scalar update $table.$column',({table,column})=>{const state=seeded();const value=column==='quantity'?'2':column==='is_dead'?'是':'updated';const result=applyStateOperations(state,[{table,op:'updateRow',rowId:1,cells:{[column]:value}}]);expect(result.changed).toBe(true);expect(result.tables[table][0]![column]).toBe(value);});
   it.each([...singletons])('singleton %s forbids inserts and deletes',(table)=>{for(const op of ['insertRow','deleteRow'])expect(()=>applyStateOperations(blankState(),[{table,op,rowId:1,cells:{}}])).toThrow();});
   it.each(Object.keys(inserts))('preserves identity uniqueness in %s',(table)=>{const state=seeded();const cells=inserts[table]!;const key=Object.keys(cells)[0]!;expect(()=>applyStateOperations(state,[{table,op:'insertRow',cells:{...cells,[key]:` ${cells[key]!.toUpperCase()} `}}])).toThrow(/Duplicate/);});
   it.each(['0','-1','1.5','abc','','Infinity'])('rejects invalid quantity %s',(quantity)=>{expect(()=>applyStateOperations(seeded(),[{table:'inventory',op:'updateRow',rowId:1,cells:{quantity}}])).toThrow();});
@@ -42,6 +42,19 @@ describe('six-table atomic state',()=>{
   it('preserves valid IDs while repairing missing and duplicate IDs',()=>{const state=normalizeState({inventory:[{item_name:'a'},{row_id:1,item_name:'b'},{row_id:1,item_name:'c'}]});expect(state.inventory[1]?.row_id).toBe(1);expect(new Set(state.inventory.map((r)=>r.row_id)).size).toBe(3);});
   it('repairs partial snapshots without modifying existing values',()=>{const state=normalizeState({global_state:[{row_id:1,current_location:'Tower'}]});expect(state.global_state[0]?.current_location).toBe('Tower');expect(state.protagonist_info).toHaveLength(1);});
   it('rejects unknown tables in persisted data',()=>{expect(()=>normalizeState({sql_table:[]})).toThrow();});
-  it('keeps long conclusion text without truncation',()=>{const text='长'.repeat(1500);const result=applyStateOperations(blankState(),[{table:'protagonist_info',op:'updateRow',rowId:1,cells:{past_experience:text}}]);expect(result.tables.protagonist_info[0]?.past_experience).toBe(text);});
+  it('keeps long conclusion text without truncation',()=>{const text='长'.repeat(1500);const result=applyStateOperations(blankState(),[{table:'protagonist_info',op:'updateRow',rowId:1,cells:{past_experience_in_story:text}}]);expect(result.tables.protagonist_info[0]?.past_experience_in_story).toBe(text);});
+  it('moves only old protagonist history into story history', () => {
+    const state = normalizeState({ protagonist_info: [{ row_id: 1, past_experience: '旧经历' }], important_characters: [{ row_id: 1, name: 'Sina', past_experience: '关系经历' }] });
+    expect(state.protagonist_info[0]).toMatchObject({ past_experience_in_story: '旧经历', past_experience_before_story: '', current_outfit: '' });
+    expect(state.protagonist_info[0]).not.toHaveProperty('past_experience');
+    expect(state.important_characters[0]?.past_experience).toBe('关系经历');
+  });
+  it('blocks model edits to pre-story experience atomically while allowing manual edits', () => {
+    const state = blankState();
+    expect(() => applyStateOperations(state, [{ op: 'updateRow', table: 'protagonist_info', rowId: 1, cells: { current_outfit: '披风' } }, { op: 'updateRow', table: 'protagonist_info', rowId: 1, cells: { past_experience_before_story: '伪造' } }])).toThrow(/only be edited by the user/);
+    expect(state.protagonist_info[0]?.current_outfit).toBe('');
+    const manual = applyStateOperations(state, [{ op: 'updateRow', table: 'protagonist_info', rowId: 1, cells: { past_experience_before_story: '故乡' } }], { allowUserAuthoredBackground: true }).tables;
+    expect(applyStateOperations(manual, [{ op: 'updateRow', table: 'protagonist_info', rowId: 1, cells: { current_outfit: '披风', past_experience_in_story: '加入队伍' } }]).tables.protagonist_info[0]).toMatchObject({ past_experience_before_story: '故乡', current_outfit: '披风', past_experience_in_story: '加入队伍' });
+  });
   it('allows unrelated updates when a legacy duplicate already exists',()=>{const state=seeded();state.inventory.push({...state.inventory[0]!,row_id:2});expect(applyStateOperations(state,[{table:'inventory',op:'updateRow',rowId:1,cells:{description:'old duplicate'}}]).changed).toBe(true);});
 });

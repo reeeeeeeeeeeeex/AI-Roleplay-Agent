@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { migrateRetiredOptions } from './retired-options.js';
-import { migrateStateFields } from './state-fields.js';
+import { migrateStateFields, migrateStateStoryExperience } from './state-fields.js';
 import { legacyLoreTitle } from '../lore-title.js';
 
 const migration = `
@@ -133,6 +133,7 @@ export function migrateDatabase(database: Database.Database): void {
     ['conversations', 'history_start_message_id', 'TEXT'],
     ['conversations', 'generation_mode', "TEXT NOT NULL DEFAULT 'writer-agent'"],
     ['personas', 'legacy_payload', 'TEXT'],
+    ['personas', 'state_template', "TEXT NOT NULL DEFAULT '{}'"],
     ['lorebooks', 'legacy_payload', 'TEXT'],
     ['proposals', 'origin_head', 'TEXT'],
     ['messages', 'generation_info', 'TEXT'],
@@ -155,4 +156,5 @@ export function migrateDatabase(database: Database.Database): void {
     response TEXT, tools TEXT NOT NULL DEFAULT '[]', thinking TEXT, usage TEXT, timing TEXT, error TEXT,
     created_at TEXT NOT NULL, completed_at TEXT
   ); CREATE INDEX IF NOT EXISTS turn_traces_turn_idx ON turn_traces(turn_id, request_index);`);
+  migrateStateStoryExperience(database);
 }

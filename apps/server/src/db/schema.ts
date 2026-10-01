@@ -51,6 +51,7 @@ export const personas = sqliteTable('personas', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
+  stateTemplate: text('state_template', { mode: 'json' }).$type<import('@new-ai-chat/contracts').PersonaStateTemplate>().notNull(),
   avatarPath: text('avatar_path'),
   legacyPayload: text('legacy_payload', { mode: 'json' }).$type<unknown>(),
   ...timestamps,

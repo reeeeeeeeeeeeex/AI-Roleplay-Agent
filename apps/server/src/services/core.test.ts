@@ -121,6 +121,53 @@ it('model settings: discovers models with saved credentials without saving the d
 async function normal(voice='protagonist',replyTarget:any={mode:'auto'}) {
   const turn=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'推开门。',voice},replyTarget}));await server.turns.idle(chat);return server.repository.getTurn(turn.id)!;
 }
+it('seeds the selected Persona once on the first real send and exposes bilingual state to the model', async () => {
+  const repo = server.repository;
+  const first = repo.createPersona({ name: 'First', description: 'free text', avatarPath: null });
+  const selected = repo.createPersona({ name: 'Selected', description: 'free text', avatarPath: null, stateTemplate: { appearance: '银发', current_outfit: '蓝披风', past_experience_before_story: '故乡长大', skills: [{ skill_name: '剑术', skill_type: '战斗', skill_level: '2', effect_description: '快剑' }] } });
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', defaultPersonaId: first.id });
+  const preview = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'normal', input: { text: '开始', voice: 'protagonist' } } });
+  expect(preview.statusCode).toBe(200); expect(repo.latestState(chat)).toBeNull();
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), defaultPersonaId: selected.id });
+  await normal();
+  const seeded = repo.latestState(chat)!;
+  expect(seeded.version).toBe(2);
+  expect(seeded.tables.protagonist_info[0]).toMatchObject({ character_name: 'Selected', appearance: '银发', current_outfit: '蓝披风', past_experience_before_story: '故乡长大', past_experience_in_story: '' });
+  expect(seeded.tables.protagonist_skills[0]).toMatchObject({ skill_name: '剑术', skill_type: '战斗', row_id: 1 });
+  expect((await new StoryContext(repo, chat).readState())?.column_labels.protagonist_info?.occupation).toBe('Occupation / 身份与地位');
+  expect((await new StoryContext(repo, chat).dynamic('')).find(item => item.source === 'state')?.content).toContain('故事前经历');
+  repo.updatePersona(selected.id, { ...selected, stateTemplate: { ...selected.stateTemplate, current_outfit: '红披风' } });
+  await normal();
+  expect(repo.latestState(chat)?.id).toBe(seeded.id);
+  expect(repo.latestState(chat)?.tables.protagonist_info[0]?.current_outfit).toBe('蓝披风');
+});
+
+it('seeds a group after its real User message and keeps an existing branch checkpoint', async () => {
+  const repo = server.repository;
+  const persona = repo.createPersona({ name: 'Group Hero', description: '', avatarPath: null, stateTemplate: { occupation: '领主' } });
+  const group = repo.createGroup({ name: 'Group', memberIds: [character], scenario: '' });
+  const groupChat = repo.createConversation(conversationInputSchema.parse({ title: 'Old group', kind: 'group', groupId: group.id, personaId: persona.id }));
+  const start = () => server.turns.start(turnRequestSchema.parse({ conversationId: groupChat.id, trigger: 'normal', input: { text: '开始', voice: 'protagonist' }, replyTarget: { mode: 'explicit', speaker: { kind: 'character', characterId: character } } }));
+  start(); await server.turns.idle(groupChat.id);
+  expect(repo.latestState(groupChat.id)?.tables.protagonist_info[0]).toMatchObject({ character_name: 'Group Hero', occupation: '领主' });
+  const existing = repo.latestState(groupChat.id)!;
+  start(); await server.turns.idle(groupChat.id);
+  expect(repo.latestState(groupChat.id)?.id).toBe(existing.id);
+});
+
+it('allows manual pre-story correction after the seed but rejects model patch operations', async () => {
+  const repo = server.repository;
+  const persona = repo.createPersona({ name: 'Hero', description: '', avatarPath: null });
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), defaultPersonaId: persona.id });
+  await normal();
+  const head = repo.getConversation(chat)!.headMessageId;
+  const response = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: { head, table: 'protagonist_info', rowId: 1, column: 'past_experience_before_story', previous: '', content: '自己填写' } });
+  expect(response.statusCode).toBe(200);
+  expect(repo.latestState(chat)?.tables.protagonist_info[0]?.past_experience_before_story).toBe('自己填写');
+  const blocked = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/state/patch`, payload: [{ op: 'updateRow', table: 'protagonist_info', rowId: 1, cells: { past_experience_before_story: '模型改写' } }] });
+  expect(blocked.statusCode).not.toBe(200);
+  expect(repo.latestState(chat)?.tables.protagonist_info[0]?.past_experience_before_story).toBe('自己填写');
+});
 it('record send switches gate injected context and tool reads while keeping fixed facts', async () => {
   const repo = server.repository;
   repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: '灯塔记忆' });
@@ -656,7 +703,7 @@ describe('record truth and logical-turn safeguards', () => {
     const image = Buffer.from([137, 80, 78, 71]); const name = 'a'.repeat(64) + '.png';
     writeFileSync(join(work, 'assets', name), image);
     repo.updateCharacter(character, characterInputSchema.parse({ ...repo.getCharacter(character), avatarPath: `/api/assets/${name}` }));
-    const persona = repo.createPersona({ name: 'tree', description: '主角', avatarPath: `/api/assets/${name}` });
+    const persona = repo.createPersona({ name: 'tree', description: '主角', avatarPath: `/api/assets/${name}`, stateTemplate: { current_outfit: '旅行斗篷', past_experience_before_story: '来自山谷' } });
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), defaultPersonaId: persona.id });
     const book = repo.createLorebook(lorebookInputSchema.parse({ name: '灯塔世界', entries: [{ keys: ['灯塔'], content: '灯塔临海' }] }));
     const group = repo.createGroup({ name: '旅途', memberIds: [character], scenario: '海边' });
@@ -670,6 +717,7 @@ describe('record truth and logical-turn safeguards', () => {
     server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'regenerate', targetMessageId: old[1]!.id }), true); await server.turns.idle(chat);
     const archive = (await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).json();
     expect(archive.format).toBe('ai-roleplay-story');
+    expect(archive.personas[0].stateTemplate).toMatchObject({ current_outfit: '旅行斗篷', past_experience_before_story: '来自山谷' });
     expect(archive.conversation.authorNote).toBe('让海边场景保持安静。');
     expect(JSON.stringify(archive)).not.toMatch(/secret-do-not-return|header-secret|providerState|turn_traces/);
     const count = repo.listConversations().length;
@@ -678,6 +726,7 @@ describe('record truth and logical-turn safeguards', () => {
     const restored = await server.app.inject({ method: 'POST', url: '/api/imports/story/execute', payload: archive });
     expect(restored.statusCode, restored.body).toBe(201);
     const copy = restored.json(); expect(copy.id).not.toBe(chat); expect(copy.personaId).not.toBe(persona.id);
+    expect(repo.getPersona(copy.personaId)?.stateTemplate.current_outfit).toBe('旅行斗篷');
     expect(copy.authorNote).toBe('让海边场景保持安静。');
     expect(repo.getActiveBranch(copy.id)).toHaveLength(2); expect(repo.listMessages(copy.id)).toHaveLength(4);
     expect(repo.listMemories(copy.id)).toEqual([]);
