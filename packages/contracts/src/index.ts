@@ -20,6 +20,11 @@ export type UserVoice = z.infer<typeof userVoiceSchema>;
 export const protagonistAgencyModeSchema = z.enum(['protected', 'coauthor']);
 export type ProtagonistAgencyMode = z.infer<typeof protagonistAgencyModeSchema>;
 
+export const defaultAgencyPrompts = {
+  protected: 'Protected User mode is active. Never invent User’s dialogue, private thoughts, voluntary decisions, consent, or decisive actions. You may describe the world and externally observable consequences. User-authored narration is authoritative and may control User.',
+  coauthor: 'Coauthor mode is active. You may write User’s dialogue, thoughts, and actions when it improves the story. User-authored narration remains authoritative.',
+};
+
 export const generationModeSchema = z.enum(['plain', 'writer-agent', 'planner']);
 export type GenerationMode = z.infer<typeof generationModeSchema>;
 
@@ -31,9 +36,11 @@ export interface PromptSettings {
   plannerInstruction: string;
 }
 
+const legacyMainInstruction = "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input without deciding {{user}}'s thoughts, dialogue, or choices.";
+
 export const defaultPromptSettings: PromptSettings = {
   additionalInstruction: '',
-  mainInstruction: "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input without deciding {{user}}'s thoughts, dialogue, or choices.",
+  mainInstruction: "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input. Follow the permissions in [User Agency].",
   groupInstruction: 'Continue the current fictional group roleplay and scene narration, faithfully preserving established characterization, relationships, world rules, and scene continuity.',
   writerInstruction: 'You are one Writer Agent. Use read-only story tools when useful. When no speaker is forced, call select_output_voices exactly once, then continue this same conversation by writing the selected voices in order. Never put tool calls or tool explanations in visible prose.',
   plannerInstruction: 'Plan the next story turn. Read context only when needed, then call submit_turn_plan exactly once. Do not write visible story prose.',
@@ -41,7 +48,7 @@ export const defaultPromptSettings: PromptSettings = {
 
 export const promptSettingsSchema = z.object({
   additionalInstruction: z.string().max(20_000).default(''),
-  mainInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.mainInstruction),
+  mainInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.mainInstruction).transform(value => value === legacyMainInstruction ? defaultPromptSettings.mainInstruction : value),
   groupInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.groupInstruction),
   writerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.writerInstruction),
   plannerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.plannerInstruction),
@@ -299,6 +306,10 @@ export const generalSettingsSchema = z.object({
   generationMode: generationModeSchema.default('plain'),
   streaming: z.boolean().default(true),
   agencyMode: protagonistAgencyModeSchema.default('protected'),
+  agencyPrompts: z.object({
+    protected: z.string().trim().min(1).max(20_000).default(defaultAgencyPrompts.protected),
+    coauthor: z.string().trim().min(1).max(20_000).default(defaultAgencyPrompts.coauthor),
+  }).default(defaultAgencyPrompts),
   narrator: narratorProfileSchema.default({ name: '旁白', avatarPath: null, style: '克制、具象、重视场景连续性，不替角色解释未表达的内心。' }),
   memoryTurnInterval: z.number().int().min(0).max(10_000).default(10),
   stateTurnInterval: z.number().int().min(0).max(10_000).default(0),

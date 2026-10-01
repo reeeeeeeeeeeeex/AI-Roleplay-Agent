@@ -66,7 +66,7 @@ it('sends memories from oldest to newest in the plain request body and preview',
   expect(bodies[0]).toBe(preview.requestBody);
   const body = JSON.parse(bodies[0]!);
   expect(body.messages.slice(1, -1).map((message: { content: string }) => message.content.match(/^\[([^\]]+)\]/u)?.[1]))
-    .toEqual(['Pinned Fact', 'Protagonist State', 'Memory: Stage 1', 'Memory: Stage 2', 'Memory: Stage 3']);
+    .toEqual(['Pinned Fact', 'User State', 'Memory: Stage 1', 'Memory: Stage 2', 'Memory: Stage 3']);
 });
 
 it('action choice requests omit writing instructions and history reasoning, and trace malformed results', async () => {

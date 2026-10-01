@@ -8,6 +8,7 @@ import type {
   TurnPlan,
   PromptSettings,
   GenerationMode,
+  GeneralSettings,
   ContextReport,
 } from '@new-ai-chat/contracts';
 
@@ -76,6 +77,7 @@ export interface BaseAgentRequest {
   fixedHistory?: boolean;
   streaming?: boolean;
   agencyMode: ProtagonistAgencyMode;
+  agencyPrompts?: GeneralSettings['agencyPrompts'];
   narrator: RuntimeNarrator;
   characters: RuntimeCharacter[];
   persona: RuntimePersona | null;

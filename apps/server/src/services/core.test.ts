@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../app.js';
 import { FakeRuntime, PiAgentRuntime, buildWriterContext, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
-import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, lorebookInputSchema, blankState } from '@new-ai-chat/contracts';
+import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, lorebookInputSchema, blankState, defaultAgencyPrompts, defaultPromptSettings, promptSettingsSchema } from '@new-ai-chat/contracts';
 import { settledStoryIds, applyProposal } from './records.js';
 import { StoryContext } from './context.js';
 import { Repository } from '../db/repository.js';
@@ -253,11 +253,17 @@ it('general settings: migrates old global values and persists updates', async ()
   put.run('defaultConnection', JSON.stringify(connection));
   put.run('narrator', JSON.stringify({ name: '记录者', avatarPath: null, style: 'restrained' }));
   const migrated = new Repository(db).getGeneralSettings();
-  expect(migrated).toMatchObject({ connectionId: connection, generationMode: 'plain', streaming: true, agencyMode: 'protected', narrator: { name: '记录者' }, memoryTurnInterval: 10, stateTurnInterval: 0, historyMessageLimit: 7 });
+  expect(migrated).toMatchObject({ connectionId: connection, generationMode: 'plain', streaming: true, agencyMode: 'protected', agencyPrompts: defaultAgencyPrompts, narrator: { name: '记录者' }, memoryTurnInterval: 10, stateTurnInterval: 0, historyMessageLimit: 7 });
   const changed = { ...migrated, generationMode: 'plain', agencyMode: 'coauthor', memoryTurnInterval: 3 };
   expect((await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: changed })).statusCode).toBe(200);
   expect((await server.app.inject({ url: '/api/settings/general' })).json()).toEqual(changed);
   expect(new Repository(db).getGeneralSettings()).toEqual(changed);
+  const invalid = await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: { ...changed, agencyPrompts: { ...changed.agencyPrompts, protected: '   ' } } });
+  expect(invalid.statusCode).toBe(400);
+  expect(server.repository.getGeneralSettings()).toEqual(changed);
+  const legacyMainInstruction = "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input without deciding {{user}}'s thoughts, dialogue, or choices.";
+  expect(promptSettingsSchema.parse({ mainInstruction: legacyMainInstruction }).mainInstruction).toBe(defaultPromptSettings.mainInstruction);
+  expect(promptSettingsSchema.parse({ mainInstruction: 'Custom writing rules.' }).mainInstruction).toBe('Custom writing rules.');
 });
 
 it('fixed history start overrides the rolling count and appends without changing the history prefix', async () => {
@@ -319,8 +325,9 @@ it('general settings: old and new stories share preview and generation settings'
   const repo = server.repository;
   repo.database.sqlite.prepare("UPDATE conversations SET connection_id = ?, generation_mode = 'planner', planner_enabled = 1, narrator_name = '旧旁白', agency_mode = 'protected' WHERE id = ?").run(connection, chat);
   const selected = repo.createConnection(connectionInputSchema.parse({ name: 'Shared', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'shared-model' }));
-  const settings = { ...repo.getGeneralSettings(), connectionId: selected.id, generationMode: 'plain', agencyMode: 'coauthor', narrator: { name: '全局旁白', avatarPath: null, style: '简短叙述' } };
+  const settings = { ...repo.getGeneralSettings(), connectionId: selected.id, generationMode: 'plain', agencyMode: 'coauthor', agencyPrompts: { protected: '保护 User：等待决定。', coauthor: '共同创作 User：描写行动与内心。' }, narrator: { name: '全局旁白', avatarPath: null, style: '简短叙述' } };
   await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: settings });
+  expect(new Repository(repo.database).getGeneralSettings().agencyPrompts).toEqual(settings.agencyPrompts);
   const group = repo.createGroup({ name: 'Group', memberIds: [character], scenario: 'group scene' });
   const created = await server.app.inject({ method: 'POST', url: '/api/conversations', payload: { title: 'New', kind: 'group', groupId: group.id, connectionId: connection, generationMode: 'planner' } });
   const writeTurn = vi.spyOn(runtime, 'writeTurn');
@@ -333,10 +340,12 @@ it('general settings: old and new stories share preview and generation settings'
     expect(preview.protocol).toBe('openai-responses');
     expect(preview.requestBody).toContain('[Main Instruction]');
     expect(preview.requestBody).toContain('全局旁白');
+    expect(preview.requestBody).toContain(settings.agencyPrompts.coauthor);
+    expect(preview.requestBody).not.toContain(settings.agencyPrompts.protected);
     const turn = server.turns.start(turnRequestSchema.parse({ conversationId: id, input: { text: '开门。', voice: 'protagonist' }, replyTarget: { mode: 'explicit', speaker: { kind: 'narrator' } } }));
     await server.turns.idle(id);
     expect(repo.getTurn(turn.id)?.status).toBe('completed');
-    expect(runtime.requests.at(-1)).toMatchObject({ connection: { id: selected.id }, agencyMode: 'coauthor', narrator: settings.narrator });
+    expect(runtime.requests.at(-1)).toMatchObject({ connection: { id: selected.id }, agencyMode: 'coauthor', agencyPrompts: settings.agencyPrompts, narrator: settings.narrator });
   }
   expect(writeTurn.mock.calls.map(([, options]) => options.mode)).toEqual(['plain', 'plain']);
   const network = vi.fn(() => { throw new Error('preview must not use the network'); });
@@ -349,6 +358,7 @@ it('general settings: old and new stories share preview and generation settings'
     const preview = response.json();
     expect(preview).toMatchObject({ action: 'normal', generationMode, phase, protocol: 'openai-responses', personaName: null });
     expect(preview.requestBody).toContain('推开门。');
+    expect(preview.requestBody).toContain(settings.agencyPrompts.coauthor);
     if (tool) expect(preview.requestBody).toContain(tool);
   }
   repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain' });
@@ -378,7 +388,8 @@ it('default persona and story binding keep previews, generation and the latest i
   expect(last).toContain('以下是用户本轮输入：');
   expect(last).toContain('打开窗户。');
   expect(payload.indexOf('[Memory:')).toBeLessThan(payload.lastIndexOf('以下是用户本轮输入：'));
-  expect(payload.indexOf('[Protagonist State]')).toBeLessThan(payload.lastIndexOf('以下是用户本轮输入：'));
+  expect(payload).toContain('[User State]');
+  expect(payload.indexOf('[User State]')).toBeLessThan(payload.lastIndexOf('以下是用户本轮输入：'));
   expect(repo.listMessages(chat)).toHaveLength(0);
   await normal();
   expect(runtime.requests[0]?.persona?.name).toBe('tree');

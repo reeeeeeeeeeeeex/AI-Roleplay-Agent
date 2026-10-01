@@ -101,7 +101,7 @@ export class TurnService {
       conversationKind: chat.kind, scenario: chat.scenario, streaming: settings.streaming,
       authorNote: chat.authorNote,
       fixedHistory: source.fixedHistory,
-      agencyMode: settings.agencyMode, narrator: settings.narrator, characters: source.cast, persona,
+      agencyMode: settings.agencyMode, agencyPrompts: settings.agencyPrompts, narrator: settings.narrator, characters: source.cast, persona,
       history: source.history, stableLore: source.stableLore(), dynamicContext: await source.dynamic(auto ? source.history.slice(-3).map(m => m.content).join('\n') : latest?.content ?? ''),
       latestUserText: auto ? '' : latest?.content ?? '', latestUserIsNarration: latest?.authorKind === 'user_narrator', source, signal,
       promptSettings: this.repository.getPromptSettings(), contextReport: source.contextReport };

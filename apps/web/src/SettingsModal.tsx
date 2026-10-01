@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, Plus } from 'lucide-react';
-import { defaultPromptSettings, type GeneralSettings, type PromptSettings } from '@new-ai-chat/contracts';
+import { defaultAgencyPrompts, defaultPromptSettings, type GeneralSettings, type PromptSettings } from '@new-ai-chat/contracts';
 import AvatarField from './AvatarField';
 import ActionChoiceSettings from './ActionChoiceSettings';
 
@@ -115,6 +115,10 @@ export default function SettingsModal({
                 <option value="coauthor">共同创作：AI 可描写主角行动和内心</option>
               </select>
             </label>
+            <p className="muted">User 指你控制的主角，Assistant 负责其他角色和旁白。发送时使用当前模式的提示词；支持 {'{{user}}'} 和 {'{{char}}'}。</p>
+            <label>保护主角提示词<textarea required rows={5} maxLength={20000} value={writing.agencyPrompts.protected} onChange={e => setWriting({ ...writing, agencyPrompts: { ...writing.agencyPrompts, protected: e.target.value } })} /></label>
+            <label>共同创作提示词<textarea required rows={4} maxLength={20000} value={writing.agencyPrompts.coauthor} onChange={e => setWriting({ ...writing, agencyPrompts: { ...writing.agencyPrompts, coauthor: e.target.value } })} /></label>
+            <div className="resource-actions"><button type="button" disabled={locked} onClick={() => setWriting({ ...writing, agencyPrompts: { ...defaultAgencyPrompts } })}>恢复主角控制默认提示词</button></div>
             <label>发送最近多少条消息（0 不限）<input type="number" required min={0} max={10000} step={1} value={writing.historyMessageLimit} onChange={e => setWriting({ ...writing, historyMessageLimit: Number(e.target.value) })} /></label>
             <p className="muted">设为 0 表示不限制发送条数，仍受模型上下文预算限制。大于 0 时发送最近 N 条用户或 AI 消息，包含本次输入。故事设置固定发送起点后，优先发送从起点开始的全部消息。这里只控制发送范围，不删除聊天记录；Memory、主角状态和世界书仍按原规则加入。</p>
             <label className="checkbox-row"><input type="checkbox" checked={writing.sendMemory} onChange={e => setWriting({ ...writing, sendMemory: e.target.checked })} />发送 Memory</label>

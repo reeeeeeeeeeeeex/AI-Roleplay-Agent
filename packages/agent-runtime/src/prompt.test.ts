@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultPromptSettings, type MessageNode } from '@new-ai-chat/contracts';
+import { defaultAgencyPrompts, defaultPromptSettings, type MessageNode } from '@new-ai-chat/contracts';
 import { buildStableSystemPrompt, buildWriterContext, fitRequest } from './prompt.js';
 
 const base = {
@@ -34,7 +34,9 @@ describe('ReST prompt assembly', () => {
     expect(defaultPromptSettings.mainInstruction).toContain('Continue the current fictional roleplay as {{char}}');
     expect(solo).toContain('Continue the current fictional roleplay as A');
     expect(solo).toContain('[Assistant Role: A]\nA greets P.');
-    expect(solo.indexOf('[Protagonist Agency]')).toBeLessThan(solo.indexOf('[Assistant Role: A]'));
+    expect(solo.indexOf('[User Agency]')).toBeLessThan(solo.indexOf('[Assistant Role: A]'));
+    expect(solo).toContain(defaultAgencyPrompts.protected);
+    expect(solo).toContain('User is the role played by the human user. Assistant represents the cast and scene narrator.\nUser name: P');
     const override = buildStableSystemPrompt({ ...base, promptSettings: { ...defaultPromptSettings, additionalInstruction: 'Extra guidance for {{user}} and {{char}}.' }, characters: [{ ...base.characters[0]!, systemPrompt: 'Character override for {{char}}.' }] });
     expect(override).toContain('[Main Instruction]\nCharacter override for A.');
     expect(override).toContain('[Additional Instruction]\nExtra guidance for P and A.');
@@ -57,6 +59,17 @@ describe('ReST prompt assembly', () => {
     expect(final.indexOf('[Latest User Input]')).toBeLessThan(final.indexOf('[Current Speaker]'));
   });
 
+  it('uses the edited prompt for the selected User agency mode in writing and planning', () => {
+    const agencyPrompts = { protected: 'Wait for {{user}} to decide; {{char}} reacts.', coauthor: 'Collaborate on {{user}}’s actions.' };
+    const writing = buildStableSystemPrompt({ ...base, agencyPrompts });
+    expect(writing).toContain('[User Agency]\nWait for P to decide; A reacts.');
+    expect(writing).not.toContain(agencyPrompts.coauthor);
+    const planning = buildStableSystemPrompt({ ...base, agencyPrompts, agencyMode: 'coauthor', persona: null }, 'planner');
+    expect(planning).toContain('[User Agency]\nCollaborate on User’s actions.');
+    expect(planning).not.toContain('Wait for');
+    expect(planning).not.toMatch(/\bprotagonist\b/iu);
+  });
+
   it('omits writer brief and automatic speaker in plain mode, and formats memory and state with guidance', () => {
     const history: MessageNode[] = [{ id: 'u', conversationId: 'chat', parentId: null, storyTurnId: 's', role: 'user', authorKind: 'protagonist', speaker: null, content: 'history', providerState: null, legacyPayload: null, createdAt: new Date().toISOString() }];
     const plain = buildWriterContext({
@@ -77,7 +90,7 @@ describe('ReST prompt assembly', () => {
     const textOf = (msg: any) => typeof msg?.content === 'string' ? msg.content : (msg?.content ?? []).map((p: any) => p.text ?? '').join('');
 
     const stateMsg = textOf(plain.messages[1]);
-    expect(stateMsg).toContain('[Protagonist State]\n以下是主角在当前剧情分支中已记录的状态事实');
+    expect(stateMsg).toContain('[User State]\n以下是 User（用户扮演的主角）在当前剧情分支中已记录的状态事实');
     expect(stateMsg).toContain('HP: 100');
     expect(stateMsg).toContain('is_dead means confirmed death only');
     expect(stateMsg).toContain('absence, disappearance, or being off-screen is not evidence of death');

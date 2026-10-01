@@ -46,6 +46,7 @@
 - 普通发送、Swipe 和 regenerate 的最新原始用户输入锚点使用“以下是用户本轮输入：”，放在 Memory、主角状态和后置指令之后、最终 Current Speaker 之前；在历史裁剪前取得原文。空草稿预览为 Auto，不复用旧输入。
 - 故事资料的作者注释按会话保存，普通写作、Writer Agent 和 Planner 都按 System 指令处理；通用 Chat Completions / Responses 放在历史后部、最终控制之前，DeepSeek Chat Completions（官方地址或模型名含 DeepSeek）合并到首条 System 末尾，Anthropic 放入独立顶层 System 块。修改 DeepSeek 作者注释会影响后续前缀缓存，不得为保缓存降级为 User。Pi 内部的消息标记必须在 Gateway 发送边界转换，不能作为 User 注释或随机占位符发给模型。作者注释计入必留预算，不写入剧情历史，原生故事包保留该字段。
 - 通用提示词的附加指令独立于写作主指令和角色卡覆盖，放在固定 System 前缀的角色资料后、常驻世界书前。附加指令和作者注释都默认留空，空白不生成标题；Raw input 预览与实际请求使用同一转换路径。
+- 写作设置直接展示并编辑保护主角／共同创作提示词，与模式一起显式保存到通用设置的 `agencyPrompts`；正文、Writer Agent 和 Planner 使用选中模式的 `[User Agency]`。模型提示词用 User 明确表示用户扮演的主角，Assistant 表示角色与旁白；内部 API／状态表键名保持稳定。
 - 左下角主角入口管理全局默认 Persona 和故事绑定；未绑定故事跟随全局默认，已绑定故事保持自身 Persona。提示词、预览、开场白和前端显示使用一致的身份解析。
 - 主角资料保留自由文本描述，并另存初始状态模板（姓名取主角名称、基础资料、当前穿搭、故事前经历和技能）。当前分支无状态快照时，在首次实际发送用户消息的同一事务内复制一次；后续 Persona 修改不回写，已有快照不重填。快照 v2 把旧主角 `past_experience` 原文迁到 `past_experience_in_story`，重要角色同名字段不变；`past_experience_before_story` 仅人工可改，共用原子校验拒绝模型和 Agent 写入。状态界面及模型上下文对易混淆字段显示中英双语标签，操作键名仍为英文。
 - 不复制 SillyTavern 源码，不修改导入源目录，不导入旧 API 密钥或扩展代码。

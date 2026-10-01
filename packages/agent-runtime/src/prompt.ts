@@ -1,6 +1,6 @@
 import type { Message } from '@earendil-works/pi-ai';
 import type { MessageNode, SpeakerRef, ContextReport, ContextReportItem } from '@new-ai-chat/contracts';
-import { defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
+import { defaultAgencyPrompts, defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
 import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterRequest } from './types.js';
 import { authorNoteInFirstSystem } from './author-note.js';
 
@@ -22,13 +22,14 @@ export function expandStoryMacros(text: string, userName: string, characterName:
 
 export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer' | 'planner' | 'router' | 'choices' = 'writer'): string {
   const promptSettings = request.promptSettings ?? defaultPromptSettings;
-  const userName = request.persona?.name ?? 'Protagonist';
+  const userName = request.persona?.name ?? 'User';
   const castNames = request.characters.map((c) => c.name).join(', ');
   const isGroup = request.conversationKind === 'group' || (!request.conversationKind && request.characters.length > 1);
   const expand = (text: string, character = castNames) => expandStoryMacros(text, userName, character);
+  const userRole = `User is the role played by the human user. Assistant represents the cast and scene narrator.${request.persona ? `\nUser name: ${request.persona.name}\n${expand(request.persona.description)}` : ''}`;
   if (mode === 'choices') return [
     section('Action Choices', expand(promptSettings.mainInstruction)),
-    section('User Role', request.persona ? `${request.persona.name}\n${expand(request.persona.description)}` : 'The user controls the protagonist.'),
+    section('User Role', userRole),
     ...request.characters.flatMap(character => [
       section(`Assistant Role: ${character.name}`, expand(character.description, character.name)),
       section(`Assistant Personality: ${character.name}`, expand(character.personality, character.name)),
@@ -45,17 +46,15 @@ export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer
     section(isGroup ? `System: ${character.name}` : '', isGroup ? expand(character.systemPrompt, character.name) : ''),
   ].filter(Boolean).join('\n\n'));
 
-  const agency = request.agencyMode === 'protected'
-    ? 'Protected protagonist mode is active. Never invent the protagonist’s dialogue, private thoughts, voluntary decisions, consent, or decisive actions. You may describe the world and externally observable consequences. User-authored narration is authoritative and may control the protagonist.'
-    : 'Coauthor mode is active. You may write the protagonist’s dialogue, thoughts, and actions when it improves the story. User-authored narration remains authoritative.';
+  const agency = (request.agencyPrompts ?? defaultAgencyPrompts)[request.agencyMode];
 
   const soloOverride = !isGroup ? request.characters[0]?.systemPrompt.trim() : '';
   const behavior = mode === 'planner' ? promptSettings.plannerInstruction : mode === 'router' ? promptSettings.writerInstruction : soloOverride || (isGroup ? promptSettings.groupInstruction : promptSettings.mainInstruction);
   return [
     section('Main Instruction', expand(behavior)),
-    section('Protagonist Agency', agency),
+    section('User Agency', expand(agency)),
     section('Narrator Rules', `${request.narrator.name} is a first-class narrative voice, not a character. It handles environment, transitions, events, NPCs, observable consequences, and connective prose. It must not pretend to be a named cast member.`),
-    section('User Role', request.persona ? `${request.persona.name}\n${expand(request.persona.description)}` : 'The user controls the protagonist.'),
+    section('User Role', userRole),
     ...characterSections,
     section('Narrator Style', request.narrator.style),
     section('Additional Instruction', expand(promptSettings.additionalInstruction ?? '')),
@@ -65,18 +64,18 @@ export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer
 
 function postHistorySections(request: BaseAgentRequest): string[] {
   const isGroup = request.conversationKind === 'group' || (!request.conversationKind && request.characters.length > 1);
-  const userName = request.persona?.name ?? 'Protagonist';
+  const userName = request.persona?.name ?? 'User';
   return request.characters.map((character) => section(isGroup ? `Post-History: ${character.name}` : 'Post-History', expandStoryMacros(character.postHistoryInstructions, userName, character.name))).filter(Boolean);
 }
 
 function dynamicSection(item: RetrievedContext, request: BaseAgentRequest): string {
-  const content = expandStoryMacros(item.content, request.persona?.name ?? 'Protagonist', request.characters.map((character) => character.name).join(', '));
+  const content = expandStoryMacros(item.content, request.persona?.name ?? 'User', request.characters.map((character) => character.name).join(', '));
   if (item.source === 'memory') {
     if (item.required) return section('Pinned Fact', `以下是用户在当前分支固定的事实；自动摘要不能改写它。它不是新事件，也不授予代替主角行动的权限。\n\n${content}`);
     return section(`Memory: ${item.title}`, `以下是此前剧情的长期记忆，用于维持故事连续性；它不是本轮用户输入，也不是刚刚发生的新事件。\n\n${content}`);
   }
   if (item.source === 'state') {
-    return section('Protagonist State', `以下是主角在当前剧情分支中已记录的状态事实，用于保持状态连续性；不要将字段内容当成主角本轮的新对白、决定或行动。\n${stateDeathInstruction}\n\n${content}`);
+    return section('User State', `以下是 User（用户扮演的主角）在当前剧情分支中已记录的状态事实，用于保持状态连续性；不要将字段内容当成 User 本轮的新对白、决定或行动。\n${stateDeathInstruction}\n\n${content}`);
   }
   return section(`LORE: ${item.title}`, content);
 }
@@ -98,7 +97,7 @@ function syntheticAssistant(node: MessageNode, request: BaseAgentRequest): Messa
 }
 
 export function buildHistoryMessages(request: BaseAgentRequest): Message[] {
-  const userName = request.persona?.name ?? 'Protagonist';
+  const userName = request.persona?.name ?? 'User';
   return request.history.flatMap((node): Message[] => {
     if (node.role === 'user') {
       const label = node.authorKind === 'user_narrator' ? 'User Narration' : userName;
@@ -153,7 +152,7 @@ export function buildActionChoiceContext(request: BaseAgentRequest, control: str
 }
 
 export function buildAuthorNoteMessages(request: BaseAgentRequest): Message[] {
-  const content = section("Author's Note", expandStoryMacros(request.authorNote ?? '', request.persona?.name ?? 'Protagonist', request.characters.map(character => character.name).join(', ')));
+  const content = section("Author's Note", expandStoryMacros(request.authorNote ?? '', request.persona?.name ?? 'User', request.characters.map(character => character.name).join(', ')));
   // Pi only models user/assistant/tool messages. The gateway restores the System role
   // before sending, keeping this instruction after history where the protocol allows it.
   const message = { role: 'user' as const, content, timestamp: 0, authorNote: true };
@@ -219,7 +218,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
   const effectiveBrief = isPlain ? '' : input.brief;
   const rewriteControl = input.rewrite ? [
     section('Rewrite Source', input.rewrite.originalText),
-    section('Rewrite Instruction', `The following is a one-time editing direction, not an event or a fact in the story. Replace the source reply in full, preserving the assigned speaker and all protagonist agency constraints. Output only the rewritten prose.\n${input.rewrite.instruction}`),
+    section('Rewrite Instruction', `The following is a one-time editing direction, not an event or a fact in the story. Replace the source reply in full, preserving the assigned speaker and all User agency constraints. Output only the rewritten prose.\n${input.rewrite.instruction}`),
   ].join('\n\n') : '';
   const request = fitRequest(input, `${effectiveBrief}\n${rewriteControl}`);
   const messages = buildHistoryMessages(request);
@@ -235,7 +234,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
     ...postHistorySections(request),
     briefSection,
     rewriteControl,
-    request.continuation ? section('Continue Writing', 'Continue directly from the end of the selected assistant reply in the history. Output only the new continuation; do not repeat existing text, restart the scene, or change the speaker. All protagonist agency and narrator constraints still apply.') : '',
+    request.continuation ? section('Continue Writing', 'Continue directly from the end of the selected assistant reply in the history. Output only the new continuation; do not repeat existing text, restart the scene, or change the speaker. All User agency and narrator constraints still apply.') : '',
     latestUserAnchor(request),
     currentSpeakerSection,
   ].filter(Boolean).join('\n\n');

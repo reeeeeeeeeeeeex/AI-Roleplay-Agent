@@ -35,6 +35,7 @@ pnpm start
 - 三种协议：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses。Pi AI / Pi Agent Core 精确固定为 0.85.0，隔离在 agent-runtime 包。
 - 普通写作一次正文请求、不带工具；Writer Agent 同一会话选人与写作，Planner 可选。支持显式回复者、选人失败回退、取消和可重放 SSE。
 - 每个聊天都有不可删除的旁白；名称、头像、风格和主角权限在通用设置统一控制。
+- 「通用设置 → 写作」直接显示保护主角和共同创作的原始提示词，可分别编辑、恢复默认并保存；模型只收到当前模式的提示词。模型中的 User 指用户扮演的主角，Assistant 指其他角色和旁白。
 - 用户旁白以 user 发送，AI 旁白以 assistant 发送；protected / coauthor 模式同时约束角色和旁白 Writer。
 - 一轮最多两条连续消息，共享 storyTurnId；第二个 Writer 能读取第一个 Writer 的成文。
 - 每条完整回复立即保存。第二条失败时保留第一条，可在原分支「重试剩余回复」；未完成片段只供查看和复制，不进入剧情。正文完成和 Memory／状态更新独立结算，重启不自动重发请求。

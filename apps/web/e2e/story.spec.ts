@@ -109,6 +109,35 @@ test('global send count and fixed message start control the raw prompt range', a
   expect(await preview()).not.toContain('蓝色车票');
 });
 
+test('writing settings edit both User agency prompts and persist the selected mode', async ({ page }) => {
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  const protectedPrompt = settings.getByRole('textbox', { name: '保护主角提示词', exact: true });
+  const coauthorPrompt = settings.getByRole('textbox', { name: '共同创作提示词', exact: true });
+  await expect(protectedPrompt).toHaveValue(/Never invent User’s dialogue/u);
+  await expect(coauthorPrompt).toHaveValue(/You may write User’s dialogue/u);
+  await protectedPrompt.fill('Wait for User to choose.');
+  await coauthorPrompt.fill('Collaborate with User on actions and dialogue.');
+  await settings.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('coauthor');
+  await settings.getByRole('combobox', { name: '生成模式', exact: true }).selectOption('plain');
+  await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('写作设置已保存');
+  await page.reload();
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  await expect(protectedPrompt).toHaveValue('Wait for User to choose.');
+  await expect(coauthorPrompt).toHaveValue('Collaborate with User on actions and dialogue.');
+  await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('coauthor');
+  await settings.getByRole('button', { name: '关闭设置' }).click();
+  await page.getByRole('textbox', { name: '输入消息' }).fill('推开门。');
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  const raw = page.getByRole('region', { name: 'Raw input', exact: true }).locator('pre');
+  await expect(raw).toContainText('[User Agency]');
+  await expect(raw).toContainText('Collaborate with User on actions and dialogue.');
+  await expect(raw).not.toContainText('Wait for User to choose.');
+});
+
 test('record fields save directly on blur and when the drawer closes', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
