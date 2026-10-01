@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { TraceSummary, TurnTrace } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import ContextReport from './ContextReport.js';
@@ -112,11 +111,10 @@ function RequestTrace({ trace, onError }: { trace: TurnTrace; onError: (message:
   </article>;
 }
 
-export default function AgentTrace({ chatId, version, activeTurnId, onError }: { chatId: string; version: number; activeTurnId: string | null; onError: (message: string) => void }) {
+export default function AgentTrace({ chatId, version, activeTurnId, onError, expanded = false, visible = true, children }: { chatId: string; version: number; activeTurnId: string | null; onError: (message: string) => void; expanded?: boolean; visible?: boolean; children?: ReactNode }) {
   const [summaries, setSummaries] = useState<TraceSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
-  const [expanded, setExpanded] = useState(false);
   const [trace, setTrace] = useState<TurnTrace | null>(null);
   const [copied, setCopied] = useState(false);
   const selectedId = follow ? summaries[0]?.id : selected;
@@ -124,6 +122,7 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError }: {
 
   useEffect(() => { setSummaries([]); setTrace(null); setSelected(null); setFollow(true); }, [chatId]);
   useEffect(() => {
+    if (!visible) return;
     let active = true, pending = false;
     const load = async () => {
       if (pending) return;
@@ -135,10 +134,10 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError }: {
     void load();
     const timer = activeTurnId ? setInterval(() => void load(), 750) : undefined;
     return () => { active = false; clearInterval(timer); };
-  }, [chatId, version, activeTurnId]);
+  }, [chatId, version, activeTurnId, visible]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!visible || !selectedId) return;
     let active = true, pending = false, haveRequest = false;
     setTrace(old => old?.id === selectedId ? old : null); setCopied(false);
     const load = async () => {
@@ -154,23 +153,14 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError }: {
     void load();
     const timer = selectedStatus === 'running' ? setInterval(() => void load(), 500) : undefined;
     return () => { active = false; clearInterval(timer); };
-  }, [selectedId, selectedStatus]);
+  }, [selectedId, selectedStatus, visible]);
 
-  useEffect(() => {
-    if (!expanded) return;
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setExpanded(false); };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
-  }, [expanded]);
-
-  return <div className={expanded ? 'agent-trace-shade' : undefined}>
-    <section className={`agent-trace ${expanded ? 'expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label="Agent Trace">
+  return <section className={`agent-trace ${expanded ? 'wide' : ''}`} aria-label="Agent Trace">
       <header className="trace-toolbar">
         <strong>Agent Trace</strong>
         <div>
           <button className={follow ? 'active' : ''} onClick={() => { setSelected(selectedId ?? null); setFollow(!follow); }}>跟随最新{follow ? ' ✓' : ''}</button>
           <button disabled={!selectedId} onClick={() => void api(`/traces/${selectedId}`).then(value => navigator.clipboard.writeText(JSON.stringify(value, null, 2))).then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? '已复制' : '复制 Trace'}</button>
-          <button aria-label={expanded ? '关闭大窗口' : '放大 Trace'} onClick={() => setExpanded(!expanded)}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
         </div>
       </header>
       <div className="trace-layout">
@@ -184,8 +174,7 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError }: {
           </div>)}
           {!summaries.length && <p className="muted">尚无模型请求记录。</p>}
         </nav>
-        <div className="trace-detail">{trace && trace.id === selectedId ? <RequestTrace key={trace.id} trace={trace} onError={onError} /> : selectedId ? <p className="muted">正在读取 Trace…</p> : null}</div>
+        <div className="trace-detail">{children}{trace && trace.id === selectedId ? <RequestTrace key={trace.id} trace={trace} onError={onError} /> : selectedId ? <p className="muted">正在读取 Trace…</p> : null}</div>
       </div>
-    </section>
-  </div>;
+    </section>;
 }
