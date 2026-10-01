@@ -13,6 +13,16 @@ const base = {
 };
 
 describe('ReST prompt assembly', () => {
+  it('keeps newer memories when only one stage fits the context budget', () => {
+    const memory = { source: 'memory' as const, content: 'past '.repeat(1000) };
+    const request = { ...base, dynamicContext: [
+      { ...memory, title: 'Stage 1', priority: 100.000001 },
+      { ...memory, title: 'Stage 2', priority: 100.000002 },
+    ] };
+    const fitted = fitRequest({ ...request, connection: { ...request.connection, contextWindow: 12000 } });
+    expect(fitted.dynamicContext.map(item => item.title)).toEqual(['Stage 2']);
+  });
+
   it('keeps fixed history intact instead of silently sliding on token overflow', () => {
     const node: MessageNode = { id: 'start', conversationId: 'chat', parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: '固定起点。', providerState: null, legacyPayload: null, createdAt: '' };
     const request = { ...base, fixedHistory: true, connection: { ...base.connection, historyMessageLimit: 1 }, history: [node, { ...node, id: 'last', content: '后续消息。' }] };

@@ -53,6 +53,22 @@ function setup(steps: Step[]) {
   return { runtime, request, network, bodies, traces, controller };
 }
 
+it('sends memories from oldest to newest in the plain request body and preview', async () => {
+  const { runtime, request, network, bodies } = setup([{ text: 'Continue the story.' }]);
+  request.dynamicContext = [
+    { source: 'memory', title: 'Pinned Fact', content: 'User fact.', priority: 2000, required: true },
+    { source: 'state', title: 'Current state', content: 'Current facts.', priority: 500 },
+    ...[3, 1, 2].map(stage => ({ source: 'memory' as const, title: `Stage ${stage}`, content: `Past stage ${stage}.`, priority: 100 + stage / 1_000_000 })),
+  ];
+  const preview = await runtime.previewFirstRequest(request, 'plain');
+  expect(network).not.toHaveBeenCalled();
+  await runtime.writeTurn(request, { mode: 'plain', onDelta: () => {}, onOutputComplete: async () => {} });
+  expect(bodies[0]).toBe(preview.requestBody);
+  const body = JSON.parse(bodies[0]!);
+  expect(body.messages.slice(1, -1).map((message: { content: string }) => message.content.match(/^\[([^\]]+)\]/u)?.[1]))
+    .toEqual(['Pinned Fact', 'Protagonist State', 'Memory: Stage 1', 'Memory: Stage 2', 'Memory: Stage 3']);
+});
+
 it('action choice requests omit writing instructions and history reasoning, and trace malformed results', async () => {
   const { runtime, request, bodies, traces } = setup([{ text: '["观察门口。","询问来意。"]', thinking: '当前选择思考' }, { text: '["重复","重复"]' }]);
   request.connection.model = 'deepseek-test';

@@ -110,8 +110,7 @@ export function buildHistoryMessages(request: BaseAgentRequest): Message[] {
 }
 
 export function buildDynamicAnchor(request: BaseAgentRequest, brief: string, speaker: SpeakerRef): string {
-  const context = [...request.dynamicContext]
-    .sort((left, right) => right.priority - left.priority)
+  const context = orderedDynamicContext(request.dynamicContext)
     .map((item) => dynamicSection(item, request));
   return [
     ...context,
@@ -122,10 +121,18 @@ export function buildDynamicAnchor(request: BaseAgentRequest, brief: string, spe
 }
 
 export function buildDynamicContext(request: BaseAgentRequest): string {
-  return [...request.dynamicContext]
-    .sort((left, right) => right.priority - left.priority)
+  return orderedDynamicContext(request.dynamicContext)
     .map((item) => dynamicSection(item, request))
     .filter(Boolean).join('\n\n');
+}
+
+function orderedDynamicContext(items: RetrievedContext[]): RetrievedContext[] {
+  const ordered = [...items].sort((a, b) => b.priority - a.priority);
+  const isMemory = (item: RetrievedContext) => item.source === 'memory' && !item.required;
+  // Newer stages retain higher budget priority, but are sent after older memories.
+  const memories = ordered.filter(isMemory).sort((a, b) => a.priority - b.priority);
+  let index = 0;
+  return ordered.map(item => isMemory(item) ? memories[index++]! : item);
 }
 
 export function latestUserAnchor(request: BaseAgentRequest): string {
@@ -192,7 +199,7 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
     { id: 'system', source: 'system', title: request.promptMode === 'choices' ? '行动选项指令与身份' : '固定指令、身份与主角权限', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(buildStableSystemPrompt({ ...request, stableLore: [] }, request.promptMode ?? 'writer')) },
     ...request.stableLore.map(item => ({ id: item.sourceId ?? item.title, source: 'lore' as const, title: item.title, role: 'system' as const, included: true, reason: '常驻资料', estimatedTokens: estimateTokens(item.content) })),
     ...real.map(node => ({ id: node.id, source: 'history' as const, title: `${node.role} · ${node.id.slice(0, 8)}`, role: node.role, included: history.includes(node), reason: history.includes(node) ? '当前分支' : candidates.includes(node) ? '上下文预算' : '历史消息上限', estimatedTokens: estimateTokens(node.content) + 32, messageIds: [node.id] })),
-    ...[...request.dynamicContext].sort((a, b) => b.priority - a.priority).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),
+    ...orderedDynamicContext(request.dynamicContext).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),
   ];
   const keys = new Set(items.map(item => `${item.source}:${item.id}`));
   if (authorNote) items.push({ id: 'author-note', source: 'control', title: '作者注释', role: 'system', included: true, reason: authorNoteInFirstSystem(request.connection) ? 'DeepSeek：合并到首条 System；修改注释会影响后续前缀缓存' : request.connection.protocol === 'anthropic-messages' ? '协议要求：顶层 System' : '历史后部 · Depth 0', estimatedTokens: estimateTokens(String(authorNote.content)) + 32 });
@@ -209,7 +216,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
   ].join('\n\n') : '';
   const request = fitRequest(input, `${effectiveBrief}\n${rewriteControl}`);
   const messages = buildHistoryMessages(request);
-  for (const item of [...request.dynamicContext].sort((left, right) => right.priority - left.priority)) {
+  for (const item of orderedDynamicContext(request.dynamicContext)) {
     const content = dynamicSection(item, request);
     if (content) messages.push(syntheticContext(content));
   }
