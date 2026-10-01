@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { Maximize2, Minimize2, X } from 'lucide-react';
 import { stateColumnLabels, type Conversation, type GenerationMode, type PinnedFact, type StateTableName } from '@new-ai-chat/contracts';
 import StateCollectionRow from './StateCollectionRow.js';
 import { api } from './api.js';
@@ -40,11 +40,22 @@ export default function Records({
   onSource: (messageId: string) => void;
 }) {
   const [tab, setTab] = useState('memory');
+  const [expanded, setExpanded] = useState(false);
   const [memory, setMemory] = useState<any[]>([]);
   const [state, setState] = useState<any>({ tables: {} });
   const [proposals, setProposals] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [facts, setFacts] = useState<PinnedFact[]>([]);
+
+  useEffect(() => { setExpanded(false); }, [chat.id]);
+  useEffect(() => {
+    if (!expanded) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setExpanded(false); }
+    };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [expanded]);
 
   useEffect(() => {
     let active = true;
@@ -86,12 +97,17 @@ export default function Records({
   }
 
   return (
-    <aside className="records">
+    <aside className={`records${expanded ? ' records-expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label={expanded ? `${tab === 'memory' ? 'Memory' : '主角状态'}全屏` : undefined}>
       <header>
         <h2>故事记录</h2>
+        <div className="records-header-actions">
+        {tab !== 'planner' && <button aria-label={expanded ? '退出全屏' : `全屏打开${tab === 'memory' ? ' Memory' : '主角状态'}`} title={expanded ? '退出全屏（Esc）' : '全屏打开'} onClick={() => setExpanded(!expanded)}>
+          {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+        </button>}
         <button aria-label="关闭记录面板" onClick={onClose}>
           <X size={16} />
         </button>
+        </div>
       </header>
 
       <nav>
@@ -100,7 +116,7 @@ export default function Records({
           ['state', '主角状态'],
           ['planner', 'Agent'],
         ].map(([id, label]) => (
-          <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id!)}>
+          <button key={id} className={tab === id ? 'active' : ''} onClick={() => { setTab(id!); if (id === 'planner') setExpanded(false); }}>
             {label}
           </button>
         ))}
