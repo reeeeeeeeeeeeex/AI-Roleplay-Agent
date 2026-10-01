@@ -13,14 +13,14 @@ const base = {
 };
 
 describe('ReST prompt assembly', () => {
-  it('keeps newer memories when only one stage fits the context budget', () => {
+  it('rejects Memory budget overflow instead of sending only newer stages', () => {
     const memory = { source: 'memory' as const, content: 'past '.repeat(1000) };
     const request = { ...base, dynamicContext: [
       { ...memory, title: 'Stage 1', priority: 100.000001 },
       { ...memory, title: 'Stage 2', priority: 100.000002 },
     ] };
-    const fitted = fitRequest({ ...request, connection: { ...request.connection, contextWindow: 12000 } });
-    expect(fitted.dynamicContext.map(item => item.title)).toEqual(['Stage 2']);
+    expect(() => fitRequest({ ...request, connection: { ...request.connection, contextWindow: 12000 } }))
+      .toThrow(/Memory 上下文预算不足.*输入估算 \d+、最大输出 1000、配置窗口 12000.*请增大上下文窗口/u);
   });
 
   it('keeps fixed history intact instead of silently sliding on token overflow', () => {

@@ -176,16 +176,23 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
   if (limit < 1024 || mandatory > limit) throw new Error('Stable prompt or latest input exceeds the context budget. Increase context window or shorten the cards/lore/input.');
   let remaining = limit - mandatory;
   const contextBudget = remaining * 0.4;
-  let dynamicUsed = 0;
-  const dynamicContext = [...pinned, ...request.dynamicContext.filter(item => !item.required).sort((a, b) => b.priority - a.priority).filter((item) => {
-    const cost = estimateTokens(dynamicSection(item, request));
-    if (dynamicUsed + cost > contextBudget) return false;
-    dynamicUsed += cost; return true;
-  })];
-  remaining -= dynamicUsed;
   const ceiling = request.fixedHistory ? 0 : request.connection.historyMessageLimit ?? 0;
   const real = request.history.filter((m) => m.role !== 'system');
   const candidates = ceiling > 0 ? real.slice(-ceiling) : real;
+  const optional = request.dynamicContext.filter(item => !item.required).sort((a, b) => b.priority - a.priority);
+  let dynamicUsed = 0;
+  const dynamicContext = [...pinned, ...optional.filter((item) => {
+    const cost = estimateTokens(dynamicSection(item, request));
+    if (dynamicUsed + cost > contextBudget) {
+      if (item.source === 'memory') {
+        const inputEstimate = mandatory + optional.reduce((sum, entry) => sum + estimateTokens(dynamicSection(entry, request)), 0) + candidates.reduce((sum, node) => sum + estimateTokens(node.content) + 32, 0);
+        throw new Error(`Memory 上下文预算不足，无法完整发送已选记忆：资料预算估算 ${Math.floor(contextBudget)} token；输入估算 ${inputEstimate}、最大输出 ${request.connection.maxTokens}、配置窗口 ${request.connection.contextWindow ?? 128_000} token。请增大上下文窗口、调低最大输出，或关闭 Memory 发送后重试。`);
+      }
+      return false;
+    }
+    dynamicUsed += cost; return true;
+  })];
+  remaining -= dynamicUsed;
   const history: MessageNode[] = [];
   for (const node of [...candidates].reverse()) {
     const cost = estimateTokens(node.content) + 32;
