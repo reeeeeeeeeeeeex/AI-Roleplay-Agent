@@ -133,11 +133,11 @@ export const connectionInputSchema = z.object({
   model: z.string().trim().min(1).max(200),
   apiKey: z.string().max(20_000).optional(),
   headers: z.record(z.string(), z.string()).default({}),
-  temperature: z.number().min(0).max(2).default(0.8),
-  maxTokens: z.number().int().min(32).max(131_072).default(2_048),
-  contextWindow: z.number().int().min(8_192).max(2_000_000).default(128_000),
+  temperature: z.number().min(0).max(2).default(1),
+  maxTokens: z.number().int().min(32).max(131_072).default(50_000),
+  contextWindow: z.number().int().min(8_192).max(2_000_000).default(1_000_000),
   historyMessageLimit: z.number().int().min(0).max(10_000).default(0),
-  reasoning: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('off'),
+  reasoning: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('high'),
 }).refine((value) => value.protocol !== 'anthropic-messages' || value.temperature <= 1, {
   path: ['temperature'], message: 'Anthropic temperature must be between 0 and 1.',
 });

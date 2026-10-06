@@ -25,11 +25,11 @@ export const defaults: Record<Collection, any> = {
     baseUrl: 'https://api.deepseek.com',
     model: '',
     apiKey: '',
-    temperature: 0.8,
-    maxTokens: 2048,
-    contextWindow: 128000,
+    temperature: 1,
+    maxTokens: 50000,
+    contextWindow: 1000000,
     historyMessageLimit: 0,
-    reasoning: 'off',
+    reasoning: 'high',
     headers: {},
   },
   lorebooks: { name: '', description: '', entries: [] },
@@ -328,7 +328,7 @@ export default function Editor({
               <div className="two-col">
                 {field('temperature', `温度（0–${temperatureMax}）`, false, 'number', { min: 0, max: temperatureMax, step: 0.1 })}
                 {field('maxTokens', '最大输出 tokens', false, 'number')}
-                {field('contextWindow', '上下文窗口 tokens（默认 128000）', false, 'number')}
+                {field('contextWindow', '上下文窗口 tokens（默认 1000000）', false, 'number')}
               </div>
               {select(
                 'reasoning',
