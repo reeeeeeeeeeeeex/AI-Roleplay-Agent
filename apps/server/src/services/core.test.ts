@@ -121,6 +121,64 @@ it('model settings: discovers models with saved credentials without saving the d
 async function normal(voice='protagonist',replyTarget:any={mode:'auto'}) {
   const turn=server.turns.start(turnRequestSchema.parse({conversationId:chat,input:{text:'推开门。',voice},replyTarget}));await server.turns.idle(chat);return server.repository.getTurn(turn.id)!;
 }
+it('empty send replies to the edited user in the same complete turn and rejects stale targets', async () => {
+  const repo = server.repository;
+  const original = await normal();
+  const old = repo.getActiveBranch(chat);
+  const deletion = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${old[1]!.id}`, payload: { head: old.at(-1)!.id } });
+  expect(deletion.statusCode).toBe(200);
+  const edited = (await server.app.inject({ method: 'POST', url: `/api/messages/${old[0]!.id}/edit`, payload: { content: '修改后，我敲了敲门。', previous: old[0]!.content, head: old[0]!.id } })).json();
+  const stale = { conversationId: chat, trigger: 'normal', targetMessageId: old[0]!.id };
+  expect((await server.app.inject({ method: 'POST', url: '/api/turns', payload: stale })).statusCode).toBe(409);
+  expect((await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: stale })).statusCode).toBe(409);
+  const payload = { ...stale, targetMessageId: edited.id };
+  expect(turnRequestSchema.safeParse({ ...payload, input: { voice: 'protagonist', text: '重复的输入' } }).success).toBe(false);
+  const response = await server.app.inject({ method: 'POST', url: '/api/turns', payload });
+  expect(response.statusCode).toBe(202); await server.turns.idle(chat);
+  const branch = repo.getActiveBranch(chat);
+  expect(repo.getTurn(response.json().id)?.status).toBe('completed');
+  expect(branch).toHaveLength(3);
+  expect(branch.filter(row => row.role === 'user').map(row => row.id)).toEqual([edited.id]);
+  expect(branch.every(row => row.storyTurnId === original.storyTurnId)).toBe(true);
+  expect(runtime.requests.at(-1)?.latestUserText).toBe(edited.content);
+  expect(settledStoryIds(repo, chat)).toEqual([original.storyTurnId]);
+  await server.records.generate(chat, 'memory', new AbortController().signal);
+  expect(repo.listMemories(chat)[0]?.coverage).toEqual({ startMessageId: edited.id, endMessageId: branch.at(-1)!.id, storyTurnIds: [original.storyTurnId] });
+});
+
+it('empty send preview matches the real gateway body for an edited legacy user message', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false });
+  repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.listConnections()[0]!, protocol: 'openai-chat-completions' }));
+  const user = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'user_narrator', speaker: null, content: '旧输入', providerState: null, legacyPayload: null });
+  repo.setHead(chat, user.id);
+  const edited = (await server.app.inject({ method: 'POST', url: `/api/messages/${user.id}/edit`, payload: { content: '雨停了，窗边传来敲击声。', head: user.id } })).json();
+  const payload = { conversationId: chat, trigger: 'normal', targetMessageId: edited.id };
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+    id: 'offline-reply', object: 'chat.completion', created: 0, model: 'test',
+    choices: [{ index: 0, message: { role: 'assistant', content: '她抬头望向窗户。' }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 },
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+  const preview = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload });
+  expect(preview.statusCode).toBe(200);
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(repo.getMessage(edited.id)?.storyTurnId).toBeNull();
+  const pi = new PiAgentRuntime(); runtime.writeTurn = pi.writeTurn.bind(pi);
+  const response = await server.app.inject({ method: 'POST', url: '/api/turns', payload });
+  expect(response.statusCode).toBe(202); await server.turns.idle(chat);
+  expect(repo.getTurn(response.json().id)?.status).toBe('completed');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const actual = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+  expect(actual).toEqual(JSON.parse(preview.json().requestBody));
+  expect(actual.messages.at(-1).content).toContain(`[User Narration]\n以下是用户本轮输入：\n“${edited.content}”`);
+  expect(JSON.stringify(actual)).not.toContain('旧输入');
+  const branch = repo.getActiveBranch(chat);
+  expect(branch).toHaveLength(2);
+  expect(branch[0]!.storyTurnId).toBe(response.json().storyTurnId);
+  expect(branch[1]!.storyTurnId).toBe(branch[0]!.storyTurnId);
+});
+
 it('seeds the selected Persona once on the first real send and exposes bilingual state to the model', async () => {
   const repo = server.repository;
   const first = repo.createPersona({ name: 'First', description: 'free text', avatarPath: null });

@@ -17,6 +17,16 @@ export class TurnService {
   async shutdown() { for (const task of this.active.values()) task.controller.abort(); await Promise.all([...this.active.values()].map((task) => task.done)); }
   cancel(id: string): boolean { const task = [...this.active.values()].find((task) => task.id === id); task?.controller.abort(); return Boolean(task); }
 
+  private existingUserInput(request: TurnRequest) {
+    if (request.trigger !== 'normal' || !request.targetMessageId) return null;
+    const message = this.repository.getMessage(request.targetMessageId);
+    if (!message || message.conversationId !== request.conversationId || message.role !== 'user'
+      || this.repository.getConversation(request.conversationId)?.headMessageId !== message.id) {
+      throw Object.assign(new Error('待回复的 User 消息已变化，请刷新后重试。'), { statusCode: 409 });
+    }
+    return message;
+  }
+
   start(request: TurnRequest, swipe = false): TurnRecord {
     swipe ||= Boolean(request.rewriteInstruction);
     const chat = this.repository.getConversation(request.conversationId);
@@ -27,7 +37,8 @@ export class TurnService {
     const fullHistory = this.repository.getActiveBranch(chat.id);
     const explicit = request.replyTarget.mode === 'explicit' ? request.replyTarget.speaker : null;
     if (explicit?.kind === 'character' && !source.cast.some((c) => c.id === explicit.characterId)) throw new Error('Speaker is not in this conversation.');
-    const target = request.targetMessageId ? this.repository.getMessage(request.targetMessageId) : null;
+    const existingInput = this.existingUserInput(request);
+    const target = existingInput ?? (request.targetMessageId ? this.repository.getMessage(request.targetMessageId) : null);
     if (request.trigger === 'continue' || request.trigger === 'regenerate') {
       if (!target || target.conversationId !== chat.id || target.role !== 'assistant' || !fullHistory.some((m) => m.id === target.id)) throw new Error('Target must be an assistant message on the current branch.');
       if (source.fixedHistory && !source.history.some(message => message.id === target.id)) throw new Error('目标消息位于固定发送起点之前，请先调整或取消起点。');
@@ -37,6 +48,9 @@ export class TurnService {
     let parent = chat.headMessageId;
     let continueText = '';
     this.repository.database.sqlite.transaction(() => {
+      if (existingInput && !existingInput.storyTurnId) {
+        this.repository.database.sqlite.prepare('UPDATE messages SET story_turn_id = ? WHERE id = ?').run(storyTurnId, existingInput.id);
+      }
       if (request.input && request.trigger === 'normal') {
         parent = this.repository.createMessage({ conversationId: chat.id, parentId: parent, storyTurnId, role: 'user',
           authorKind: request.input.voice === 'narrator' ? 'user_narrator' : 'protagonist', speaker: null,
@@ -113,6 +127,7 @@ export class TurnService {
     const chat = this.repository.getConversation(input.conversationId);
     if (!chat) throw new Error('Conversation not found.');
     this.assertIdle(chat.id);
+    this.existingUserInput(input);
     const request = await this.request(chat.id, `preview-${Date.now()}`, signal, input.trigger === 'auto', input.trigger === 'normal' ? input.input : undefined);
     const forced = input.replyTarget.mode === 'explicit' ? input.replyTarget.speaker : null;
     if (forced?.kind === 'character' && !request.characters.some((character) => character.id === forced.characterId)) throw new Error('Speaker is not in this conversation.');

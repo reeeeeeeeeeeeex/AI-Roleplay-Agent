@@ -503,39 +503,59 @@ test('v0.2 drafts, persona creation, reading position and bookmarked branch reco
   expect(errors).toEqual([]);
 });
 
-test('inline message autosave keeps drafts on failure and saves before continuing', async ({ page, request }, info) => {
+test('empty send replies after deleting and editing, then Enter adds an assistant reply', async ({ page, request }, info) => {
   await page.getByLabel('回复者').selectOption('narrator');
   await send(page, '打开信。', 2);
-  const reply = page.locator('article.message').last();
-  const input = reply.getByRole('textbox', { name: 'AI 回复正文' });
-  const original = await input.inputValue();
-  const originalId = await reply.getAttribute('data-message-id');
-  await expect(reply.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
-  const revised = '信纸上只有一句话。\n\n“明天见。”\n末尾保留换行。\n';
-  let fail = true;
-  await page.route('**/api/messages/*/edit', route => fail ? route.fulfill({ status: 400, json: { error: '暂时无法保存' } }) : route.continue());
-  await input.fill(revised); await input.blur();
-  await expect(reply.getByRole('alert')).toContainText('暂时无法保存');
-  await expect(input).toHaveValue(revised);
-  await page.reload();
-  await expect(input).toHaveValue(revised);
-  fail = false;
-  await input.focus(); await input.blur();
-  await expect(reply).not.toHaveAttribute('data-message-id', originalId!);
-  await page.reload();
-  await expect(input).toHaveValue(revised);
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('article.message').last().getByRole('button', { name: '删除', exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(1);
+  const user = page.locator('article.message').first();
+  const previousId = await user.getAttribute('data-message-id');
+  const revised = '先看看信封的署名。\n等她解释后再拆开。';
+  await user.getByRole('textbox', { name: '用户消息正文' }).fill(revised);
+  const edited = page.waitForResponse(response => /\/api\/messages\/[^/]+\/edit$/.test(response.url()));
+  const sent = page.waitForResponse(response => response.url().endsWith('/api/turns') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  const savedUser = await (await edited).json();
+  const sentRequest = (await sent).request().postDataJSON();
+  expect(savedUser.id).not.toBe(previousId);
+  expect(sentRequest).toMatchObject({ trigger: 'normal', targetMessageId: savedUser.id });
+  expect(sentRequest).not.toHaveProperty('input');
+  await expect(page.locator('article.message:not(.streaming)')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+  await expect(user.getByRole('textbox', { name: '用户消息正文' })).toHaveValue(revised);
+  const replyId = await page.locator('article.message').last().getAttribute('data-message-id');
+  const continued = page.waitForResponse(response => response.url().endsWith('/api/turns') && response.request().method() === 'POST');
+  await page.getByRole('textbox', { name: '输入消息' }).press('Enter');
+  expect((await continued).request().postDataJSON().trigger).toBe('auto');
+  await expect(page.locator('article.message:not(.streaming)')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+  await expect(page.locator('article.message').nth(1)).toHaveAttribute('data-message-id', replyId!);
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
-  const messages = await (await request.get(`/api/conversations/${chat.id}/messages`)).json();
-  expect(messages.nodes.find((message: any) => message.id === originalId).content).toBe(original);
-  await input.fill('这一版在继续故事前保存。');
-  const continuation = page.waitForResponse(response => response.url().endsWith('/api/turns') && response.request().method() === 'POST');
-  await reply.getByRole('button', { name: '续写', exact: true }).click();
-  expect((await continuation).request().postDataJSON().trigger).toBe('continue');
-  await expect(input).toHaveValue(/^这一版在继续故事前保存。.+/s);
-  await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
   const saved = await (await request.get(`/api/conversations/${chat.id}/messages`)).json();
-  expect(saved.branch[1].content).toMatch(/^这一版在继续故事前保存。.+/s);
+  expect(saved.branch.filter((message: any) => message.role === 'user').map((message: any) => message.id)).toEqual([savedUser.id]);
+});
+
+test('empty send preserves a failed user edit and does not request generation', async ({ page }) => {
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '打开信。', 2);
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('article.message').last().getByRole('button', { name: '删除', exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(1);
+  const input = page.getByRole('textbox', { name: '用户消息正文' });
+  const revised = '这份编辑必须保留下来。';
+  await page.route('**/api/messages/*/edit', route => route.fulfill({ status: 400, json: { error: '暂时无法保存' } }));
+  let requests = 0;
+  page.on('request', request => { if (request.url().endsWith('/api/turns') && request.method() === 'POST') requests++; });
+  await input.fill(revised);
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '内容尚未保存' })).toBeVisible();
+  await expect(input).toHaveValue(revised);
+  expect(requests).toBe(0);
+  await page.reload();
+  await expect(input).toHaveValue(revised);
+  await expect(page.locator('article.message')).toHaveCount(1);
 });
 
 test('inline facts bookmarks scene and rewrite controls stay beside their content', async ({ page, request }, info) => {

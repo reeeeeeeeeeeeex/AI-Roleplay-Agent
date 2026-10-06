@@ -99,8 +99,8 @@ export const turnRequestSchema = z.object({
   targetMessageId: z.string().min(1).optional(),
   rewriteInstruction: z.string().trim().min(1).max(4_000).optional(),
 }).superRefine((value, context) => {
-  if (value.trigger === 'normal' && !value.input) {
-    context.addIssue({ code: 'custom', path: ['input'], message: 'Normal turns require input.' });
+  if (value.trigger === 'normal' && Boolean(value.input) === Boolean(value.targetMessageId)) {
+    context.addIssue({ code: 'custom', path: ['input'], message: 'Normal turns require either new input or an existing user message.' });
   }
   if ((value.trigger === 'regenerate' || value.trigger === 'continue') && !value.targetMessageId) {
     context.addIssue({ code: 'custom', path: ['targetMessageId'], message: 'Target message is required.' });

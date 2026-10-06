@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog } from 'lucide-react';
-import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord } from '@new-ai-chat/contracts';
+import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';
@@ -52,7 +52,7 @@ export default function App() {
   const [sending, setSending] = useState(false);
   const [choicesBusy, setChoicesBusy] = useState(false);
   const sendPending = useRef(false);
-  const [voice, setVoice] = useState('protagonist');
+  const [voice, setVoice] = useState<UserVoice>('protagonist');
   const [replyTarget, setReplyTarget] = useState('auto');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -299,7 +299,15 @@ export default function App() {
     }
   }, [Object.keys(data).length]);
 
-  function turnPayload(trigger: 'normal' | 'auto' | 'regenerate' | 'continue', targetMessageId?: string) {
+  async function turnPayload(trigger: TurnRequest['trigger'], targetMessageId?: string, choiceText?: string): Promise<TurnRequest> {
+    const draft = choiceText ?? text;
+    if (trigger === 'normal' && !draft.trim()) {
+      // Read after autosave: editing a message can replace the branch head.
+      const { branch: current } = await api<{ branch: MessageNode[] }>(`/conversations/${chat!.id}/messages`);
+      const last = current.at(-1);
+      if (last?.role === 'user') targetMessageId = last.id;
+      else trigger = 'auto';
+    }
     const replyTargetValue = replyTarget === 'auto'
       ? { mode: 'auto' as const }
       : { mode: 'explicit' as const, speaker: replyTarget === 'narrator' ? { kind: 'narrator' as const } : { kind: 'character' as const, characterId: replyTarget } };
@@ -308,7 +316,7 @@ export default function App() {
       trigger,
       replyTarget: replyTargetValue,
       ...(targetMessageId ? { targetMessageId } : {}),
-      ...(trigger === 'normal' ? { input: { voice, text } } : {}),
+      ...(trigger === 'normal' && !targetMessageId ? { input: { voice: choiceText === undefined ? voice : 'protagonist', text: draft } } : {}),
     };
   }
 
@@ -322,7 +330,7 @@ export default function App() {
     return id;
   }
 
-  async function send(trigger: 'normal' | 'auto' | 'regenerate' | 'continue' = 'normal', targetMessageId?: string, choiceText?: string) {
+  async function send(trigger: TurnRequest['trigger'] = 'normal', targetMessageId?: string, choiceText?: string) {
     if (!chat || turn || sendPending.current || messageEdit) return;
     sendPending.current = true;
     setError('');
@@ -330,10 +338,11 @@ export default function App() {
     try {
       await flushContentEdits();
       setSending(true);
-      const payload = turnPayload(trigger, savedMessageId(targetMessageId));
-      const result = await api('/turns', 'POST', choiceText === undefined ? payload : { ...payload, input: { voice: 'protagonist', text: choiceText } });
+      const payload = await turnPayload(trigger, savedMessageId(targetMessageId), choiceText);
+      if (chatRef.current !== chat.id) return;
+      const result = await api('/turns', 'POST', payload);
       // Clear only the accepted draft, never newer typing or another chat's input.
-      if (trigger === 'normal' && choiceText === undefined) setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
+      if (payload.input && choiceText === undefined) setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
       if (chatRef.current !== chat.id) return;
       await refreshMessages(chat.id);
       await follow(result.id, chat.id);
@@ -423,9 +432,13 @@ export default function App() {
 
   async function showPromptPreview() {
     if (!chat) return;
-    const trigger = text.trim() ? 'normal' : 'auto';
-    const { conversationId: _conversationId, ...payload } = turnPayload(trigger);
-    try { await flushContentEdits(); setPromptPreview(await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload)); }
+    try {
+      await flushContentEdits();
+      const { conversationId: _conversationId, ...payload } = await turnPayload('normal');
+      if (chatRef.current !== chat.id) return;
+      const preview = await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload);
+      if (chatRef.current === chat.id) setPromptPreview({ ...preview, existingUserInput: Boolean(payload.targetMessageId) });
+    }
     catch (err: any) { setError(err.message || '预览失败'); }
   }
 
@@ -830,7 +843,7 @@ export default function App() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                       e.preventDefault();
-                      if (text.trim() && !turn) act(send());
+                      if (!turn) act(send());
                     }
                   }}
                 />
@@ -858,7 +871,7 @@ export default function App() {
                       <Square size={14} />
                     </button>
                   ) : (
-                    <button type="submit" className="send primary" aria-label="发送" disabled={sending || !!messageEdit || !text.trim()}>
+                    <button type="submit" className="send primary" aria-label="发送" disabled={sending || !!messageEdit}>
                       <Send size={15} />
                     </button>
                   )}
@@ -1228,8 +1241,8 @@ export default function App() {
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
             <header><h2>发送提示词预览 · Raw input</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
             <div className="prompt-preview-body">
-              <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
-              {promptPreview.action === 'auto' && <p className="muted">草稿为空，正在预览自动继续；自动继续不重复上一轮用户输入。输入草稿后预览可查看本轮输入锚点。</p>}
+              <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : promptPreview.existingUserInput ? '回复已有 User 消息' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
+              {promptPreview.action === 'auto' && <p className="muted">草稿为空，末尾没有待回复的 User 消息，正在预览自动继续；不重复上一轮用户输入。</p>}
               <p className="muted">身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)} · 主角：{promptPreview.personaName ?? '未选择（请求使用 User）'}{promptPreview.clipped ? ' · 已按上下文预算裁剪' : ''}</p>
               <p className="muted">以下是发送边界捕获的首请求原始 JSON Body，未发送、未重新格式化。修改草稿、设置或聊天内容后请重新预览；Agent 后续请求可在 Trace 中查看。</p>
               <section className="prompt-json" aria-label="Raw input">
