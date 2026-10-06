@@ -53,6 +53,20 @@ function setup(steps: Step[]) {
   return { runtime, request, network, bodies, traces, controller };
 }
 
+it('plain thinking-only responses preserve diagnostics without saving prose or retrying automatically', async () => {
+  const { runtime, request, network, traces } = setup([{ thinking: '离线模拟思考内容' }]);
+  const thinking = vi.spyOn(request.trace!, 'thinking');
+  const finish = vi.spyOn(request.trace!, 'finish');
+  const onOutputComplete = vi.fn();
+  const onDelta = vi.fn();
+  await expect(runtime.writeTurn(request, { mode: 'plain', onDelta, onOutputComplete })).rejects.toThrow('模型仅返回了思考内容，没有返回正文（结束原因：stop）');
+  expect(network).toHaveBeenCalledTimes(1);
+  expect(onOutputComplete).not.toHaveBeenCalled(); expect(onDelta).not.toHaveBeenCalled();
+  expect(thinking).toHaveBeenCalledWith('0', '离线模拟思考内容');
+  expect(finish).toHaveBeenCalledWith('0', 'failed', expect.objectContaining({ input: 50, output: 10 }), expect.stringContaining('本次输出未保存'));
+  expect(traces[0]?.response).toContain('data: [DONE]');
+});
+
 it('sends memories from oldest to newest in the plain request body and preview', async () => {
   const { runtime, request, network, bodies } = setup([{ text: 'Continue the story.' }]);
   request.dynamicContext = [

@@ -374,7 +374,7 @@ export class PiAgentRuntime implements AgentRuntime {
         }
         text = (text || visibleText(final)).trim();
         thinking = thinking || visibleThinking(final);
-        if (!text) throw new Error('Writer returned no visible text.');
+        if (!text) throw new Error(`${thinking ? '模型仅返回了思考内容，没有返回正文' : '模型没有返回正文'}（结束原因：${final?.stopReason ?? '未知'}）。本次输出未保存，可重试。`);
         timing.completedAt = new Date().toISOString();
         const usage = usageOf(final);
         if (traceId) {
@@ -388,7 +388,11 @@ export class PiAgentRuntime implements AgentRuntime {
         history = [...history, { id: `runtime-${outputIndex}`, conversationId: request.conversationId, parentId: null, storyTurnId: request.storyTurnId, role: 'assistant', authorKind: output.speaker.kind, speaker: output.speaker, content: text, providerState: null, generationInfo: null, legacyPayload: null, createdAt: timing.completedAt }];
       } catch (error) {
         timing.completedAt = new Date().toISOString();
-        if (traceId) { request.trace?.timing(traceId, { completedAt: timing.completedAt }); request.trace?.finish(traceId, request.signal.aborted ? 'cancelled' : 'failed', undefined, error instanceof Error ? error.message : String(error)); }
+        if (traceId) {
+          if (thinking) request.trace?.thinking(traceId, thinking);
+          request.trace?.timing(traceId, { completedAt: timing.completedAt });
+          request.trace?.finish(traceId, request.signal.aborted ? 'cancelled' : 'failed', final ? usageOf(final) : undefined, error instanceof Error ? error.message : String(error));
+        }
         throw error;
       }
     }
