@@ -525,6 +525,64 @@ describe('native turns and narrator',()=>{
   it('auto turns do not re-anchor stale user input',async()=>{await normal();const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'auto'}));await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('completed');expect(runtime.requests.at(-1)?.latestUserText).toBe('');});
 });
 describe('branches and records',()=>{
+  it('delete story tail restores earlier records and leaves independent chats intact', async () => {
+    const repo = server.repository;
+    const first = await normal(); const before = repo.getActiveBranch(chat);
+    const state = blankState(); state.global_state[0]!.current_location = '旧地点'; repo.createState(chat, first.storyTurnId, state);
+    const memory = repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: first.storyTurnId, content: '旧记忆', source: 'manual' });
+    repo.savePinnedFact(chat, '仍然有效的事实', before[0]!.id);
+    const second = await normal(); const full = repo.getActiveBranch(chat); const head = full.at(-1)!.id;
+    state.global_state[0]!.current_location = '后来的地点'; repo.createState(chat, second.storyTurnId, state);
+    repo.addEvent(chat, null, 'memory.edited', { id: memory.id, head, content: '后来的记忆修改' });
+    repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: second.storyTurnId, content: '后来的阶段', source: 'generated', coverage: { startMessageId: full[3]!.id, endMessageId: head, storyTurnIds: [second.storyTurnId] } });
+    repo.saveBookmark(chat, '将删除的书签', head); repo.savePinnedFact(chat, '后来的事实', head);
+    repo.createProposals(chat, { ...second.plan!, worldEventProposals: [{ summary: '城门关闭', evidence: '第二回合' }] });
+    applyProposal(repo, repo.listProposals(chat)[0]!.id, 'apply');
+    repo.setHistoryStart(chat, full[3]!.id);
+    repo.database.sqlite.prepare('INSERT INTO action_choice_caches (conversation_id, head_key) VALUES (?, ?)').run(chat, head);
+    const fork = (await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { messageId: head, head } })).json();
+    const removed = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${full[3]!.id}`, payload: { head } });
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect(repo.getActiveBranch(chat).map(row => row.id)).toEqual(before.map(row => row.id));
+    expect(repo.listMessages(chat)).toHaveLength(before.length);
+    expect(repo.latestState(chat)?.tables.global_state[0]!.current_location).toBe('旧地点');
+    expect(repo.listMemories(chat).map(row => row.content)).toEqual(['旧记忆']);
+    expect(repo.listPinnedFacts(chat).map(row => row.content)).toEqual(['仍然有效的事实']);
+    expect(repo.listBookmarks(chat)).toEqual([]); expect(repo.currentWorld(chat)).toEqual([]);
+    expect(repo.getConversation(chat)?.historyStartMessageId).toBeNull(); expect(repo.getTurn(second.id)).toBeNull();
+    expect(repo.database.sqlite.prepare('SELECT 1 FROM action_choice_caches WHERE conversation_id = ? AND head_key = ?').get(chat, head)).toBeUndefined();
+    expect(repo.getActiveBranch(fork.id)).toHaveLength(full.length);
+    expect(repo.latestState(fork.id)?.tables.global_state[0]!.current_location).toBe('后来的地点');
+    expect(repo.currentWorld(fork.id)[0]?.summary).toBe('城门关闭');
+    expect((await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).statusCode).toBe(200);
+  });
+
+  it('delete story tail removes assistant versions and can return to an empty chat', async () => {
+    await normal(); const repo = server.repository; const full = repo.getActiveBranch(chat);
+    const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${full[1]!.id}/edit`, payload: { content: '替代回复', head: full.at(-1)!.id } });
+    const variant = edited.json();
+    const removed = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${variant.id}`, payload: { head: variant.id } });
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect(repo.listMessages(chat).map(row => row.id)).toEqual([full[0]!.id]);
+    expect(settledStoryIds(repo, chat)).toEqual([]);
+    const restore = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/head`, payload: { messageId: full.at(-1)!.id } });
+    expect(restore.statusCode).toBe(400);
+    const empty = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${full[0]!.id}`, payload: { head: full[0]!.id } });
+    expect(empty.statusCode, empty.body).toBe(200);
+    expect(repo.getConversation(chat)?.headMessageId).toBeNull(); expect(repo.listMessages(chat)).toEqual([]);
+  });
+
+  it('delete story tail rejects stale heads and messages outside the active history', async () => {
+    await normal(); const repo = server.repository; const full = repo.getActiveBranch(chat); const head = full.at(-1)!.id;
+    const other = repo.createConversation(conversationInputSchema.parse({ title: 'Other', kind: 'solo', characterId: character }));
+    const foreign = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${other.id}/messages/${head}`, payload: { head: null } });
+    const stale = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${head}`, payload: { head: null } });
+    expect(foreign.statusCode).toBe(400); expect(stale.statusCode).toBe(400);
+    repo.setHead(chat, full[0]!.id);
+    const inactive = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${head}`, payload: { head: full[0]!.id } });
+    expect(inactive.statusCode).toBe(400); expect(repo.listMessages(chat)).toHaveLength(full.length);
+  });
+
   it('independent branches copy the selected checkpoint and keep later record changes isolated', async () => {
     const repo = server.repository;
     const first = await normal(); const prefix = repo.getActiveBranch(chat); const forkPoint = prefix.at(-1)!;

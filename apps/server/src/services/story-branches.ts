@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { historyStartIndex } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
-import { conversations, memories, messages, proposals, sessionEvents, stateSnapshots } from '../db/schema.js';
+import { conversations, memories, messages, proposals, sessionEvents, stateSnapshots, turns } from '../db/schema.js';
 import { portableStoryEventTypes } from './story-archive.js';
 
 // Records follow their message checkpoint, including edits made after the original snapshot.
@@ -85,5 +85,55 @@ export function forkStory(repo: Repository, chatId: string, messageId: string, h
     db.update(conversations).set({ branchGroupId: groupId, headMessageId: mapped(messageId),
       historyStartMessageId: startIndex >= 0 ? mapped(path[startIndex]!.id) : null }).where(eq(conversations.id, copy.id)).run();
     return repo.getConversation(copy.id)!;
+  })();
+}
+
+export function deleteStoryFrom(repo: Repository, chatId: string, messageId: string, head: string | null) {
+  return repo.database.sqlite.transaction(() => {
+    const { chat, message } = sourceMessage(repo, chatId, messageId, head);
+    if (!repo.getActiveBranch(chatId).some(row => row.id === messageId)) throw new Error('只能删除当前历史中的消息。');
+    const all = repo.listMessages(chatId);
+    const children = new Map<string | null, string[]>();
+    for (const row of all) children.set(row.parentId, [...(children.get(row.parentId) ?? []), row.id]);
+    // Remove every version of the deleted tail so a later Swipe cannot resurrect it.
+    const pending = [...(children.get(message.parentId) ?? [])];
+    const removed = new Set<string>();
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (removed.has(id)) continue;
+      removed.add(id); pending.push(...(children.get(id) ?? []));
+    }
+    const retained = new Set(all.filter(row => !removed.has(row.id)).map(row => row.id));
+    const records = recordsAt(repo, chatId, retained);
+    const db = repo.database.db, sqlite = repo.database.sqlite;
+    const affectedStoryTurns = new Set(all.filter(row => removed.has(row.id)).map(row => row.storyTurnId).filter(Boolean));
+    const removedTurns = new Set(db.select().from(turns).where(eq(turns.conversationId, chatId)).all()
+      .filter(row => affectedStoryTurns.has(row.storyTurnId) || [row.progress?.head, row.progress?.parent, row.progress?.oldHead, ...(row.progress?.completedMessageIds ?? [])].some(id => id && removed.has(id)))
+      .map(row => row.id));
+    const retainedEvents = new Set(records.events.map(row => row.id));
+    const removeEvent = sqlite.prepare('DELETE FROM session_events WHERE conversation_id = ? AND id = ?');
+    const detachEvent = sqlite.prepare('UPDATE session_events SET turn_id = NULL WHERE conversation_id = ? AND id = ?');
+    for (const event of repo.events(chatId)) {
+      const value = event.payload as Record<string, any> | null;
+      const discard = portableStoryEventTypes.has(event.type) ? !retainedEvents.has(event.id)
+        : (event.turnId && removedTurns.has(event.turnId)) || [value?.head, value?.messageId, value?.sourceMessageId].some(id => removed.has(id));
+      if (discard) removeEvent.run(chatId, event.id);
+      else if (event.turnId && removedTurns.has(event.turnId)) detachEvent.run(chatId, event.id);
+    }
+    for (const [table, rows] of [['memories', records.memory], ['state_snapshots', records.states], ['proposals', records.plans]] as const) {
+      const keep = new Set(rows.map(row => row.id));
+      const existing = sqlite.prepare(`SELECT id FROM ${table} WHERE conversation_id = ?`).all(chatId) as Array<{ id: string }>;
+      const remove = sqlite.prepare(`DELETE FROM ${table} WHERE conversation_id = ? AND id = ?`);
+      for (const row of existing) if (!keep.has(row.id)) remove.run(chatId, row.id);
+    }
+    const removeTurn = sqlite.prepare('DELETE FROM turns WHERE conversation_id = ? AND id = ?');
+    const removeTraces = sqlite.prepare('DELETE FROM turn_traces WHERE conversation_id = ? AND turn_id = ?');
+    for (const id of removedTurns) { removeTraces.run(chatId, id); removeTurn.run(chatId, id); }
+    const removeMessage = sqlite.prepare('DELETE FROM messages WHERE conversation_id = ? AND id = ?');
+    const removeChoices = sqlite.prepare('DELETE FROM action_choice_caches WHERE conversation_id = ? AND head_key = ?');
+    for (const id of removed) { removeMessage.run(chatId, id); removeChoices.run(chatId, id); }
+    repo.setHead(chatId, message.parentId);
+    if (chat.historyStartMessageId && removed.has(chat.historyStartMessageId)) repo.setHistoryStart(chatId, null);
+    return { conversation: repo.getConversation(chatId)!, deletedCount: removed.size };
   })();
 }

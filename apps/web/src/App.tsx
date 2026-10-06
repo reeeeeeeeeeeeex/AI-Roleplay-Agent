@@ -401,6 +401,18 @@ export default function App() {
     if (branch.some(message => message.id === savedId)) { scrollToMessage(savedId); return; }
     if (window.confirm('这个书签位于其他历史走向，是否从该消息创建独立分支并打开？')) await forkFrom(savedId);
   }
+  async function deleteFrom(messageId: string) {
+    if (!chat || turn || sendPending.current) return;
+    if (!window.confirm('删除这条消息及其后的全部消息和版本？Memory 和主角状态将恢复到保留消息对应的记录；其他独立分支不受影响。此操作不可撤销。')) return;
+    sendPending.current = true; setSending(true); setError('');
+    try {
+      await flushContentEdits();
+      await api(`/conversations/${chat.id}/messages/${savedMessageId(messageId)}`, 'DELETE', { head: savedMessageId(chat.headMessageId ?? undefined) ?? null });
+      editedMessageIds.current.clear(); setMessageEdit(null); setPromptPreview(null); scrollToLatest();
+      await refreshMessages(chat.id); await refresh();
+      setRecordsVersion(version => version + 1);
+    } finally { sendPending.current = false; setSending(false); }
+  }
   async function setHistoryStart(messageId: string | null) {
     if (!chatId) return;
     await flushContentEdits();
@@ -764,6 +776,7 @@ export default function App() {
                         <button disabled={!!turn || sending} title="保留至本条消息，创建独立聊天；原聊天不变" onClick={() => act(forkFrom(m.id))}>
                           <GitFork size={12} />从此处分支
                         </button>
+                        <button className="danger" disabled={!!turn || sending} title="删除本条及其后的所有消息" onClick={() => act(deleteFrom(m.id))}>删除</button>
                       </div>}
                     </div>
                   </article>

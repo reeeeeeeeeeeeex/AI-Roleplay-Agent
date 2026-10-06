@@ -160,6 +160,28 @@ test('independent branches appear in both story list and branch switcher', async
   await expect(page.locator('article.message')).toHaveCount(1);
 });
 
+test('delete story tail confirms deletion and keeps bookmark jumps non-destructive', async ({ page, request }, info) => {
+  await send(page, '保留的第一回合', 3);
+  await send(page, '将删除的第二回合', 6);
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const history = (await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).branch;
+  await request.post(`/api/conversations/${chat.id}/bookmarks`, { data: { name: '第一回合', messageId: history[2].id } });
+  await page.reload();
+  await page.getByText('场景与书签', { exact: true }).click();
+  await page.getByRole('button', { name: '跳转到书签 第一回合', exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(6);
+  const remove = page.locator('article.message').nth(3).getByRole('button', { name: '删除', exact: true });
+  page.once('dialog', dialog => dialog.dismiss()); await remove.click();
+  await expect(page.locator('article.message')).toHaveCount(6);
+  page.once('dialog', dialog => dialog.accept()); await remove.click();
+  await expect(page.locator('article.message')).toHaveCount(3);
+  await page.reload();
+  await expect(page.locator('article.message')).toHaveCount(3);
+  const latest = (await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).nodes;
+  expect(latest).toHaveLength(3);
+});
+
 test('writing settings preserve agency prompts in none mode and omit control from the request preview', async ({ page }) => {
   await page.getByRole('button', { name: '通用设置', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '通用设置', exact: true });

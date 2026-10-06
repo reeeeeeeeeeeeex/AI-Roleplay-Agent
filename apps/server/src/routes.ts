@@ -15,7 +15,7 @@ import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
 import type { ActionChoiceService } from './services/action-choices.js';
-import { forkStory } from './services/story-branches.js';
+import { forkStory, deleteStoryFrom } from './services/story-branches.js';
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
@@ -122,6 +122,12 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const chatId = idOf(req); turns.assertIdle(chatId);
     const { messageId, head } = z.object({ messageId: z.string().min(1), head: z.string().nullable() }).parse(req.body);
     return reply.code(201).send(forkStory(repo, chatId, messageId, head));
+  });
+  app.delete('/api/conversations/:id/messages/:messageId', async req => {
+    const { id: chatId, messageId } = z.object({ id: z.string().min(1), messageId: z.string().min(1) }).parse(req.params);
+    turns.assertIdle(chatId);
+    const { head } = z.object({ head: z.string().nullable() }).parse(req.body);
+    return deleteStoryFrom(repo, chatId, messageId, head);
   });
   app.post('/api/conversations/:id/history-start', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
