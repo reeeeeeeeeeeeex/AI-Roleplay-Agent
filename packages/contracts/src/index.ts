@@ -17,7 +17,7 @@ export type SpeakerRef = z.infer<typeof speakerRefSchema>;
 export const userVoiceSchema = z.enum(['protagonist', 'narrator']);
 export type UserVoice = z.infer<typeof userVoiceSchema>;
 
-export const protagonistAgencyModeSchema = z.enum(['protected', 'coauthor']);
+export const protagonistAgencyModeSchema = z.enum(['protected', 'coauthor', 'none']);
 export type ProtagonistAgencyMode = z.infer<typeof protagonistAgencyModeSchema>;
 
 export const defaultAgencyPrompts = {
@@ -37,10 +37,11 @@ export interface PromptSettings {
 }
 
 const legacyMainInstruction = "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input without deciding {{user}}'s thoughts, dialogue, or choices.";
+const agencyMainInstruction = "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input. Follow the permissions in [User Agency].";
 
 export const defaultPromptSettings: PromptSettings = {
   additionalInstruction: '',
-  mainInstruction: "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input. Follow the permissions in [User Agency].",
+  mainInstruction: "Continue the current fictional roleplay as {{char}} and the scene narrator, faithfully preserving established characterization, relationships, world rules, and scene continuity while responding directly to {{user}}'s latest input.",
   groupInstruction: 'Continue the current fictional group roleplay and scene narration, faithfully preserving established characterization, relationships, world rules, and scene continuity.',
   writerInstruction: 'You are one Writer Agent. Use read-only story tools when useful. When no speaker is forced, call select_output_voices exactly once, then continue this same conversation by writing the selected voices in order. Never put tool calls or tool explanations in visible prose.',
   plannerInstruction: 'Plan the next story turn. Read context only when needed, then call submit_turn_plan exactly once. Do not write visible story prose.',
@@ -48,7 +49,7 @@ export const defaultPromptSettings: PromptSettings = {
 
 export const promptSettingsSchema = z.object({
   additionalInstruction: z.string().max(20_000).default(''),
-  mainInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.mainInstruction).transform(value => value === legacyMainInstruction ? defaultPromptSettings.mainInstruction : value),
+  mainInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.mainInstruction).transform(value => value === legacyMainInstruction || value === agencyMainInstruction ? defaultPromptSettings.mainInstruction : value),
   groupInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.groupInstruction),
   writerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.writerInstruction),
   plannerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.plannerInstruction),

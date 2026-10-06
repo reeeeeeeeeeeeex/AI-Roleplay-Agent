@@ -143,7 +143,7 @@ test('prompt presets load drafts and only apply after saving, preserving failed 
   await expect(additional).toHaveValue('修改后要应用的内容');
 });
 
-test('writing settings edit both User agency prompts and persist the selected mode', async ({ page }) => {
+test('writing settings preserve agency prompts in none mode and omit control from the request preview', async ({ page }) => {
   await page.getByRole('button', { name: '通用设置', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
   await settings.getByRole('button', { name: '写作', exact: true }).click();
@@ -153,7 +153,7 @@ test('writing settings edit both User agency prompts and persist the selected mo
   await expect(coauthorPrompt).toHaveValue(/You may write User’s dialogue/u);
   await protectedPrompt.fill('Wait for User to choose.');
   await coauthorPrompt.fill('Collaborate with User on actions and dialogue.');
-  await settings.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('coauthor');
+  await settings.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('none');
   await settings.getByRole('combobox', { name: '生成模式', exact: true }).selectOption('plain');
   await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
   await expect(settings.getByRole('status')).toContainText('写作设置已保存');
@@ -162,13 +162,14 @@ test('writing settings edit both User agency prompts and persist the selected mo
   await settings.getByRole('button', { name: '写作', exact: true }).click();
   await expect(protectedPrompt).toHaveValue('Wait for User to choose.');
   await expect(coauthorPrompt).toHaveValue('Collaborate with User on actions and dialogue.');
-  await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('coauthor');
+  await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('none');
   await settings.getByRole('button', { name: '关闭设置' }).click();
+  await expect(page.getByText('主角控制：无', { exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: '输入消息' }).fill('推开门。');
   await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
   const raw = page.getByRole('region', { name: 'Raw input', exact: true }).locator('pre');
-  await expect(raw).toContainText('[User Agency]');
-  await expect(raw).toContainText('Collaborate with User on actions and dialogue.');
+  await expect(raw).not.toContainText('[User Agency]');
+  await expect(raw).not.toContainText('Collaborate with User on actions and dialogue.');
   await expect(raw).not.toContainText('Wait for User to choose.');
 });
 

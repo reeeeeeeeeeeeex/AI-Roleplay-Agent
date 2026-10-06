@@ -626,7 +626,7 @@ export default function App() {
               {cast.map((id: string) => (
                 <button className="content-link" key={id} onClick={() => edit('characters', data.characters?.find(c => c.id === id))}><i className="dot" />{data.characters?.find((c) => c.id === id)?.name}</button>
               ))}
-              <small>{generalSettings.agencyMode === 'protected' ? '主角保护' : '共同创作'}</small>
+              <small>{{ protected: '主角保护', coauthor: '共同创作', none: '主角控制：无' }[generalSettings.agencyMode]}</small>
             </div>
 
             <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onHead={setHead} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />

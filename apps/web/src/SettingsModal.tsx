@@ -143,9 +143,10 @@ export default function SettingsModal({
               <select value={writing.agencyMode} onChange={e => setWriting({ ...writing, agencyMode: e.target.value as GeneralSettings['agencyMode'] })}>
                 <option value="protected">保护主角：AI 不代替主角决定</option>
                 <option value="coauthor">共同创作：AI 可描写主角行动和内心</option>
+                <option value="none">无：不发送主角控制提示词</option>
               </select>
             </label>
-            <p className="muted">User 指你控制的主角，Assistant 负责其他角色和旁白。发送时使用当前模式的提示词；支持 {'{{user}}'} 和 {'{{char}}'}。</p>
+            <p className="muted">User 指你控制的主角，Assistant 负责其他角色和旁白。发送时使用当前模式的提示词；选择“无”时不发送下方两段。支持 {'{{user}}'} 和 {'{{char}}'}。</p>
             <label>保护主角提示词<textarea required rows={5} maxLength={20000} value={writing.agencyPrompts.protected} onChange={e => setWriting({ ...writing, agencyPrompts: { ...writing.agencyPrompts, protected: e.target.value } })} /></label>
             <label>共同创作提示词<textarea required rows={4} maxLength={20000} value={writing.agencyPrompts.coauthor} onChange={e => setWriting({ ...writing, agencyPrompts: { ...writing.agencyPrompts, coauthor: e.target.value } })} /></label>
             <div className="resource-actions"><button type="button" disabled={locked} onClick={() => setWriting({ ...writing, agencyPrompts: { ...defaultAgencyPrompts } })}>恢复主角控制默认提示词</button></div>

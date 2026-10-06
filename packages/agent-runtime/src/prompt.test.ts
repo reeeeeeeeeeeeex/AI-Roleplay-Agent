@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultAgencyPrompts, defaultPromptSettings, type MessageNode } from '@new-ai-chat/contracts';
+import { defaultAgencyPrompts, defaultPromptSettings, promptSettingsSchema, type MessageNode } from '@new-ai-chat/contracts';
 import { buildStableSystemPrompt, buildWriterContext, fitRequest } from './prompt.js';
 
 const base = {
@@ -13,6 +13,17 @@ const base = {
 };
 
 describe('ReST prompt assembly', () => {
+  it('none agency omits control and migrates only the built-in main instruction', () => {
+    const previousDefault = `${defaultPromptSettings.mainInstruction} Follow the permissions in [User Agency].`;
+    const promptSettings = promptSettingsSchema.parse({ mainInstruction: previousDefault });
+    const prompt = buildStableSystemPrompt({ ...base, agencyMode: 'none', promptSettings });
+    expect(prompt).not.toContain('[User Agency]');
+    expect(prompt).not.toContain(defaultAgencyPrompts.protected);
+    expect(prompt).not.toContain(defaultAgencyPrompts.coauthor);
+    expect(prompt).toContain('[User Role]');
+    expect(promptSettingsSchema.parse({ mainInstruction: `Custom rules. ${previousDefault}` }).mainInstruction).toBe(`Custom rules. ${previousDefault}`);
+  });
+
   it('rejects Memory budget overflow instead of sending only newer stages', () => {
     const memory = { source: 'memory' as const, content: 'past '.repeat(1000) };
     const request = { ...base, dynamicContext: [

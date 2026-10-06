@@ -46,7 +46,7 @@ export function buildStableSystemPrompt(request: BaseAgentRequest, mode: 'writer
     section(isGroup ? `System: ${character.name}` : '', isGroup ? expand(character.systemPrompt, character.name) : ''),
   ].filter(Boolean).join('\n\n'));
 
-  const agency = (request.agencyPrompts ?? defaultAgencyPrompts)[request.agencyMode];
+  const agency = request.agencyMode === 'none' ? '' : (request.agencyPrompts ?? defaultAgencyPrompts)[request.agencyMode];
 
   const soloOverride = !isGroup ? request.characters[0]?.systemPrompt.trim() : '';
   const behavior = mode === 'planner' ? promptSettings.plannerInstruction : mode === 'router' ? promptSettings.writerInstruction : soloOverride || (isGroup ? promptSettings.groupInstruction : promptSettings.mainInstruction);
