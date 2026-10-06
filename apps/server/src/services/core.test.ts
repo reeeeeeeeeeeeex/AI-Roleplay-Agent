@@ -184,17 +184,46 @@ it('record send switches gate injected context and tool reads while keeping fixe
   expect(await request.source.readState()).toBeNull();
 });
 
-it('record maintenance retains its own records when both send switches are off', async () => {
+it('record model: manual maintenance shares its connection and retains its own records', async () => {
   await normal();
   const repo = server.repository;
+  const selected = repo.createConnection(connectionInputSchema.parse({ name: 'Records', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid', model: 'record-model', temperature: 0.3, maxTokens: 2048, contextWindow: 32000, reasoning: 'low', historyMessageLimit: 1 }));
   repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: '已有记忆' });
   repo.createState(chat, null, blankState());
-  repo.setGeneralSettings({ ...repo.getGeneralSettings(), sendMemory: false, sendProtagonistState: false });
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), recordConnectionId: selected.id, sendMemory: false, sendProtagonistState: false, streaming: false });
   const maintain = vi.spyOn(runtime, 'maintain').mockResolvedValueOnce('[]').mockResolvedValueOnce(JSON.stringify({ timeSpan: '今日', location: '门口', chronicle: '主角推开了门。', dialogue: [], overview: '进门' }));
   await server.records.generate(chat, 'state', new AbortController().signal);
   await server.records.generate(chat, 'memory', new AbortController().signal);
   expect(maintain.mock.calls[0]![0].dynamicContext.map(item => item.source)).toEqual(['state']);
   expect(maintain.mock.calls[1]![0].dynamicContext.map(item => item.content)).toEqual(['已有记忆']);
+  expect(maintain.mock.calls.map(([request]) => ({ connection: request.connection, streaming: request.streaming }))).toEqual([
+    { connection: expect.objectContaining({ id: selected.id, model: 'record-model', temperature: 0.3, maxTokens: 2048, contextWindow: 32000, reasoning: 'low', historyMessageLimit: 0 }), streaming: false },
+    { connection: expect.objectContaining({ id: selected.id, model: 'record-model', temperature: 0.3, maxTokens: 2048, contextWindow: 32000, reasoning: 'low', historyMessageLimit: 0 }), streaming: false },
+  ]);
+  expect(runtime.requests[0]!.connection.id).toBe(connection);
+});
+
+it('record model: automatic maintenance uses the shared selection for both updates', async () => {
+  await normal();
+  const repo = server.repository;
+  const selected = repo.createConnection(connectionInputSchema.parse({ name: 'Records', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'automatic-records' }));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), recordConnectionId: selected.id, memoryTurnInterval: 1, stateTurnInterval: 1 });
+  const maintain = vi.spyOn(runtime, 'maintain');
+  await server.records.automatic(chat, new AbortController().signal);
+  expect(maintain.mock.calls.map(([request]) => request.connection.id)).toEqual([selected.id, selected.id]);
+});
+
+it('record model: validates selection and restores the default when its connection is deleted', async () => {
+  const repo = server.repository;
+  expect(repo.getGeneralSettings().recordConnectionId).toBeNull();
+  const invalid = await server.app.inject({ method: 'PUT', url: '/api/settings/general', payload: { ...repo.getGeneralSettings(), recordConnectionId: 'missing' } });
+  expect(invalid.statusCode).toBe(400);
+  const selected = repo.createConnection(connectionInputSchema.parse({ name: 'Records', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'records' }));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), recordConnectionId: selected.id });
+  repo.deleteConnection(selected.id);
+  expect(new Repository(repo.database).getGeneralSettings().recordConnectionId).toBeNull();
+  const request = await server.turns.request(chat, 'manual', new AbortController().signal, false, undefined, 'state');
+  expect(request.connection.id).toBe(connection);
 });
 
 it('action choices use independent settings and history, persist edited groups and never become story context', async () => {

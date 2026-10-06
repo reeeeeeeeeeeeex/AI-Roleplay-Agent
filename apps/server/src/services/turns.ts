@@ -89,8 +89,8 @@ export class TurnService {
   async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input'], maintenance?: 'memory' | 'state'): Promise<BaseAgentRequest> {
     const chat = this.repository.getConversation(chatId)!;
     const settings = this.repository.getGeneralSettings();
-    const connection = this.repository.resolveConnection();
-    if (!connection) throw new Error('请在左下角通用设置中选择模型连接。');
+    const connection = this.repository.resolveConnection(maintenance ? settings.recordConnectionId : null);
+    if (!connection) throw new Error(maintenance ? '请在通用设置中配置 Memory / 主角状态使用的模型连接。' : '请在左下角通用设置中选择模型连接。');
     const virtualMessage = virtualInput ? { id: `preview-${storyTurnId}`, conversationId: chatId, parentId: chat.headMessageId, storyTurnId, role: 'user' as const,
       authorKind: virtualInput.voice === 'narrator' ? 'user_narrator' as const : 'protagonist' as const, speaker: null, content: virtualInput.text,
       providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() } : undefined;

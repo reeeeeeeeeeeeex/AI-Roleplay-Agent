@@ -125,6 +125,7 @@ export class Repository {
   setGeneralSettings(value: GeneralSettings): GeneralSettings {
     const settings = generalSettingsSchema.parse(value);
     if (settings.connectionId && !this.getRuntimeConnection(settings.connectionId)) throw new Error('Connection not found.');
+    if (settings.recordConnectionId && !this.getRuntimeConnection(settings.recordConnectionId)) throw new Error('Memory / 主角状态连接不存在。');
     if (settings.defaultPersonaId && !this.getPersona(settings.defaultPersonaId)) throw new Error('Persona not found.');
     const choiceConnectionId = settings.actionChoices.connectionId ?? settings.connectionId;
     const choiceConnection = choiceConnectionId ? this.getRuntimeConnection(choiceConnectionId) : null;
@@ -145,9 +146,10 @@ export class Repository {
       .onConflictDoUpdate({ target: appSettings.key, set: { value: prompts } }).run();
     return prompts;
   }
-  resolveConnection(): RuntimeConnection | null {
+  resolveConnection(overrideId?: string | null): RuntimeConnection | null {
     const settings = this.getGeneralSettings();
-    const connection = settings.connectionId ? this.getRuntimeConnection(settings.connectionId) : null;
+    const connectionId = overrideId ?? settings.connectionId;
+    const connection = connectionId ? this.getRuntimeConnection(connectionId) : null;
     return connection ? { ...connection, historyMessageLimit: settings.historyMessageLimit } : null;
   }
 
@@ -191,8 +193,9 @@ export class Repository {
   deleteConnection(connectionId: string): boolean {
     return this.database.sqlite.transaction(() => {
       const settings = this.getGeneralSettings();
-      if (settings.connectionId === connectionId || settings.actionChoices.connectionId === connectionId) this.setGeneralSettings({ ...settings,
+      if (settings.connectionId === connectionId || settings.actionChoices.connectionId === connectionId || settings.recordConnectionId === connectionId) this.setGeneralSettings({ ...settings,
         connectionId: settings.connectionId === connectionId ? null : settings.connectionId,
+        recordConnectionId: settings.recordConnectionId === connectionId ? null : settings.recordConnectionId,
         actionChoices: { ...settings.actionChoices, connectionId: settings.actionChoices.connectionId === connectionId ? null : settings.actionChoices.connectionId },
       });
       return this.database.db.delete(connections).where(eq(connections.id, connectionId)).run().changes > 0;

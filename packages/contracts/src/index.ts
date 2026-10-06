@@ -303,6 +303,7 @@ export const generalSettingsSchema = z.object({
   historyMessageLimit: z.number().int().min(0).max(10_000).default(0),
   connectionId: z.string().min(1).nullable().default(null),
   defaultPersonaId: z.string().min(1).nullable().default(null),
+  recordConnectionId: z.string().min(1).nullable().default(null),
   generationMode: generationModeSchema.default('plain'),
   streaming: z.boolean().default(true),
   agencyMode: protagonistAgencyModeSchema.default('protected'),

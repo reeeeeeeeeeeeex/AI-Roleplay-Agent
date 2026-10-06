@@ -132,6 +132,13 @@ export default function SettingsModal({
               disabled={locked}
               onChange={(url) => setWriting({ ...writing, narrator: { ...writing.narrator, avatarPath: url } })}
             />
+            <label>Memory / 主角状态模型
+              <select value={writing.recordConnectionId ?? ''} onChange={e => setWriting({ ...writing, recordConnectionId: e.target.value || null })}>
+                <option value="">跟随当前模型</option>
+                {connections.map(c => <option key={c.id} value={c.id}>{c.name} · {c.model}</option>)}
+              </select>
+            </label>
+            <p className="muted">Memory 和主角状态共用此模型，仍分别更新。生成参数使用所选连接，流式和历史范围遵循通用设置。</p>
             <div className="two-col">
               <label>Memory 自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.memoryTurnInterval} onChange={e => setWriting({ ...writing, memoryTurnInterval: Number(e.target.value) })} /></label>
               <label>状态自动更新间隔（0 关闭）<input type="number" required min={0} max={10000} step={1} value={writing.stateTurnInterval} onChange={e => setWriting({ ...writing, stateTurnInterval: Number(e.target.value) })} /></label>
