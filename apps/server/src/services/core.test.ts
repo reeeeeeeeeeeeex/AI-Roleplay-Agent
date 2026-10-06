@@ -615,17 +615,26 @@ describe('branches and records',()=>{
     expect((await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).statusCode).toBe(200);
   });
 
-  it('delete story tail removes assistant versions and can return to an empty chat', async () => {
+  it('delete story tail permanently removes later nodes on paths that diverged before the cutoff', async () => {
     await normal(); const repo = server.repository; const full = repo.getActiveBranch(chat);
-    const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${full[1]!.id}/edit`, payload: { content: '替代回复', head: full.at(-1)!.id } });
+    const state = blankState(); state.global_state[0]!.current_location = '旧走向的未来';
+    repo.createState(chat, full[0]!.storyTurnId, state);
+    repo.createMemory({ conversationId: chat, storyTurnId: full[0]!.storyTurnId, stage: 1, source: 'generated', content: '旧走向的未来记忆' });
+    const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${full[0]!.id}/edit`, payload: { content: '修改后的 User 消息', head: full.at(-1)!.id } });
     const variant = edited.json();
-    const removed = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${variant.id}`, payload: { head: variant.id } });
+    server.turns.start(turnRequestSchema.parse({ conversationId: chat, targetMessageId: variant.id }));
+    await server.turns.idle(chat);
+    const current = repo.getActiveBranch(chat);
+    const removed = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${current[1]!.id}`, payload: { head: current.at(-1)!.id } });
     expect(removed.statusCode, removed.body).toBe(200);
-    expect(repo.listMessages(chat).map(row => row.id)).toEqual([full[0]!.id]);
+    expect(repo.listMessages(chat).map(row => row.id).sort()).toEqual([full[0]!.id, variant.id].sort());
+    expect(repo.getActiveBranch(chat).map(row => row.id)).toEqual([variant.id]);
+    expect(repo.database.sqlite.prepare('SELECT count(*) AS count FROM state_snapshots WHERE conversation_id = ?').get(chat)).toEqual({ count: 0 });
+    expect(repo.database.sqlite.prepare('SELECT count(*) AS count FROM memories WHERE conversation_id = ?').get(chat)).toEqual({ count: 0 });
     expect(settledStoryIds(repo, chat)).toEqual([]);
     const restore = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/head`, payload: { messageId: full.at(-1)!.id } });
     expect(restore.statusCode).toBe(400);
-    const empty = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${full[0]!.id}`, payload: { head: full[0]!.id } });
+    const empty = await server.app.inject({ method: 'DELETE', url: `/api/conversations/${chat}/messages/${variant.id}`, payload: { head: variant.id } });
     expect(empty.statusCode, empty.body).toBe(200);
     expect(repo.getConversation(chat)?.headMessageId).toBeNull(); expect(repo.listMessages(chat)).toEqual([]);
   });

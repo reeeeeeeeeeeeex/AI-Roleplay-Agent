@@ -412,7 +412,7 @@ export default function App() {
   }
   async function deleteFrom(messageId: string) {
     if (!chat || turn || sendPending.current) return;
-    if (!window.confirm('删除这条消息及其后的全部消息和版本？Memory 和主角状态将恢复到保留消息对应的记录；其他独立分支不受影响。此操作不可撤销。')) return;
+    if (!window.confirm('永久删除当前聊天从这个位置起的全部消息，包括旧走向中这个位置及之后的版本？Memory 和主角状态将恢复到保留消息对应的记录；其他独立聊天不受影响。删除后无法恢复。')) return;
     sendPending.current = true; setSending(true); setError('');
     try {
       await flushContentEdits();

@@ -91,12 +91,15 @@ export function forkStory(repo: Repository, chatId: string, messageId: string, h
 export function deleteStoryFrom(repo: Repository, chatId: string, messageId: string, head: string | null) {
   return repo.database.sqlite.transaction(() => {
     const { chat, message } = sourceMessage(repo, chatId, messageId, head);
-    if (!repo.getActiveBranch(chatId).some(row => row.id === messageId)) throw new Error('只能删除当前历史中的消息。');
+    const position = repo.getActiveBranch(chatId).findIndex(row => row.id === messageId);
+    if (position < 0) throw new Error('只能删除当前历史中的消息。');
     const all = repo.listMessages(chatId);
     const children = new Map<string | null, string[]>();
     for (const row of all) children.set(row.parentId, [...(children.get(row.parentId) ?? []), row.id]);
-    // Remove every version of the deleted tail so a later Swipe cannot resurrect it.
-    const pending = [...(children.get(message.parentId) ?? [])];
+    // The cutoff applies to every old path in this chat, including paths that diverged earlier.
+    let level = children.get(null) ?? [];
+    for (let index = 0; index < position; index++) level = level.flatMap(id => children.get(id) ?? []);
+    const pending = [...level];
     const removed = new Set<string>();
     while (pending.length) {
       const id = pending.pop()!;
