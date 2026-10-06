@@ -15,6 +15,7 @@ import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
 import type { ActionChoiceService } from './services/action-choices.js';
+import { forkStory } from './services/story-branches.js';
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
@@ -117,6 +118,11 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       headers: Object.fromEntries(Object.entries(input.headers).map(([key, value]) => [key, value === '[stored]' && sameEndpoint ? saved.headers[key] ?? '' : value])) }) };
   });
   app.get('/api/conversations/:id/messages', async (req) => ({ branch: repo.getActiveBranch(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })), nodes: repo.listMessages(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })) }));
+  app.post('/api/conversations/:id/branches', async (req, reply) => {
+    const chatId = idOf(req); turns.assertIdle(chatId);
+    const { messageId, head } = z.object({ messageId: z.string().min(1), head: z.string().nullable() }).parse(req.body);
+    return reply.code(201).send(forkStory(repo, chatId, messageId, head));
+  });
   app.post('/api/conversations/:id/history-start', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
     const { messageId } = z.object({ messageId: z.string().nullable() }).parse(req.body);

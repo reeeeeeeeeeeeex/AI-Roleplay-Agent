@@ -92,6 +92,7 @@ export const groups = sqliteTable('groups', {
 
 export const conversations = sqliteTable('conversations', {
   id: text('id').primaryKey(),
+  branchGroupId: text('branch_group_id'),
   title: text('title').notNull(),
   kind: text('kind').notNull(),
   characterId: text('character_id').references(() => characters.id, { onDelete: 'set null' }),

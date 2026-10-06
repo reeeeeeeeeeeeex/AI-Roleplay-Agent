@@ -4,9 +4,9 @@ import { api } from './api.js';
 import AutoSaveField from './AutoSaveField.js';
 import { flushContentEdits } from './useContentAutosave.js';
 
-export default function StoryNavigation({ chatId, head, version, disabled, onHead, onChanged, onError }: {
+export default function StoryNavigation({ chatId, head, version, disabled, onJump, onChanged, onError }: {
   chatId: string; head: string | null; version: number; disabled: boolean;
-  onHead: (id: string) => Promise<void>; onChanged: () => void; onError: (message: string) => void;
+  onJump: (id: string) => Promise<void>; onChanged: () => void; onError: (message: string) => void;
 }) {
   const [data, setData] = useState<Navigation | null>(null);
   useEffect(() => {
@@ -39,7 +39,7 @@ export default function StoryNavigation({ chatId, head, version, disabled, onHea
       {data.bookmarks.map(bookmark => <div key={bookmark.id}>
         <AutoSaveField draftKey={`${chatId}:bookmark:${bookmark.id}`} initial={bookmark.name} label="书签名称" singleLine disabled={disabled} onError={onError}
           onSave={async (name, previous) => { const saved = await api(`/conversations/${chatId}/bookmarks`, 'POST', { ...bookmark, name, previous }, { keepalive: true }); onChanged(); return saved.name; }} />
-        <button disabled={disabled} aria-label={`跳转到书签 ${bookmark.name}`} onClick={() => run(onHead(bookmark.messageId))}>跳转</button>
+        <button disabled={disabled} aria-label={`跳转到书签 ${bookmark.name}`} onClick={() => run(onJump(bookmark.messageId))}>跳转</button>
         <button disabled={disabled} onClick={() => run(api(`/conversations/${chatId}/bookmarks/${bookmark.id}`, 'DELETE'))}>删除书签</button>
       </div>)}
       {!data.bookmarks.length && <p className="muted">可从消息操作中添加书签。</p>}

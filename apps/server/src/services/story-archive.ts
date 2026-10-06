@@ -32,6 +32,7 @@ const payloads: Record<string, z.ZodType> = {
   'routing.completed': z.object({ plan: turnPlanSchema }),
   'planner.imported': z.object({ messageId: ref, record: z.unknown(), history: z.array(z.unknown()).default([]) }),
 };
+export const portableStoryEventTypes = new Set(Object.keys(payloads));
 
 const archiveSchema = z.object({
   format: z.literal('ai-roleplay-story'), version: z.literal(1),

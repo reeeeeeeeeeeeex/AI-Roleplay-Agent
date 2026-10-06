@@ -143,6 +143,23 @@ test('prompt presets load drafts and only apply after saving, preserving failed 
   await expect(additional).toHaveValue('修改后要应用的内容');
 });
 
+test('independent branches appear in both story list and branch switcher', async ({ page }) => {
+  const originalTitle = await page.getByRole('heading', { level: 1 }).textContent();
+  await send(page, '第一条选择', 3);
+  await page.locator('article.message').first().getByRole('button', { name: '从此处分支', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(`${originalTitle} · 分支 2`);
+  await expect(page.locator('article.message')).toHaveCount(1);
+  await expect(page.locator('.story-list').getByRole('button').filter({ hasText: `${originalTitle} · 分支 2` })).toBeVisible();
+  await page.getByRole('button', { name: '故事分支', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '故事分支', exact: true });
+  await picker.getByRole('button', { name: originalTitle!, exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(3);
+  await page.reload();
+  await page.getByRole('button', { name: '故事分支', exact: true }).click();
+  await picker.getByRole('button', { name: `${originalTitle} · 分支 2`, exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(1);
+});
+
 test('writing settings preserve agency prompts in none mode and omit control from the request preview', async ({ page }) => {
   await page.getByRole('button', { name: '通用设置', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '通用设置', exact: true });

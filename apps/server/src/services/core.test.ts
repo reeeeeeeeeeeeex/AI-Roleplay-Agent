@@ -525,6 +525,59 @@ describe('native turns and narrator',()=>{
   it('auto turns do not re-anchor stale user input',async()=>{await normal();const t=server.turns.start(turnRequestSchema.parse({conversationId:chat,trigger:'auto'}));await server.turns.idle(chat);expect(server.repository.getTurn(t.id)?.status).toBe('completed');expect(runtime.requests.at(-1)?.latestUserText).toBe('');});
 });
 describe('branches and records',()=>{
+  it('independent branches copy the selected checkpoint and keep later record changes isolated', async () => {
+    const repo = server.repository;
+    const first = await normal(); const prefix = repo.getActiveBranch(chat); const forkPoint = prefix.at(-1)!;
+    const state = blankState(); state.global_state[0]!.current_location = '过去的房间';
+    repo.createState(chat, first.storyTurnId, state);
+    const memory = repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: first.storyTurnId, content: '过去的记忆', source: 'manual', coverage: { startMessageId: prefix[0]!.id, endMessageId: forkPoint.id, storyTurnIds: [first.storyTurnId] } });
+    repo.savePinnedFact(chat, '过去的事实', prefix[0]!.id); repo.saveBookmark(chat, '分岔点', forkPoint.id);
+    repo.setHistoryStart(chat, prefix[0]!.id);
+    await normal(); const originalHead = repo.getConversation(chat)!.headMessageId;
+    state.global_state[0]!.current_location = '后来的街道'; repo.createState(chat, null, state);
+    repo.addEvent(chat, null, 'memory.edited', { id: memory.id, head: originalHead, content: '后来的修改' });
+    const result = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { messageId: forkPoint.id, head: originalHead } });
+    expect(result.statusCode, result.body).toBe(201);
+    const copy = result.json(); const copied = repo.getActiveBranch(copy.id);
+    expect(copied.map(message => message.content)).toEqual(prefix.map(message => message.content));
+    expect(copied.every(message => !prefix.some(old => old.id === message.id))).toBe(true);
+    expect(repo.getConversation(chat)?.headMessageId).toBe(originalHead);
+    expect(copy.branchGroupId).toBe(repo.getConversation(chat)?.branchGroupId);
+    expect(copy.historyStartMessageId).toBe(copied[0]!.id);
+    expect(repo.listMemories(copy.id)[0]).toMatchObject({ content: '过去的记忆', coverage: { startMessageId: copied[0]!.id, endMessageId: copied.at(-1)!.id } });
+    expect(repo.latestState(copy.id)?.tables.global_state[0]!.current_location).toBe('过去的房间');
+    expect(repo.listPinnedFacts(copy.id)[0]?.sourceMessageId).toBe(copied[0]!.id);
+    expect(repo.listBookmarks(copy.id)[0]?.messageId).toBe(copied.at(-1)!.id);
+    const copiedMemory = repo.listMemories(copy.id)[0]!;
+    repo.addEvent(copy.id, null, 'memory.edited', { id: copiedMemory.id, head: copy.headMessageId, content: '分支里的修改' });
+    expect(repo.listMemories(chat)[0]?.content).toBe('后来的修改');
+    expect((await server.app.inject({ url: `/api/conversations/${copy.id}/export?format=native` })).statusCode).toBe(200);
+  });
+
+  it('independent branches recover an old message path without moving the original chat', async () => {
+    await normal(); const repo = server.repository; const old = repo.getActiveBranch(chat);
+    const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${old[1]!.id}/edit`, payload: { content: '另一版本', head: old.at(-1)!.id } });
+    const currentHead = edited.json().id;
+    repo.setHistoryStart(chat, currentHead);
+    const result = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { messageId: old.at(-1)!.id, head: currentHead } });
+    expect(result.statusCode, result.body).toBe(201);
+    const copy = result.json();
+    expect(repo.getActiveBranch(copy.id).map(row => row.content)).toEqual(old.map(row => row.content));
+    expect(repo.getConversation(chat)?.headMessageId).toBe(currentHead);
+    expect(copy.historyStartMessageId).toBe(repo.getActiveBranch(copy.id)[1]!.id);
+    expect(settledStoryIds(repo, copy.id)).toHaveLength(1);
+  });
+
+  it('independent branches reject stale heads and messages from another chat', async () => {
+    await normal(); const repo = server.repository; const head = repo.getConversation(chat)!.headMessageId;
+    const other = repo.createConversation(conversationInputSchema.parse({ title: 'Other', kind: 'solo', characterId: character }));
+    const stale = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { messageId: head, head: null } });
+    const foreign = await server.app.inject({ method: 'POST', url: `/api/conversations/${other.id}/branches`, payload: { messageId: head, head: null } });
+    expect(stale.statusCode).toBe(400); expect(foreign.statusCode).toBe(400);
+    expect(repo.listConversations()).toHaveLength(2);
+    expect(repo.getConversation(chat)?.branchGroupId).toBeNull();
+  });
+
   it('v0.2 directed rewrite preserves the old branch and keeps editing directions out of story records', async () => {
     await normal(); const repo = server.repository; const old = repo.getActiveBranch(chat);
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'planner', memoryTurnInterval: 1 });

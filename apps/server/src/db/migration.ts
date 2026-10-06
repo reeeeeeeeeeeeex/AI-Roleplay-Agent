@@ -131,6 +131,7 @@ export function migrateDatabase(database: Database.Database): void {
     ['conversations', 'scenario', "TEXT NOT NULL DEFAULT ''"],
     ['conversations', 'author_note', "TEXT NOT NULL DEFAULT ''"],
     ['conversations', 'history_start_message_id', 'TEXT'],
+    ['conversations', 'branch_group_id', 'TEXT'],
     ['conversations', 'generation_mode', "TEXT NOT NULL DEFAULT 'writer-agent'"],
     ['personas', 'legacy_payload', 'TEXT'],
     ['personas', 'state_template', "TEXT NOT NULL DEFAULT '{}'"],

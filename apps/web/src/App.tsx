@@ -128,6 +128,7 @@ export default function App() {
   }, [branch]);
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
+  const relatedBranches = (data.conversations ?? []).filter(item => item.id === chatId || (chat?.branchGroupId && item.branchGroupId === chat.branchGroupId));
   const historyStart = nodes.find(message => message.id === chat?.historyStartMessageId);
   const historyStartPosition = historyStart ? historyStartIndex(branch, historyStart) : -1;
   const activePersona = data.personas?.find(p => p.id === (chat?.personaId ?? generalSettings.defaultPersonaId));
@@ -381,6 +382,25 @@ export default function App() {
     await refresh();
     setRecordsVersion((v) => v + 1);
   }
+  async function forkFrom(messageId: string) {
+    if (!chat || turn || sendPending.current) return;
+    sendPending.current = true; setSending(true); setError('');
+    try {
+      await flushContentEdits();
+      const copy = await api<Conversation>(`/conversations/${chat.id}/branches`, 'POST', {
+        messageId: savedMessageId(messageId), head: savedMessageId(chat.headMessageId ?? undefined) ?? null,
+      });
+      await refresh();
+      await selectChat(copy.id, false);
+      setShowBranches(false); setPromptPreview(null);
+    } finally { sendPending.current = false; setSending(false); }
+  }
+  async function jumpToBookmark(messageId: string) {
+    await flushContentEdits();
+    const savedId = savedMessageId(messageId)!;
+    if (branch.some(message => message.id === savedId)) { scrollToMessage(savedId); return; }
+    if (window.confirm('这个书签位于其他历史走向，是否从该消息创建独立分支并打开？')) await forkFrom(savedId);
+  }
   async function setHistoryStart(messageId: string | null) {
     if (!chatId) return;
     await flushContentEdits();
@@ -629,7 +649,7 @@ export default function App() {
               <small>{{ protected: '主角保护', coauthor: '共同创作', none: '主角控制：无' }[generalSettings.agencyMode]}</small>
             </div>
 
-            <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onHead={setHead} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
+            <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">
               <span>{historyStartPosition < 0 ? '固定发送起点不在当前分支，请重新选择或取消。' : `已固定发送起点 · 从此处起 ${branch.slice(historyStartPosition).filter(message => message.role !== 'system').length} 条消息，后续持续追加`}</span>
               {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>查看起点</button>}
@@ -741,7 +761,7 @@ export default function App() {
                           </>
                         )}
                         <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'bookmark', initial: '' })))}>书签</button>
-                        <button disabled={!!turn} title="从此处分支" onClick={() => act(flushContentEdits().then(() => setHead(savedMessageId(m.id)!)))}>
+                        <button disabled={!!turn || sending} title="保留至本条消息，创建独立聊天；原聊天不变" onClick={() => act(forkFrom(m.id))}>
                           <GitFork size={12} />从此处分支
                         </button>
                       </div>}
@@ -1124,17 +1144,23 @@ export default function App() {
               <button aria-label="关闭" onClick={() => setShowBranches(false)}>✕</button>
             </header>
             <div className="branch-picker">
-              <p className="muted" style={{ marginBottom: 12 }}>切换到旧分支会同时恢复该分支的消息与状态记录。</p>
-              {messageIndex.leaves.map((node) => (
-                <button key={node.id} disabled={!!turn} onClick={() => act(setHead(node.id).then(() => setShowBranches(false)))}>
+              <p className="muted" style={{ marginBottom: 12 }}>每个分支都是独立聊天，也可从左侧故事列表打开；切换时保留各自进度和记录。</p>
+              {relatedBranches.map(item => <button key={item.id} disabled={!!turn || sending} onClick={() => act(selectChat(item.id).then(() => setShowBranches(false)))}>
+                <GitFork size={15} /><span>{item.id === chat.id ? '当前分支 · ' : ''}{item.title}</span>
+              </button>)}
+              {messageIndex.leaves.some(node => !branch.some(message => message.id === node.id)) && <details>
+                <summary>历史消息版本</summary>
+                <p className="muted">旧走向和消息版本仍保留，可另存为独立分支继续。</p>
+                {messageIndex.leaves.filter(node => !branch.some(message => message.id === node.id)).map((node) => (
+                <button key={node.id} disabled={!!turn || sending} onClick={() => act(forkFrom(node.id))}>
                   <GitFork size={15} />
                   <span>
-                    {node.id === chat.headMessageId ? '当前分支 · ' : ''}
-                    {node.role === 'user' ? '用户' : speakerName(node.speaker)}
+                    另存为分支 · {node.role === 'user' ? '用户' : speakerName(node.speaker)}
                     <small>{node.content.slice(0, 100)}</small>
                   </span>
                 </button>
-              ))}
+                ))}
+              </details>}
             </div>
           </section>
         </div>

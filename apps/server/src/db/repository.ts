@@ -51,6 +51,7 @@ type TurnRow = typeof turns.$inferSelect;
 
 function mapConversation(row: ConversationRow): Conversation {
   return {
+    branchGroupId: row.branchGroupId,
     authorNote: row.authorNote,
     id: row.id,
     title: row.title,
@@ -326,7 +327,7 @@ export class Repository {
     const row = this.database.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
     return row ? mapConversation(row) : null;
   }
-  createConversation(input: Omit<Conversation, 'id' | 'headMessageId' | 'historyStartMessageId' | 'createdAt' | 'updatedAt'>): Conversation {
+  createConversation(input: Omit<Conversation, 'id' | 'branchGroupId' | 'headMessageId' | 'historyStartMessageId' | 'createdAt' | 'updatedAt'>): Conversation {
     const timestamp = now(); const conversationId = id();
     this.database.db.insert(conversations).values({
       id: conversationId, title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
@@ -337,7 +338,7 @@ export class Repository {
     }).run();
     return this.getConversation(conversationId)!;
   }
-  updateConversation(conversationId: string, input: Omit<Conversation, 'id' | 'headMessageId' | 'historyStartMessageId' | 'createdAt' | 'updatedAt'>): Conversation | null {
+  updateConversation(conversationId: string, input: Omit<Conversation, 'id' | 'branchGroupId' | 'headMessageId' | 'historyStartMessageId' | 'createdAt' | 'updatedAt'>): Conversation | null {
     if (!this.getConversation(conversationId)) return null;
     this.database.db.update(conversations).set({
       title: input.title, kind: input.kind, characterId: input.characterId, groupId: input.groupId,
@@ -355,10 +356,10 @@ export class Repository {
   getMessage(messageId: string): MessageNode | null {
     const row = this.database.db.select().from(messages).where(eq(messages.id, messageId)).get(); return row ? mapMessage(row) : null;
   }
-  getActiveBranch(conversationId: string): MessageNode[] {
-    const conversation = this.getConversation(conversationId); if (!conversation?.headMessageId) return [];
+  getActiveBranch(conversationId: string, headMessageId = this.getConversation(conversationId)?.headMessageId): MessageNode[] {
+    if (!headMessageId) return [];
     const all = new Map(this.listMessages(conversationId).map((message) => [message.id, message]));
-    const branch: MessageNode[] = []; let current = all.get(conversation.headMessageId);
+    const branch: MessageNode[] = []; let current = all.get(headMessageId);
     const visited = new Set<string>();
     while (current) { if (visited.has(current.id)) throw new Error('Cycle in message branch.'); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }
     return branch.reverse();

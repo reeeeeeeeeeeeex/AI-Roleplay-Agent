@@ -331,6 +331,7 @@ export type GeneralSettings = z.infer<typeof generalSettingsSchema>;
 export const defaultGeneralSettings: GeneralSettings = generalSettingsSchema.parse({});
 
 export interface Conversation {
+  branchGroupId: string | null;
   historyStartMessageId: string | null;
   id: string;
   title: string;
