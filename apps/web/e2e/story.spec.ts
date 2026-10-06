@@ -109,6 +109,40 @@ test('global send count and fixed message start control the raw prompt range', a
   expect(await preview()).not.toContain('蓝色车票');
 });
 
+test('prompt presets load drafts and only apply after saving, preserving failed edits', async ({ page, request }) => {
+  const active = await (await request.get('/api/settings/prompts')).json();
+  const created = await request.post('/api/settings/prompt-presets', { data: { name: '浏览器预设', prompts: { ...active, additionalInstruction: '来自预设的附加指令' } } });
+  expect(created.status()).toBe(201);
+  const saved = await created.json();
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await settings.getByRole('button', { name: '提示词', exact: true }).click();
+  const select = settings.getByRole('combobox', { name: '提示词预设', exact: true });
+  const additional = settings.getByRole('textbox', { name: '附加指令', exact: true });
+  await additional.fill('尚未保存的草稿');
+  page.once('dialog', dialog => dialog.dismiss());
+  await select.selectOption(saved.id);
+  await expect(additional).toHaveValue('尚未保存的草稿');
+  page.once('dialog', dialog => dialog.accept());
+  await select.selectOption(saved.id);
+  await expect(additional).toHaveValue('来自预设的附加指令');
+  expect(await (await request.get('/api/settings/prompts')).json()).toEqual(active);
+  await additional.fill('修改后要应用的内容');
+  await page.route('**/api/settings/prompts', route => route.fulfill({ status: 500, json: { error: '测试保存失败' } }));
+  await settings.getByRole('button', { name: '保存提示词', exact: true }).click();
+  await expect(settings.getByRole('alert')).toContainText('测试保存失败');
+  await expect(additional).toHaveValue('修改后要应用的内容');
+  await page.unroute('**/api/settings/prompts');
+  await settings.getByRole('button', { name: '保存提示词', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('提示词已保存');
+  expect((await (await request.get('/api/settings/prompt-presets')).json()).find((item: any) => item.id === saved.id).prompts.additionalInstruction).toBe('来自预设的附加指令');
+  await page.reload();
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await settings.getByRole('button', { name: '提示词', exact: true }).click();
+  await expect(select).toHaveValue('');
+  await expect(additional).toHaveValue('修改后要应用的内容');
+});
+
 test('writing settings edit both User agency prompts and persist the selected mode', async ({ page }) => {
   await page.getByRole('button', { name: '通用设置', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '通用设置', exact: true });

@@ -10,7 +10,7 @@ import { RecordService, applyProposal, settledStoryIds } from './services/record
 import { scanImport } from './services/import-scan.js';
 import { executeImport } from './services/importer.js';
 import { expandStoryMacros } from '@new-ai-chat/agent-runtime';
-import { generalSettingsSchema } from '@new-ai-chat/contracts';
+import { generalSettingsSchema, promptPresetInputSchema, promptPresetPatchSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
@@ -88,6 +88,19 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   });
   app.get('/api/settings/prompts', async () => repo.getPromptSettings());
   app.put('/api/settings/prompts', async req => { idleAll(); return repo.setPromptSettings(promptSettingsSchema.parse(req.body)); });
+  app.get('/api/settings/prompt-presets', async () => repo.listPromptPresets());
+  app.post('/api/settings/prompt-presets', async (req, reply) => {
+    idleAll();
+    return reply.code(201).send(repo.createPromptPreset(promptPresetInputSchema.parse(req.body)));
+  });
+  app.patch('/api/settings/prompt-presets/:id', async (req, reply) => {
+    idleAll();
+    return repo.updatePromptPreset(idOf(req), promptPresetPatchSchema.parse(req.body)) ?? reply.code(404).send({ error: '预设不存在。' });
+  });
+  app.delete('/api/settings/prompt-presets/:id', async (req, reply) => {
+    idleAll();
+    return repo.deletePromptPreset(idOf(req)) ? { deleted: true } : reply.code(404).send({ error: '预设不存在。' });
+  });
   app.post('/api/connections/:id/test', async (req) => {
     const connection = repo.getRuntimeConnection(idOf(req)); if (!connection) throw new Error('Connection not found.');
     return { ...await turns.runtime.testConnection(connection, AbortSignal.timeout(60_000)), streaming: true, tools: true };

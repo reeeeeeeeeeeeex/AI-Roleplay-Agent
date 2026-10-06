@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Plus } from 'lucide-react';
-import { defaultAgencyPrompts, defaultPromptSettings, type GeneralSettings, type PromptSettings } from '@new-ai-chat/contracts';
+import { defaultAgencyPrompts, defaultPromptSettings, type GeneralSettings, type PromptSettings, type PromptPreset } from '@new-ai-chat/contracts';
+import { api } from './api';
 import AvatarField from './AvatarField';
 import ActionChoiceSettings from './ActionChoiceSettings';
 
@@ -35,12 +36,41 @@ export default function SettingsModal({
   const [tab, setTab] = useState('connections');
   const [writing, setWriting] = useState(generalSettings);
   const [prompts, setPrompts] = useState(promptSettings);
+  const [promptBaseline, setPromptBaseline] = useState(promptSettings);
+  const [presets, setPresets] = useState<PromptPreset[] | null>(null);
+  const [selectedPresetId, setSelectedPresetId] = useState('');
+  const [presetName, setPresetName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [displayLimitDraft, setDisplayLimitDraft] = useState(String(messageDisplayLimit));
   useEffect(() => { setWriting(generalSettings); }, [generalSettings]);
+  useEffect(() => {
+    if (tab !== 'prompts') return;
+    let active = true;
+    setPresets(null);
+    void api<PromptPreset[]>('/settings/prompt-presets').then(value => { if (active) setPresets(value); })
+      .catch(err => { if (active) setError(err instanceof Error ? err.message : '读取预设失败'); });
+    return () => { active = false; };
+  }, [tab]);
   const locked = busy || generationActive;
+
+  function selectPreset(presetId: string) {
+    const dirty = (Object.keys(promptBaseline) as Array<keyof PromptSettings>).some(key => prompts[key] !== promptBaseline[key]);
+    if (dirty && !window.confirm('有未保存的提示词修改，确定切换并放弃这些修改？')) return;
+    const preset = presets?.find(item => item.id === presetId);
+    const value = preset?.prompts ?? promptSettings;
+    setSelectedPresetId(presetId); setPresetName(preset?.name ?? '');
+    setPrompts(value); setPromptBaseline(value); setNotice(''); setError('');
+  }
+
+  async function savePreset(action: 'create' | 'update' | 'rename') {
+    const value = await api<PromptPreset>(`/settings/prompt-presets${action === 'create' ? '' : `/${selectedPresetId}`}`,
+      action === 'create' ? 'POST' : 'PATCH', action === 'rename' ? { name: presetName } : action === 'update' ? { prompts } : { name: presetName, prompts });
+    setPresets(items => action === 'create' ? [...(items ?? []), value] : (items ?? []).map(item => item.id === value.id ? value : item));
+    setSelectedPresetId(value.id); setPresetName(value.name);
+    if (action !== 'rename') setPromptBaseline(prompts);
+  }
 
   async function save(action: () => Promise<void>, message: string) {
     setBusy(true); setError(''); setNotice('');
@@ -54,7 +84,7 @@ export default function SettingsModal({
       <section className="modal settings-modal" role="dialog" aria-modal="true" aria-label="通用设置">
         <header>
           <h2>通用设置</h2>
-          <button aria-label="关闭设置" onClick={onClose}><X size={16} /></button>
+          <button aria-label="关闭设置" disabled={busy} onClick={onClose}><X size={16} /></button>
         </header>
         <nav className="settings-nav">
           {([['connections', '模型'], ['writing', '写作'], ['choices', '行动选项'], ['prompts', '提示词'], ['appearance', '外观']] as const).map(([id, label]) => (
@@ -155,8 +185,34 @@ export default function SettingsModal({
           </form>}
 
           {tab === 'prompts' && <form className="settings-form" onSubmit={e => {
-            e.preventDefault(); void save(() => onSavePrompts(prompts), '提示词已保存。');
+            e.preventDefault(); void save(async () => { await onSavePrompts(prompts); setPromptBaseline(prompts); }, '提示词已保存。');
           }}>
+            <label>提示词预设
+              <select value={selectedPresetId} disabled={locked || presets === null} onChange={e => selectPreset(e.target.value)}>
+                <option value="">当前提示词</option>
+                {presets?.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+              </select>
+            </label>
+            <div className="two-col">
+              <label>预设名称<input maxLength={100} value={presetName} disabled={locked} onChange={e => setPresetName(e.target.value)} /></label>
+              <div className="resource-actions">
+                <button type="button" disabled={locked || presets === null || !presetName.trim()} onClick={() => void save(() => savePreset('create'), '已另存为预设，当前生效提示词不变。')}>另存为预设</button>
+                <button type="button" disabled={locked || presets === null || !selectedPresetId} onClick={() => void save(() => savePreset('update'), '预设内容已更新，当前生效提示词不变。')}>更新预设</button>
+              </div>
+            </div>
+            {selectedPresetId && <div className="resource-actions">
+              <button type="button" disabled={locked || presets === null || !presetName.trim()} onClick={() => void save(() => savePreset('rename'), '预设已重命名。')}>重命名预设</button>
+              <button type="button" className="danger" disabled={locked || presets === null} onClick={() => {
+                const selected = presets?.find(item => item.id === selectedPresetId);
+                if (!window.confirm(`删除预设“${selected?.name ?? presetName}”？编辑内容和当前生效提示词会保留。`)) return;
+                void save(async () => {
+                  await api(`/settings/prompt-presets/${selectedPresetId}`, 'DELETE');
+                  setPresets(items => (items ?? []).filter(item => item.id !== selectedPresetId));
+                  setSelectedPresetId(''); setPresetName('');
+                }, '预设已删除，编辑内容和当前生效提示词已保留。');
+              }}>删除预设</button>
+            </div>}
+            <p className="muted">预设包含下方五项。选择后先载入编辑框，点击“保存提示词”才全局生效；更新预设只保存内容。</p>
             <label>写作主指令<textarea required rows={6} value={prompts.mainInstruction} onChange={e => setPrompts({ ...prompts, mainInstruction: e.target.value })} /></label>
             <label>附加指令<textarea rows={4} maxLength={20000} value={prompts.additionalInstruction} onChange={e => setPrompts({ ...prompts, additionalInstruction: e.target.value })} /></label>
             <p className="muted">独立的 System 指令，对所有故事生效；留空不发送。</p>
@@ -164,7 +220,7 @@ export default function SettingsModal({
             <label>Writer Agent 行为指令<textarea required rows={7} value={prompts.writerInstruction} onChange={e => setPrompts({ ...prompts, writerInstruction: e.target.value })} /></label>
             <label>Planner 指令<textarea required rows={6} value={prompts.plannerInstruction} onChange={e => setPrompts({ ...prompts, plannerInstruction: e.target.value })} /></label>
             <div className="resource-actions">
-              <button type="button" onClick={() => setPrompts(defaultPromptSettings)}>恢复默认</button>
+              <button type="button" disabled={locked} onClick={() => setPrompts(defaultPromptSettings)}>恢复默认</button>
               <button className="primary" disabled={locked} type="submit">保存提示词</button>
             </div>
           </form>}

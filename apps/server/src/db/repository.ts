@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
-import { defaultPromptSettings, generalSettingsSchema, personaInputSchema, personaStateTemplateSchema, promptSettingsSchema, type GeneralSettings, type PromptSettings, type TurnTrace } from '@new-ai-chat/contracts';
+import { defaultPromptSettings, generalSettingsSchema, personaInputSchema, personaStateTemplateSchema, promptSettingsSchema, promptPresetSchema, type GeneralSettings, type PromptSettings, type PromptPreset, type PromptPresetInput, type PromptPresetPatch, type TurnTrace } from '@new-ai-chat/contracts';
 import type {
   Character,
   CharacterInput,
@@ -145,6 +145,44 @@ export class Repository {
     this.database.db.insert(appSettings).values({ key: 'prompts', value: prompts })
       .onConflictDoUpdate({ target: appSettings.key, set: { value: prompts } }).run();
     return prompts;
+  }
+  listPromptPresets(): PromptPreset[] {
+    const row = this.database.db.select().from(appSettings).where(eq(appSettings.key, 'promptPresets')).get();
+    return promptPresetSchema.array().parse(row?.value ?? []);
+  }
+  private writePromptPresets(presets: PromptPreset[]) {
+    this.database.db.insert(appSettings).values({ key: 'promptPresets', value: presets })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: presets } }).run();
+  }
+  createPromptPreset(input: PromptPresetInput): PromptPreset {
+    return this.database.sqlite.transaction(() => {
+      const presets = this.listPromptPresets();
+      const preset = promptPresetSchema.parse({ ...input, id: id() });
+      if (presets.some(item => item.name === preset.name)) throw new Error('预设名称已存在。');
+      this.writePromptPresets([...presets, preset]);
+      return preset;
+    })();
+  }
+  updatePromptPreset(presetId: string, input: PromptPresetPatch): PromptPreset | null {
+    return this.database.sqlite.transaction(() => {
+      const presets = this.listPromptPresets();
+      const index = presets.findIndex(item => item.id === presetId);
+      if (index < 0) return null;
+      const preset = promptPresetSchema.parse({ ...presets[index], ...input, id: presetId });
+      if (presets.some(item => item.id !== presetId && item.name === preset.name)) throw new Error('预设名称已存在。');
+      presets[index] = preset;
+      this.writePromptPresets(presets);
+      return preset;
+    })();
+  }
+  deletePromptPreset(presetId: string): boolean {
+    return this.database.sqlite.transaction(() => {
+      const presets = this.listPromptPresets();
+      const remaining = presets.filter(item => item.id !== presetId);
+      if (remaining.length === presets.length) return false;
+      this.writePromptPresets(remaining);
+      return true;
+    })();
   }
   resolveConnection(overrideId?: string | null): RuntimeConnection | null {
     const settings = this.getGeneralSettings();

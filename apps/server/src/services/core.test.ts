@@ -226,6 +226,37 @@ it('record model: validates selection and restores the default when its connecti
   expect(request.connection.id).toBe(connection);
 });
 
+it('prompt presets: persist create rename update and delete independently of active prompts', async () => {
+  const active = server.repository.getPromptSettings();
+  const prompts = { ...active, mainInstruction: 'Preset writing rules.', additionalInstruction: 'Preset additional rules.' };
+  const created = await server.app.inject({ method: 'POST', url: '/api/settings/prompt-presets', payload: { name: '  故事预设  ', prompts } });
+  expect(created.statusCode).toBe(201);
+  const preset = created.json();
+  expect(preset).toEqual({ id: expect.any(String), name: '故事预设', prompts });
+  const renamed = await server.app.inject({ method: 'PATCH', url: `/api/settings/prompt-presets/${preset.id}`, payload: { name: '新版预设' } });
+  expect(renamed.json()).toEqual({ ...preset, name: '新版预设' });
+  const updated = { ...prompts, plannerInstruction: 'New planning rules.' };
+  await server.app.inject({ method: 'PATCH', url: `/api/settings/prompt-presets/${preset.id}`, payload: { prompts: updated } });
+  expect(new Repository(server.repository.database).listPromptPresets()).toEqual([{ id: preset.id, name: '新版预设', prompts: updated }]);
+  const removed = await server.app.inject({ method: 'DELETE', url: `/api/settings/prompt-presets/${preset.id}` });
+  expect(removed.json()).toEqual({ deleted: true });
+  expect((await server.app.inject({ method: 'GET', url: '/api/settings/prompt-presets' })).json()).toEqual([]);
+  expect(server.repository.getPromptSettings()).toEqual(active);
+});
+
+it('prompt presets: reject blank or duplicate names without overwriting saved content', async () => {
+  const first = server.repository.createPromptPreset({ name: '已有预设', prompts: defaultPromptSettings });
+  const blank = await server.app.inject({ method: 'POST', url: '/api/settings/prompt-presets', payload: { name: '  ', prompts: defaultPromptSettings } });
+  expect(blank.statusCode).toBe(400);
+  const duplicate = await server.app.inject({ method: 'POST', url: '/api/settings/prompt-presets', payload: { name: ' 已有预设 ', prompts: { ...defaultPromptSettings, mainInstruction: 'Do not overwrite.' } } });
+  expect(duplicate.statusCode).toBe(400);
+  expect(duplicate.json().error).toBe('预设名称已存在。');
+  const second = server.repository.createPromptPreset({ name: '另一预设', prompts: defaultPromptSettings });
+  const rename = await server.app.inject({ method: 'PATCH', url: `/api/settings/prompt-presets/${second.id}`, payload: { name: first.name } });
+  expect(rename.statusCode).toBe(400);
+  expect(server.repository.listPromptPresets()).toEqual([first, second]);
+});
+
 it('action choices use independent settings and history, persist edited groups and never become story context', async () => {
   const repo = server.repository;
   let parent: string | null = null;

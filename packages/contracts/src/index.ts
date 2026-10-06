@@ -54,6 +54,17 @@ export const promptSettingsSchema = z.object({
   plannerInstruction: z.string().trim().min(1).max(20_000).default(defaultPromptSettings.plannerInstruction),
 }).default(defaultPromptSettings);
 
+export const promptPresetInputSchema = z.object({
+  name: z.string().trim().min(1, '请输入预设名称。').max(100),
+  prompts: promptSettingsSchema.removeDefault(),
+});
+export const promptPresetPatchSchema = promptPresetInputSchema.partial()
+  .refine(value => value.name !== undefined || value.prompts !== undefined, '请提供预设名称或提示词。');
+export const promptPresetSchema = promptPresetInputSchema.extend({ id: z.string().min(1) });
+export type PromptPreset = z.infer<typeof promptPresetSchema>;
+export type PromptPresetInput = z.infer<typeof promptPresetInputSchema>;
+export type PromptPresetPatch = z.infer<typeof promptPresetPatchSchema>;
+
 export const replyTargetSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('auto') }),
   z.object({ mode: z.literal('explicit'), speaker: speakerRefSchema }),
