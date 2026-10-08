@@ -88,6 +88,11 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return repo.setGeneralSettings(generalSettingsSchema.parse(req.body));
   });
   app.get('/api/settings/prompts', async () => repo.getPromptSettings());
+  app.patch('/api/settings/general', async req => {
+    idleAll();
+    const patch = z.object({ manualInput: z.boolean() }).strict().parse(req.body);
+    return repo.setGeneralSettings({ ...repo.getGeneralSettings(), ...patch });
+  });
   app.put('/api/settings/prompts', async req => { idleAll(); return repo.setPromptSettings(promptSettingsSchema.parse(req.body)); });
   app.get('/api/settings/prompt-presets', async () => repo.listPromptPresets());
   app.post('/api/settings/prompt-presets', async (req, reply) => {

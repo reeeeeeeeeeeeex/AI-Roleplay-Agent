@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Pencil, Square } from 'lucide-react';
 import type { ActionChoiceCache } from '@new-ai-chat/contracts';
 import { api } from './api.js';
@@ -6,9 +6,10 @@ import { flushContentEdits } from './useContentAutosave.js';
 import './action-choices.css';
 
 type Edit = { groupId: string; index: number; value: string; previous: string };
-export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, onChanged }: {
+export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, onChanged, toolbarEnd }: {
   chatId: string; head: string | null; disabled: boolean; onSend: (text: string) => Promise<void>;
   onBusy: (busy: boolean) => void; onChanged: () => void;
+  toolbarEnd?: ReactNode;
 }) {
   const [open, setOpen] = useState(false), [cache, setCache] = useState<ActionChoiceCache>({ groups: [], selectedGroupId: null });
   const [busy, setBusy] = useState(false), [saving, setSaving] = useState(false), [error, setError] = useState('');
@@ -107,6 +108,7 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
         <button type="button" aria-label={selectedIndex < cache.groups.length - 1 ? '下一组选项' : '生成新一组选项'} disabled={disabled || busy} onClick={() => void navigate(1)}><ChevronRight size={16} /></button>
         {busy && <button type="button" aria-label="停止生成行动选项" onClick={() => controller.current?.abort()}><Square size={13} /></button>}
       </div>}
+      {toolbarEnd}
     </div>
     {open && <>
       {busy && <small role="status">正在生成行动选项…</small>}

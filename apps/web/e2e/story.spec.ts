@@ -26,6 +26,9 @@ test.beforeEach(async ({ page, request }, info) => {
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
 });
 test('web copy saves User and manual Assistant replies reappear in the next prompt', async ({ page, request }) => {
+  const manualToggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await manualToggle.click();
+  await expect(manualToggle).toBeChecked();
   await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__copiedPrompt = text; } } }));
   let proseRequests = 0;
   page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/api/turns')) proseRequests++; });
@@ -40,6 +43,10 @@ test('web copy saves User and manual Assistant replies reappear in the next prom
   await expect(page.locator('article.message')).toHaveCount(1);
   await expect(page.getByRole('button', { name: '角色', exact: true })).toHaveClass('active');
   expect(await page.evaluate(() => (window as any).__copiedPrompt)).toContain('走进网页端的旧书店。');
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  await web.getByRole('button', { name: '复制网页提示词', exact: true }).click();
+  await expect(page.getByRole('region', { name: '网页提示词', exact: true })).toHaveCount(0);
+  expect((await (await request.get(`/api/conversations/${user.conversationId}/messages`)).json()).branch).toHaveLength(1);
   await input.fill('她推开书柜，露出一扇暗门。');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.locator('article.message')).toHaveCount(2);
@@ -59,6 +66,9 @@ test('web copy saves User and manual Assistant replies reappear in the next prom
 });
 
 test('manual reply save failure preserves separate User and Assistant drafts', async ({ page }) => {
+  const manualToggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await manualToggle.click();
+  await expect(manualToggle).toBeChecked();
   const input = page.getByRole('textbox', { name: '输入消息' });
   await input.fill('尚未发送的主角草稿');
   await page.getByRole('button', { name: '角色', exact: true }).click();
@@ -73,6 +83,69 @@ test('manual reply save failure preserves separate User and Assistant drafts', a
   await expect(input).toHaveValue('尚未发送的主角草稿');
   await page.getByRole('button', { name: '角色', exact: true }).click();
   await expect(input).toHaveValue('尚未保存的网页回复');
+});
+
+test('manual input accepts consecutive voices and uses the compact global toolbar', async ({ page, request }, info) => {
+  const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  const input = page.getByRole('textbox', { name: '输入消息' });
+  let proseRequests = 0;
+  page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/api/turns')) proseRequests++; });
+  await expect(toggle).not.toBeChecked();
+  await input.fill('主角第一条');
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await expect(input).toHaveValue('主角第一条');
+  let count = 0;
+  for (const voice of ['主角', '用户旁白', '角色']) {
+    await page.locator('.voice-switch').getByRole('button', { name: voice, exact: true }).click();
+    for (const index of [1, 2]) {
+      await input.fill(`${voice}第${index}条`);
+      if (index === 1) await page.getByRole('button', { name: '发送', exact: true }).click();
+      else await input.press('Enter');
+      await expect(page.locator('article.message')).toHaveCount(++count);
+      await expect(input).toHaveValue('');
+      await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+    }
+  }
+  await page.locator('.voice-switch').getByRole('button', { name: '主角', exact: true }).click();
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
+  await input.press('Enter');
+  expect(proseRequests).toBe(0);
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const history = (await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).branch;
+  expect(history.map((message: any) => message.authorKind)).toEqual(['protagonist', 'protagonist', 'user_narrator', 'user_narrator', 'character', 'character']);
+  expect(new Set(history.slice(0, 5).map((message: any) => message.storyTurnId)).size).toBe(1);
+  expect(history[5].storyTurnId).not.toBe(history[4].storyTurnId);
+  await expect(page.locator('.composer-hint')).toHaveCount(0);
+  await expect(page.locator('.composer-wrap > :last-child')).toHaveClass('composer');
+  const row = await page.locator('.action-choice-toolbar').boundingBox();
+  const control = await page.locator('.manual-input-switch').boundingBox();
+  expect(control!.y + control!.height).toBeLessThanOrEqual(row!.y + row!.height + 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const action = await page.getByRole('button', { name: '行动选项', exact: true }).boundingBox();
+  const compact = await page.locator('.manual-input-switch').boundingBox();
+  expect(Math.abs(action!.y + action!.height / 2 - compact!.y - compact!.height / 2)).toBeLessThan(2);
+  expect(compact!.x + compact!.width).toBeLessThanOrEqual(390);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await request.post('/api/conversations', { data: { title: 'Manual global sibling', kind: 'solo', characterId: chat.characterId } });
+  await page.reload();
+  await expect(toggle).toBeChecked();
+  await page.getByRole('button', { name: /Manual global sibling/ }).click();
+  await expect(toggle).toBeChecked();
+});
+
+test('manual input toggle failure keeps its original mode and draft', async ({ page }) => {
+  const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  const input = page.getByRole('textbox', { name: '输入消息' });
+  await input.fill('切换失败也保留的输入');
+  await page.route('**/api/settings/general', route => route.request().method() === 'PATCH'
+    ? route.fulfill({ status: 500, json: { error: '模式保存失败' } }) : route.continue());
+  await toggle.click();
+  await expect(page.getByRole('alert')).toContainText('模式保存失败');
+  await expect(toggle).not.toBeChecked();
+  await expect(input).toHaveValue('切换失败也保留的输入');
+  await expect(page.locator('article.message')).toHaveCount(0);
 });
 
 test('startup distinguishes missing endpoints from required pairing', async ({ page }) => {
@@ -597,7 +670,7 @@ test('v0.2 drafts, persona creation, reading position and bookmarked branch reco
   const messages = page.getByRole('region', { name: '聊天记录' });
   await messages.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')); });
   await expect(page.getByRole('button', { name: '回到最新 ↓' })).toBeVisible();
-  await page.getByRole('button', { name: '让故事继续 →' }).click();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.locator('article.message:not(.streaming)')).toHaveCount(5);
   await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
   expect(await messages.evaluate(element => element.scrollTop)).toBeLessThan(10);

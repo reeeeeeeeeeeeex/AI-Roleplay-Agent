@@ -338,8 +338,10 @@ export default function App() {
 
   async function send(trigger: TurnRequest['trigger'] = 'normal', targetMessageId?: string, choiceText?: string) {
     if (!chat || turn || sendPending.current || messageEdit) return;
-    const manual = voice === 'assistant' && trigger === 'normal' && choiceText === undefined && !targetMessageId;
-    if (manual && !text.trim()) return;
+    const manual = trigger === 'normal' && !targetMessageId && (generalSettings.manualInput || (voice === 'assistant' && choiceText === undefined));
+    const manualAssistant = voice === 'assistant' && choiceText === undefined;
+    const manualText = choiceText ?? text;
+    if (manual && !manualText.trim()) return;
     sendPending.current = true;
     setError('');
     setNotice('');
@@ -348,17 +350,20 @@ export default function App() {
       setSending(true);
       if (manual) {
         if (chatRef.current !== chat.id) return;
-        if (replyTarget === 'auto') throw new Error('请先选择录入回复的角色。');
+        if (manualAssistant && replyTarget === 'auto') throw new Error('请先选择录入回复的角色。');
         const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', {
-          role: 'assistant', text, head: savedMessageId(chat.headMessageId ?? undefined) ?? null,
-          speaker: replyTarget === 'narrator' ? { kind: 'narrator' } : { kind: 'character', characterId: replyTarget },
+          head: savedMessageId(chat.headMessageId ?? undefined) ?? null,
+          ...(manualAssistant ? { role: 'assistant', text: manualText,
+            speaker: replyTarget === 'narrator' ? { kind: 'narrator' } : { kind: 'character', characterId: replyTarget },
+          } : { role: 'user', input: { voice: choiceText === undefined && voice === 'narrator' ? 'narrator' : 'protagonist', text: manualText } }),
         });
-        setInputDrafts(old => old[draftKey] === text ? { ...old, [draftKey]: '' } : old);
+        if (choiceText === undefined) setInputDrafts(old => old[draftKey] === text ? { ...old, [draftKey]: '' } : old);
         if (chatRef.current !== chat.id) return;
         setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
         setPromptPreview(null);
         await refreshMessages(chat.id);
-        await follow(result.turn.id, chat.id);
+        if (result.turn) await follow(result.turn.id, chat.id);
+        else setRecordsVersion(version => version + 1);
         return;
       }
       const payload = await turnPayload(trigger, savedMessageId(targetMessageId), choiceText);
@@ -373,6 +378,15 @@ export default function App() {
       sendPending.current = false;
       setSending(false);
     }
+  }
+
+  async function changeManualInput(manualInput: boolean) {
+    if (turn || sendPending.current || choicesBusy) return;
+    sendPending.current = true; setSending(true); setError('');
+    try {
+      await flushContentEdits();
+      setGeneralSettings(await api('/settings/general', 'PATCH', { manualInput }));
+    } finally { sendPending.current = false; setSending(false); }
   }
 
   async function swipe(message: MessageNode, instruction?: string) {
@@ -877,7 +891,12 @@ export default function App() {
 
             <div className="composer-wrap">
               <ActionChoices key={`${chat.id}:${chat.headMessageId ?? ''}`} chatId={chat.id} head={chat.headMessageId} disabled={sending || !!turn || !!messageEdit}
-                onSend={value => send('normal', undefined, value)} onBusy={setChoicesBusy} onChanged={() => setRecordsVersion(version => version + 1)} />
+                onSend={value => send('normal', undefined, value)} onBusy={setChoicesBusy} onChanged={() => setRecordsVersion(version => version + 1)}
+                toolbarEnd={<label className="manual-input-switch" title="仅改变消息发送；主动生成与记录更新仍可能调用 API。角色回复保存后，Memory／状态按现有间隔更新。">
+                  <input type="checkbox" aria-label="单人创作／网页聊天手动输入" checked={generalSettings.manualInput} disabled={sending || !!turn || choicesBusy || !!messageEdit}
+                    onChange={event => act(changeManualInput(event.target.checked))} />
+                  <span>单人创作／网页聊天手动输入</span><small>全局</small>
+                </label>} />
               {awayFromBottom && <button onClick={scrollToLatest}>回到最新 ↓</button>}
               {!turn && lastTurn && ['partial', 'failed', 'cancelled'].includes(lastTurn.status) && <div className="turn-recovery">
                 <strong>{lastTurn.status === 'partial' ? '本轮部分完成，已完成回复已保留。' : '本轮未完成，用户消息已保留。'}</strong>
@@ -920,7 +939,7 @@ export default function App() {
                     }}>角色</button>
                   </div>
                   <label className="reply-select">
-                    {voice === 'assistant' ? '录入为' : '由谁回复'}
+                    {voice === 'assistant' ? '录入为' : generalSettings.manualInput ? '网页回复者' : '由谁回复'}
                     <select aria-label="回复者" value={replyTarget} onChange={(e) => setReplyTarget(e.target.value)}>
                       {voice !== 'assistant' && <option value="auto">自动选择</option>}
                       <option value="narrator">{generalSettings.narrator.name}</option>
@@ -934,16 +953,12 @@ export default function App() {
                       <Square size={14} />
                     </button>
                   ) : (
-                    <button type="submit" className="send primary" aria-label="发送" title={voice === 'assistant' ? '保存角色回复' : '发送'} disabled={sending || !!messageEdit || (voice === 'assistant' && !text.trim())}>
+                    <button type="submit" className="send primary" aria-label="发送" title={voice === 'assistant' ? '保存角色回复' : generalSettings.manualInput ? '保存消息' : '发送'} disabled={sending || !!messageEdit || ((generalSettings.manualInput || voice === 'assistant') && !text.trim())}>
                       <Send size={15} />
                     </button>
                   )}
                 </div>
               </form>
-              <div className="composer-hint">
-                {voice === 'assistant' && <small>直接保存角色回复；Memory／主角状态仍按间隔更新。</small>}
-                <button disabled={sending || !!turn || !!messageEdit} onClick={() => act(send('auto'))}>让故事继续 →</button>
-              </div>
             </div>
           </>
         )}

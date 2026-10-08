@@ -315,6 +315,7 @@ export const actionChoiceListSchema = z.array(z.string().trim().min(1).max(4000)
   .refine(choices => new Set(choices.map(text => text.normalize('NFKC').toLocaleLowerCase())).size === choices.length, '行动选项不能重复。');
 
 export const generalSettingsSchema = z.object({
+  manualInput: z.boolean().default(false),
   actionChoices: actionChoiceSettingsSchema.default(defaultActionChoiceSettings),
   sendMemory: z.boolean().default(true),
   sendProtagonistState: z.boolean().default(true),

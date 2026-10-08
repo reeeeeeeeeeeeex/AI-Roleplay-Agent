@@ -32,6 +32,9 @@ export class TurnService {
     const chat = this.repository.getConversation(request.conversationId);
     if (!chat) throw new Error('Conversation not found.');
     this.assertIdle(chat.id);
+    if ((request.trigger === 'normal' || request.trigger === 'auto') && this.repository.getGeneralSettings().manualInput) {
+      throw Object.assign(new Error('当前为手动输入模式，请保存消息或关闭手动输入后再生成回复。'), { statusCode: 409 });
+    }
     if (!this.repository.resolveConnection()) throw new Error('请在左下角通用设置中选择模型连接。');
     const source = new StoryContext(this.repository, chat.id);
     const fullHistory = this.repository.getActiveBranch(chat.id);
@@ -43,13 +46,15 @@ export class TurnService {
       if (!target || target.conversationId !== chat.id || target.role !== 'assistant' || !fullHistory.some((m) => m.id === target.id)) throw new Error('Target must be an assistant message on the current branch.');
       if (source.fixedHistory && !source.history.some(message => message.id === target.id)) throw new Error('目标消息位于固定发送起点之前，请先调整或取消起点。');
     }
-    const storyTurnId = target?.storyTurnId ?? randomUUID();
+    const last = fullHistory.at(-1);
+    const pendingUser = (request.trigger === 'normal' || request.trigger === 'auto') && last?.role === 'user' ? last : null;
+    const storyTurnId = target?.storyTurnId ?? pendingUser?.storyTurnId ?? randomUUID();
     const turn = this.repository.createTurn(chat.id, storyTurnId, request.trigger);
     let parent = chat.headMessageId;
     let continueText = '';
     this.repository.database.sqlite.transaction(() => {
-      if (existingInput && !existingInput.storyTurnId) {
-        this.repository.database.sqlite.prepare('UPDATE messages SET story_turn_id = ? WHERE id = ?').run(storyTurnId, existingInput.id);
+      if (pendingUser && !pendingUser.storyTurnId) {
+        this.repository.database.sqlite.prepare('UPDATE messages SET story_turn_id = ? WHERE id = ?').run(storyTurnId, pendingUser.id);
       }
       if (request.input && request.trigger === 'normal') {
         parent = this.repository.createMessage({ conversationId: chat.id, parentId: parent, storyTurnId, role: 'user',
@@ -102,8 +107,8 @@ export class TurnService {
     }
     const result = this.repository.database.sqlite.transaction(() => {
       const head = chat.headMessageId ? this.repository.getMessage(chat.headMessageId) : null;
-      const storyTurnId = input.role === 'assistant' && head?.role === 'user' ? head.storyTurnId ?? randomUUID() : randomUUID();
-      if (input.role === 'assistant' && head?.role === 'user' && !head.storyTurnId) {
+      const storyTurnId = head?.role === 'user' ? head.storyTurnId ?? randomUUID() : randomUUID();
+      if (head?.role === 'user' && !head.storyTurnId) {
         this.repository.database.sqlite.prepare('UPDATE messages SET story_turn_id = ? WHERE id = ?').run(storyTurnId, head.id);
       }
       const message = this.repository.createMessage({ conversationId: chatId, parentId: chat.headMessageId, storyTurnId,

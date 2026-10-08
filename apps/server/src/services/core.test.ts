@@ -48,19 +48,66 @@ it('web copy previews plain prose and saves one User at the expected head withou
   expect(network).not.toHaveBeenCalled(); expect(runtime.requests).toEqual([]);
 });
 
+it('manual input setting persists without replacing other general settings', async () => {
+  const original = server.repository.getGeneralSettings();
+  expect(original.manualInput).toBe(false);
+  const changed = await server.app.inject({ method: 'PATCH', url: '/api/settings/general', payload: { manualInput: true } });
+  expect(changed.statusCode).toBe(200);
+  expect(changed.json()).toEqual({ ...original, manualInput: true });
+  expect(new Repository(server.repository.database).getGeneralSettings().manualInput).toBe(true);
+  const invalid = await server.app.inject({ method: 'PATCH', url: '/api/settings/general', payload: { manualInput: false, connectionId: null } });
+  expect(invalid.statusCode).toBe(400);
+  expect(server.repository.getGeneralSettings()).toEqual({ ...original, manualInput: true });
+});
+
+it('manual input blocks ordinary generation but permits explicit continuation', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), manualInput: true });
+  const rejected = await server.app.inject({ method: 'POST', url: '/api/turns', payload: { conversationId: chat, trigger: 'normal', input: { voice: 'protagonist', text: '旧页面不应生成' } } });
+  expect(rejected.statusCode).toBe(409);
+  expect((await server.app.inject({ method: 'POST', url: '/api/turns', payload: { conversationId: chat, trigger: 'auto' } })).statusCode).toBe(409);
+  expect(repo.getActiveBranch(chat)).toEqual([]); expect(runtime.requests).toEqual([]);
+  const saved = server.turns.appendManual(chat, { role: 'assistant', head: null, speaker: { kind: 'narrator' }, text: '等待主动续写的正文' });
+  await server.turns.idle(chat);
+  const continued = server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'continue', targetMessageId: saved.message.id }));
+  await server.turns.idle(chat);
+  expect(repo.getTurn(continued.id)?.status).toBe('completed');
+  expect(runtime.requests.length).toBeGreaterThan(0);
+  expect(repo.getActiveBranch(chat).at(-1)!.content).toContain(saved.message.content);
+});
+
+it('manual pending Users resume through the API in one complete turn', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), manualInput: true, memoryTurnInterval: 1 });
+  const first = server.turns.appendManual(chat, { role: 'user', head: null, input: { voice: 'protagonist', text: '先推开门' } }).message;
+  const second = server.turns.appendManual(chat, { role: 'user', head: first.id, input: { voice: 'narrator', text: '门外开始下雨' } }).message;
+  await server.app.inject({ method: 'PATCH', url: '/api/settings/general', payload: { manualInput: false } });
+  const turn = server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'normal', targetMessageId: second.id, replyTarget: { mode: 'explicit', speaker: { kind: 'narrator' } } }));
+  await server.turns.idle(chat);
+  const history = repo.getActiveBranch(chat);
+  expect(history.map(message => message.role)).toEqual(['user', 'user', 'assistant']);
+  expect(new Set(history.map(message => message.storyTurnId))).toEqual(new Set([first.storyTurnId]));
+  expect(repo.getTurn(turn.id)?.status).toBe('completed');
+  expect(repo.listMemories(chat)[0]!.coverage).toEqual({ startMessageId: first.id, endMessageId: history[2]!.id, storyTurnIds: [first.storyTurnId] });
+});
+
 it('manual Assistant replies keep complete turns and run records only at the configured interval', async () => {
   const repo = server.repository;
-  repo.setGeneralSettings({ ...repo.getGeneralSettings(), memoryTurnInterval: 2, stateTurnInterval: 2, historyMessageLimit: 0 });
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), manualInput: true, memoryTurnInterval: 2, stateTurnInterval: 2, historyMessageLimit: 0, connectionId: null });
   const legacy = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: '旧 User 正文', providerState: null, legacyPayload: null });
   repo.setHead(chat, legacy.id);
   const maintain = vi.spyOn(runtime, 'maintain');
-  const first = server.turns.appendManual(chat, { role: 'assistant', head: legacy.id, speaker: { kind: 'character', characterId: character }, text: '网页回复第一轮' });
+  const extra = server.turns.appendManual(chat, { role: 'user', head: legacy.id, input: { voice: 'narrator', text: '补充同一轮的旁白' } });
+  expect(extra.turn).toBeNull(); expect(maintain).not.toHaveBeenCalled();
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), connectionId: connection });
+  const first = server.turns.appendManual(chat, { role: 'assistant', head: extra.message.id, speaker: { kind: 'character', characterId: character }, text: '网页回复第一轮' });
   await server.turns.idle(chat);
   expect(repo.getMessage(legacy.id)!.storyTurnId).toBe(first.message.storyTurnId);
   expect(maintain).not.toHaveBeenCalled();
   const second = server.turns.appendManual(chat, { role: 'assistant', head: first.message.id, speaker: { kind: 'narrator' }, text: '手动续写第二轮' });
   await server.turns.idle(chat);
-  expect(repo.getActiveBranch(chat).map(message => message.content)).toEqual(['旧 User 正文', '网页回复第一轮', '手动续写第二轮']);
+  expect(repo.getActiveBranch(chat).map(message => message.content)).toEqual(['旧 User 正文', '补充同一轮的旁白', '网页回复第一轮', '手动续写第二轮']);
+  expect(extra.message.storyTurnId).toBe(first.message.storyTurnId);
   expect(settledStoryIds(repo, chat)).toEqual([first.message.storyTurnId, second.message.storyTurnId]);
   expect(maintain).toHaveBeenCalledTimes(2);
   expect(repo.listMemories(chat)[0]!.coverage).toEqual({ startMessageId: legacy.id, endMessageId: second.message.id, storyTurnIds: [first.message.storyTurnId, second.message.storyTurnId] });

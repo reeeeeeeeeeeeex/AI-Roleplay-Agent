@@ -211,7 +211,7 @@ test('streaming respects collapsed thinking and keeps the message being read in 
   });
   const messages = await openHistory(page, request, 20);
   await page.route('**/api/turns', route => route.fulfill({ json: { id: 'display-stream' } }));
-  await page.getByRole('button', { name: '让故事继续 →' }).click();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
   await page.waitForFunction(() => typeof (window as any).emitChatEvent === 'function');
   await page.evaluate(() => {
     (window as any).emitChatEvent('writer.started', { outputIndex: 0, speaker: { kind: 'narrator' } });
