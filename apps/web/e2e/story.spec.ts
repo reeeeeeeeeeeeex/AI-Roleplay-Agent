@@ -322,9 +322,13 @@ test('story author note and global additional instruction persist into raw Syste
   const additional = '多用对白，避免重复已有描写。';
   await page.getByRole('button', { name: '故事资料', exact: true }).click();
   const story = page.getByRole('dialog', { name: '编辑故事资料', exact: true });
-  await story.getByRole('textbox', { name: '作者注释', exact: true }).fill(note);
+  await expect(story.getByRole('textbox', { name: '作者注释', exact: true })).toHaveCount(0);
   await story.getByRole('button', { name: '关闭', exact: true }).last().click();
-  await expect(story).toHaveCount(0);
+  await page.getByRole('button', { name: '作者注释', exact: true }).click();
+  const authorNote = page.getByRole('dialog', { name: '作者注释', exact: true });
+  await authorNote.getByRole('textbox', { name: '作者注释', exact: true }).fill(note);
+  await authorNote.getByRole('button', { name: '关闭作者注释' }).click();
+  await expect(authorNote).toHaveCount(0);
   await page.getByRole('button', { name: '通用设置', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
   await settings.getByRole('button', { name: '提示词', exact: true }).click();
@@ -336,9 +340,9 @@ test('story author note and global additional instruction persist into raw Syste
   await expect(settings.getByRole('status')).toContainText('提示词已保存');
   await settings.getByRole('button', { name: '关闭设置' }).click();
   await page.reload();
-  await page.getByRole('button', { name: '故事资料', exact: true }).click();
-  await expect(story.getByRole('textbox', { name: '作者注释', exact: true })).toHaveValue(note);
-  await story.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await page.getByRole('button', { name: '作者注释', exact: true }).click();
+  await expect(authorNote.getByRole('textbox', { name: '作者注释', exact: true })).toHaveValue(note);
+  await authorNote.getByRole('button', { name: '关闭作者注释' }).click();
   await page.getByRole('button', { name: '通用设置', exact: true }).click();
   await settings.getByRole('button', { name: '提示词', exact: true }).click();
   await expect(settings.getByRole('textbox', { name: '写作主指令', exact: true })).toHaveValue(main);
@@ -349,8 +353,38 @@ test('story author note and global additional instruction persist into raw Syste
   await expect(raw).toContainText(additional);
   const body = JSON.parse((await raw.textContent())!);
   expect(body.messages[0].content).toContain(`[Additional Instruction]\n${additional}`);
-  expect(body.messages.at(-2)).toMatchObject({ role: 'system', content: `[Author's Note]\n${note}` });
+  expect(body.messages[0].role).toBe('system');
+  expect(body.messages[0].content.startsWith(`[Author's Note]\n${note}`)).toBe(true);
+  expect(JSON.stringify(body.messages.slice(1))).not.toContain(note);
   expect(body.messages.at(-1).role).toBe('user');
+
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.authorNote === note);
+  const other = await (await request.post('/api/conversations', { data: { title: '同角色的另一聊天', kind: 'solo', characterId: chat.characterId } })).json();
+  await page.reload();
+  await page.getByRole('button', { name: other.title }).click();
+  await page.getByRole('button', { name: '作者注释', exact: true }).click();
+  await expect(authorNote.getByRole('textbox', { name: '作者注释', exact: true })).toHaveValue('');
+  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).authorNote).toBe(note);
+});
+
+test('author note save failure keeps the editor and draft until retry succeeds', async ({ page }) => {
+  await page.getByRole('button', { name: '作者注释', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: '作者注释', exact: true });
+  const field = editor.getByRole('textbox', { name: '作者注释', exact: true });
+  let fail = true;
+  await page.route('**/api/conversations/*', route => route.request().method() === 'PUT' && fail
+    ? route.fulfill({ status: 500, json: { error: '测试保存失败' } }) : route.continue());
+  await field.fill('保留这段重要指令。');
+  await editor.getByRole('button', { name: '关闭作者注释' }).click();
+  await expect(editor.getByRole('alert')).toContainText('测试保存失败');
+  await expect(field).toHaveValue('保留这段重要指令。');
+  fail = false;
+  await editor.getByRole('button', { name: '关闭作者注释' }).click();
+  await expect(editor).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('button', { name: '作者注释', exact: true }).click();
+  await expect(field).toHaveValue('保留这段重要指令。');
 });
 
 test('developer Trace viewer shows live thinking, tool results and exact raw input', async ({ page }) => {

@@ -2067,6 +2067,9 @@ fieldset label {
     padding: 0 12px;
   }
 
+  .top-actions button span { display: none; }
+  .top-actions { gap: 0; }
+
   .messages {
     padding: 14px;
   }

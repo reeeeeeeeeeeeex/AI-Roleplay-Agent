@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog } from 'lucide-react';
+import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine } from 'lucide-react';
 import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
@@ -14,6 +14,7 @@ import MessageNavigation from './MessageNavigation.js';
 import { useChatWindow } from './useChatWindow.js';
 import ActionChoices from './ActionChoices.js';
 import AutoSaveField from './AutoSaveField.js';
+import AuthorNoteEditor from './AuthorNoteEditor.js';
 import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
 import './branches.css';
@@ -88,6 +89,7 @@ export default function App() {
   const [personaSaving, setPersonaSaving] = useState(false);
   const [personaCreateTarget, setPersonaCreateTarget] = useState<'global' | 'chat' | null>(null);
   const [showBranches, setShowBranches] = useState(false);
+  const [showAuthorNote, setShowAuthorNote] = useState(false);
 
   // Appearance preferences are local to this browser.
   const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => (localStorage.getItem('avatar-mode') as AvatarMode) || 'large');
@@ -597,6 +599,10 @@ export default function App() {
           <div className="top-actions">
             {chat && page === 'chat' && (
               <>
+                <button title="作者注释" aria-label="作者注释" onClick={() => setShowAuthorNote(true)}>
+                  <FilePenLine size={14} />
+                  <span>作者注释</span>
+                </button>
                 {chat.kind === 'group' ? (
                   <button
                     title="编辑当前群聊"
@@ -1143,6 +1149,12 @@ export default function App() {
         promptSettings={promptSettings}
         onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
       />}
+
+      {showAuthorNote && chat && <AuthorNoteEditor key={chat.id} chat={chat} disabled={sending || !!turn || choicesBusy}
+        onClose={() => setShowAuthorNote(false)} onSaved={saved => {
+          setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === saved.id ? saved : item) }));
+          setPromptPreview(null);
+        }} />}
 
       {editor && (
         <Editor

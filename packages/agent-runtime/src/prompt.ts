@@ -2,7 +2,6 @@ import type { Message } from '@earendil-works/pi-ai';
 import type { MessageNode, SpeakerRef, ContextReport, ContextReportItem } from '@new-ai-chat/contracts';
 import { defaultAgencyPrompts, defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
 import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterRequest } from './types.js';
-import { authorNoteInFirstSystem } from './author-note.js';
 
 function section(title: string, body: string | undefined): string {
   const clean = body?.trim();
@@ -153,8 +152,8 @@ export function buildActionChoiceContext(request: BaseAgentRequest, control: str
 
 export function buildAuthorNoteMessages(request: BaseAgentRequest): Message[] {
   const content = section("Author's Note", expandStoryMacros(request.authorNote ?? '', request.persona?.name ?? 'User', request.characters.map(character => character.name).join(', ')));
-  // Pi only models user/assistant/tool messages. The gateway restores the System role
-  // before sending, keeping this instruction after history where the protocol allows it.
+  // The gateway removes this internal carrier before conversion and places the note
+  // at the beginning of the protocol's System instructions, never in User history.
   const message = { role: 'user' as const, content, timestamp: 0, authorNote: true };
   return content ? [message] : [];
 }
@@ -208,7 +207,7 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
     ...orderedDynamicContext(request.dynamicContext).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),
   ];
   const keys = new Set(items.map(item => `${item.source}:${item.id}`));
-  if (authorNote) items.push({ id: 'author-note', source: 'control', title: '作者注释', role: 'system', included: true, reason: authorNoteInFirstSystem(request.connection) ? 'DeepSeek：合并到首条 System；修改注释会影响后续前缀缓存' : request.connection.protocol === 'anthropic-messages' ? '协议要求：顶层 System' : '历史后部 · Depth 0', estimatedTokens: estimateTokens(String(authorNote.content)) + 32 });
+  if (authorNote) items.push({ id: 'author-note', source: 'control', title: '作者注释', role: 'system', included: true, reason: '聊天独有 · 前置 System；修改注释会影响后续前缀缓存', estimatedTokens: estimateTokens(String(authorNote.content)) + 32 });
   items.push(...(request.contextReport?.items ?? []).filter(item => !item.included && !keys.has(`${item.source}:${item.id}`)));
   return { ...request, history, dynamicContext, contextReport: { items } };
 }

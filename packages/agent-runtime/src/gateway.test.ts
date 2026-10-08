@@ -44,32 +44,6 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
 }
 
 describe('gateway transport contract', () => {
-  it.each([
-    ['https://api.deepseek.com/beta', 'chat'],
-    ['https://proxy.example.test/v1', 'deepseek/deepseek-chat'],
-  ])('keeps the DeepSeek author note in the first System at %s', async (baseUrl, model) => {
-    const connection: RuntimeConnection = { id: 'deepseek', protocol: 'openai-chat-completions', baseUrl, model, apiKey: 'test', headers: {}, temperature: 1, maxTokens: 100, reasoning: 'off' };
-    const note = { role: 'user' as const, content: "[Author's Note]\nKeep the scene quiet.", timestamp: 1, authorNote: true };
-    const noteContext: Context = { ...context, messages: [...context.messages, note, { role: 'user', content: 'Final writing control.', timestamp: 2 }] };
-    const sent: string[] = [];
-    const network = vi.fn<typeof fetch>(async (_url, init) => { sent.push(String(init?.body)); return response(connection.protocol, true); });
-    const gateway = new PiModelGateway(network);
-    const preview = await gateway.captureRequestBody(connection, noteContext);
-    const body = JSON.parse(preview);
-    expect(network).not.toHaveBeenCalled();
-    expect(body.messages[0]).toEqual({ role: 'system', content: `Test\n\n${note.content}` });
-    expect(body.messages.slice(1).every((item: any) => item.role !== 'system')).toBe(true);
-    expect(JSON.stringify(body.messages.slice(1))).not.toContain("Author's Note");
-    expect(body.messages.at(-1).content).toBe('Final writing control.');
-    expect(preview).not.toMatch(/author-note:|"authorNote"/u);
-    for await (const _event of gateway.stream(connection, noteContext)) { /* mock transport only */ }
-    expect(sent).toEqual([preview]);
-    const repeated = await gateway.captureRequestBody(connection, noteContext);
-    expect(repeated).toBe(preview);
-    expect(noteContext.systemPrompt).toBe('Test');
-    expect(noteContext.messages).toContain(note);
-  });
-
   it('context budget excludes internal reports from a plain rewrite request', async () => {
     const connection: RuntimeConnection = { id: 'budget', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 1, maxTokens: 1000, contextWindow: 8000, reasoning: 'off' };
     const rewritten: Context & { contextReport: unknown } = {
@@ -115,17 +89,20 @@ describe('gateway transport contract', () => {
     const body = JSON.parse(captured);
     expect(captured).not.toMatch(/author-note:|"authorNote"/u);
     if (protocol === 'anthropic-messages') {
-      expect(body.system.at(-1)).toMatchObject({ type: 'text', text: note.content });
+      expect(body.system[0]).toMatchObject({ type: 'text', text: note.content });
       expect(body.messages).toEqual(changed.messages);
-      expect(body.system[0]).toEqual(changed.system[0]);
+      expect(body.system.slice(1)).toEqual(changed.system.slice(1));
       expect(JSON.stringify(body.messages)).not.toContain("Author's Note");
     } else {
       const items = body[protocol === 'openai-responses' ? 'input' : 'messages'];
       const changedItems = changed[protocol === 'openai-responses' ? 'input' : 'messages'];
       const index = items.findIndex((item: any) => JSON.stringify(item.content).includes("Author's Note"));
-      expect(index).toBeGreaterThan(1);
+      expect(index).toBe(0);
       expect(items[index].role).toBe('system');
-      expect(items.slice(0, index)).toEqual(changedItems.slice(0, index));
+      const firstText = typeof items[0].content === 'string' ? items[0].content : items[0].content.map((part: any) => part.text).join('');
+      expect(firstText.startsWith(note.content)).toBe(true);
+      expect(items.slice(1)).toEqual(changedItems.slice(1));
+      expect(JSON.stringify(items.slice(1))).not.toContain("Author's Note");
       expect(JSON.stringify(items.at(-1).content)).toContain('Final writing control.');
     }
     const visibleOnly = await gateway.captureRequestBody(connection, noteContext, { streaming: true, replayReasoning: false, onPayload: (value: any) => {
@@ -153,6 +130,8 @@ describe('gateway transport contract', () => {
     write.mockRestore();
     expect(captured).toBe(sentBodies[0]);
     expect(sent).toEqual([true, false]);
+    expect(noteContext.systemPrompt).toBe('Test');
+    expect(noteContext.messages).toContain(note);
   });
 
   it('retains the exact partial SSE when a stream is aborted', async () => {

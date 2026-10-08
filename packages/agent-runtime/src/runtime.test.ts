@@ -122,8 +122,8 @@ describe('Agent tool lifecycle', () => {
     expect(traces[0]?.tools[0]).toMatchObject({ name: 'select_output_voices', ok: false });
     expect(traces[0]?.error).toContain('not found');
     expect(traces[1]?.status).toBe('completed');
-    const noteIndex = first.messages.findIndex((message: any) => message.content === "[Author's Note]\nKeep the scene quiet.");
-    expect(first.messages[noteIndex].role).toBe('system');
+    expect(first.messages[0].role).toBe('system');
+    expect(first.messages[0].content.startsWith("[Author's Note]\nKeep the scene quiet.")).toBe(true);
     expect(first.messages[0].content).toContain('[Additional Instruction]\nUse precise dialogue.');
     expect(JSON.parse(bodies[1]!).messages.slice(0, first.messages.length)).toEqual(first.messages);
   });
@@ -186,9 +186,16 @@ describe('Agent tool lifecycle', () => {
 
   it('records planner read and submit tool results on the originating request traces', async () => {
     const { runtime, request, bodies, traces } = setup([{ calls: [{ name: 'read_memory', args: {} }] }, { calls: [{ name: 'submit_turn_plan', args: { ...fixedPlan, outputs: fixedPlan.outputs } }] }]);
+    request.authorNote = 'Plan a quiet scene.';
     const result = await runtime.plan({ ...request, plannerEnabled: true });
     expect(result.outputs).toEqual(fixedPlan.outputs);
     expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      const messages = JSON.parse(body).messages;
+      expect(messages[0].role).toBe('system');
+      expect(messages[0].content.startsWith("[Author's Note]\nPlan a quiet scene.")).toBe(true);
+      expect(JSON.stringify(messages.slice(1))).not.toContain("Author's Note");
+    }
     expect(traces.map(trace => trace.tools[0]?.name)).toEqual(['read_memory', 'submit_turn_plan']);
     expect(traces.every(trace => trace.status === 'completed' && trace.tools[0]?.ok)).toBe(true);
   });

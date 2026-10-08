@@ -115,7 +115,7 @@ describe('ReST prompt assembly', () => {
     expect(finalPlain).not.toContain('[Writer Brief]');
     expect(finalPlain).toContain('[Current Speaker]\nA');
     expect(plain.messages.at(-2)).toMatchObject({ authorNote: true, content: "[Author's Note]\nKeep A cautious around P." });
-    expect(plain.contextReport.items.find(item => item.id === 'author-note')).toMatchObject({ role: 'system', included: true });
+    expect(plain.contextReport.items.find(item => item.id === 'author-note')).toMatchObject({ role: 'system', included: true, reason: expect.stringContaining('前置 System') });
     expect(plain.systemPrompt).toBe(buildStableSystemPrompt(base));
     expect(() => fitRequest({ ...base, authorNote: '必须保留'.repeat(20000) })).toThrow('context budget');
   });
