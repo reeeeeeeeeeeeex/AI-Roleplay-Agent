@@ -3,6 +3,7 @@ import type { Lorebook, LoreEntry } from '@new-ai-chat/contracts';
 import { ChevronDown, ChevronRight, Copy, Plus, Trash2 } from 'lucide-react';
 import './lorebook-editor.css';
 import { useContentAutosave } from './useContentAutosave';
+import { useBackdropClose } from './useBackdropClose';
 
 type Entry = Omit<LoreEntry, 'id' | 'lorebookId'>;
 type DraftEntry = Entry & { localId: string; keyInput: string; secondaryInput: string; orderInput: string };
@@ -84,10 +85,11 @@ export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
     setExpanded(old => { const next = new Set(old); if (next.has(localId)) next.delete(localId); else next.add(localId); return next; });
   }
   async function close() { if (await autosave.flush()) onClose(); }
+  const backdrop = useBackdropClose(close);
   const search = query.trim().toLocaleLowerCase();
   const visible = entries.filter(entry => [entry.title, entry.content, ...entry.keys, ...entry.secondaryKeys, entry.keyInput, entry.secondaryInput].some(value => value.toLocaleLowerCase().includes(search)));
 
-  return <div className="modal-shade" style={{ zIndex }} onClick={event => { if (event.target === event.currentTarget) void close(); }}>
+  return <div className="modal-shade" style={{ zIndex }} {...backdrop}>
     <section className="modal lorebook-modal" role="dialog" aria-modal="true" aria-label="编辑世界书">
       <header><h2>{initial?.id ? '编辑' : '创建'}世界书 <span className="muted">· {entries.length} 个条目</span></h2>
         <button type="button" onClick={() => void close()} aria-label="关闭">✕</button>

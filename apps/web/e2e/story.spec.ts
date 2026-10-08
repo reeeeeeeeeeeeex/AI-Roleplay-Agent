@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import { defaultGeneralSettings } from '@new-ai-chat/contracts';
 
 test.use({ serviceWorkers: 'block' });
@@ -8,6 +8,14 @@ async function send(page: Page, text: string, count: number) {
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.locator('article.message:not(.streaming)')).toHaveCount(count);
   await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+}
+
+async function dragLeftOutside(page: Page, source: Locator) {
+  const box = (await source.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(4, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
 }
 test.beforeEach(async ({ page, request }, info) => {
   const characters = await (await request.get('/api/characters')).json();
@@ -404,6 +412,38 @@ test('mobile layout and forced character', async ({ page }, info) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('story-mobile.png'), fullPage: true });
 });
+test('modal drag: connection draft survives dragging left outside and only its own backdrop closes it', async ({ page }) => {
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await settings.getByRole('button', { name: '创建模型连接', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '编辑模型连接', exact: true });
+  const name = dialog.getByRole('textbox', { name: '名称', exact: true });
+  await name.fill('保留未保存的连接草稿');
+  await dragLeftOutside(page, name);
+  await expect(dialog).toBeVisible();
+  await expect(name).toHaveValue('保留未保存的连接草稿');
+  const box = (await name.boundingBox())!;
+  await page.mouse.move(4, box.y + box.height / 2); await page.mouse.down();
+  await page.mouse.move(box.x + 10, box.y + box.height / 2, { steps: 8 }); await page.mouse.up();
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(4, box.y + box.height / 2);
+  await expect(dialog).toHaveCount(0);
+  await expect(settings).toBeVisible();
+});
+
+test('modal drag: selecting raw prompt text outside the preview does not dismiss it', async ({ page }) => {
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '提示词预览', exact: true });
+  const raw = dialog.getByRole('region', { name: 'Raw input', exact: true }).locator('pre');
+  await expect(raw).toContainText('messages');
+  const original = await raw.textContent();
+  await dragLeftOutside(page, raw);
+  await expect(dialog).toBeVisible();
+  await expect(raw).toHaveText(original!);
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
 test('creates a connection through the UI with only the supported protocols', async ({ page }) => {
   await page.route('**/api/connections/models', route => route.fulfill({ json: { models: ['local-test', 'other-test'] } }));
   await page.getByRole('button', { name: '通用设置', exact: true }).click();

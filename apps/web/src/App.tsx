@@ -15,6 +15,7 @@ import { useChatWindow } from './useChatWindow.js';
 import ActionChoices from './ActionChoices.js';
 import AutoSaveField from './AutoSaveField.js';
 import { flushContentEdits } from './useContentAutosave.js';
+import { useBackdropClose } from './useBackdropClose.js';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
@@ -82,6 +83,8 @@ export default function App() {
   const [promptPreview, setPromptPreview] = useState<any | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showPersona, setShowPersona] = useState(false);
+  const personaBackdrop = useBackdropClose(() => setShowPersona(false));
+  const promptBackdrop = useBackdropClose(() => setPromptPreview(null));
   const [personaSaving, setPersonaSaving] = useState(false);
   const [personaCreateTarget, setPersonaCreateTarget] = useState<'global' | 'chat' | null>(null);
   const [showBranches, setShowBranches] = useState(false);
@@ -1197,7 +1200,7 @@ export default function App() {
           <img className="lightbox-content" src={previewImage} alt="角色大图立绘" />
         </div>
       )}
-      {showPersona && <div className="modal-shade" onClick={() => setShowPersona(false)}>
+      {showPersona && <div className="modal-shade" {...personaBackdrop}>
         <section className="modal" role="dialog" aria-modal="true" aria-label="主角身份" onClick={e => e.stopPropagation()}>
           <header><h2>主角身份</h2><button aria-label="关闭主角身份" onClick={() => setShowPersona(false)}>✕</button></header>
           <div className="settings-content settings-section">
@@ -1237,7 +1240,7 @@ export default function App() {
       </div>}
 
       {promptPreview && (
-        <div className="modal-shade" style={{ zIndex: 130 }} onClick={() => setPromptPreview(null)}>
+        <div className="modal-shade" style={{ zIndex: 130 }} {...promptBackdrop}>
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
             <header><h2>发送提示词预览 · Raw input</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
             <div className="prompt-preview-body">

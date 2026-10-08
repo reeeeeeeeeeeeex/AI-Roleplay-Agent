@@ -111,6 +111,11 @@ test('lorebook autosave retains failed drafts through reload and retries on blur
   await expect.poll(async () => (await (await request.get(`/api/lorebooks/${book.id}`)).json()).entries[0].content).toBe('尚未保存的正文。');
   await body.fill('第二次编辑仍使用最新版本。'); await body.blur();
   await expect.poll(async () => (await (await request.get(`/api/lorebooks/${book.id}`)).json()).entries[0].content).toBe('第二次编辑仍使用最新版本。');
+  const box = (await body.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  await page.mouse.move(4, box.y + box.height / 2, { steps: 8 }); await page.mouse.up();
+  await expect(editor).toBeVisible();
+  await expect(body).toHaveValue('第二次编辑仍使用最新版本。');
   await editor.getByRole('button', { name: '关闭', exact: true }).last().click();
   await expect(editor).toHaveCount(0);
 });

@@ -4,6 +4,7 @@ import AvatarField from './AvatarField';
 import PersonaPicker from './PersonaPicker';
 import LorebookEditor from './LorebookEditor';
 import { useContentAutosave } from './useContentAutosave';
+import { useBackdropClose } from './useBackdropClose';
 
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
@@ -119,6 +120,7 @@ export default function Editor({
     const createDefaults = !record.current?.id && !value.id && Boolean(String(value.name ?? value.title ?? '').trim());
     if (!automatic || await autosave.flush(createDefaults)) onClose();
   }
+  const backdrop = useBackdropClose(close);
 
   const field = (key: string, label: string, multiline = false, type = 'text', bounds?: { min: number; max: number; step: number }) => (
     <label key={key}>
@@ -194,7 +196,7 @@ export default function Editor({
 
   return (
     <>
-      <div className="modal-shade" style={{ zIndex }} onClick={event => { if (event.target === event.currentTarget) void close(); }}>
+      <div className="modal-shade" style={{ zIndex }} {...backdrop}>
         <section className={`modal${kind === 'conversations' || kind === 'characters' || kind === 'personas' ? ' editor-wide-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
           <header>
             <h2>{record.current?.id ? titles[kind] : `创建${titles[kind]}`}</h2>
