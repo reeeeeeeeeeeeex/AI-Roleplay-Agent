@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { fallbackPlan, validatePlan, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
-import { seedStateFromPersona, type TurnRequest, type TurnRecord, type TurnPlan, type SpeakerRef, type TurnProgress, type InterruptedOutput } from '@new-ai-chat/contracts';
+import { fallbackPlan, formatWebPrompt, validatePlan, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
+import { seedStateFromPersona, type ManualMessageInput, type TurnRequest, type TurnRecord, type TurnPlan, type SpeakerRef, type TurnProgress, type InterruptedOutput } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 import { EventBroker } from './events.js';
 import { createTraceSink } from './trace.js';
@@ -91,12 +91,49 @@ export class TurnService {
     return this.launch(turn);
   }
 
+  appendManual(chatId: string, input: ManualMessageInput) {
+    this.assertIdle(chatId);
+    const chat = this.repository.getConversation(chatId);
+    if (!chat) throw new Error('Conversation not found.');
+    if (chat.headMessageId !== input.head) throw Object.assign(new Error('当前消息位置已变化，请重新预览或核对后再保存。'), { statusCode: 409 });
+    if (input.role === 'assistant' && input.speaker.kind === 'character') {
+      const speakerId = input.speaker.characterId;
+      if (!new StoryContext(this.repository, chatId).cast.some(character => character.id === speakerId)) throw new Error('Speaker is not in this conversation.');
+    }
+    const result = this.repository.database.sqlite.transaction(() => {
+      const head = chat.headMessageId ? this.repository.getMessage(chat.headMessageId) : null;
+      const storyTurnId = input.role === 'assistant' && head?.role === 'user' ? head.storyTurnId ?? randomUUID() : randomUUID();
+      if (input.role === 'assistant' && head?.role === 'user' && !head.storyTurnId) {
+        this.repository.database.sqlite.prepare('UPDATE messages SET story_turn_id = ? WHERE id = ?').run(storyTurnId, head.id);
+      }
+      const message = this.repository.createMessage({ conversationId: chatId, parentId: chat.headMessageId, storyTurnId,
+        role: input.role, authorKind: input.role === 'user' ? input.input.voice === 'narrator' ? 'user_narrator' : 'protagonist' : input.speaker.kind,
+        speaker: input.role === 'assistant' ? input.speaker : null, content: input.role === 'user' ? input.input.text : input.text,
+        providerState: null, legacyPayload: null, generationInfo: input.role === 'assistant'
+          ? { mode: 'manual', model: '', streaming: false, thinking: null, usage: null, timing: null, requestCount: 0 } : null });
+      this.repository.setHead(chatId, message.id);
+      if (input.role === 'user' && !this.repository.latestState(chatId)) {
+        const persona = this.repository.resolvePersona(chat.personaId);
+        if (persona) this.repository.createState(chatId, null, seedStateFromPersona(persona));
+      }
+      let turn: TurnRecord | null = null;
+      if (input.role === 'assistant') {
+        turn = this.repository.createTurn(chatId, storyTurnId, 'manual');
+        this.repository.addEvent(chatId, turn.id, 'story.settled', { storyTurnId, head: message.id });
+        turn = this.repository.updateTurn(turn.id, { status: 'completed', recordsStatus: 'running', completedAt: new Date().toISOString() });
+      }
+      return { message, conversation: this.repository.getConversation(chatId)!, turn };
+    })();
+    if (result.turn) this.launch(result.turn);
+    return result;
+  }
+
   private launch(turn: TurnRecord): TurnRecord {
     const controller = new AbortController();
     const task = { id: turn.id, controller, done: Promise.resolve() };
     this.active.set(turn.conversationId, task);
     // Defer work until after registration, so sync fake providers follow the same lifecycle.
-    task.done = Promise.resolve().then(() => this.run(turn, controller.signal)).finally(() => this.active.delete(turn.conversationId));
+    task.done = Promise.resolve().then(() => turn.trigger === 'manual' ? this.finishManual(turn, controller.signal) : this.run(turn, controller.signal)).finally(() => this.active.delete(turn.conversationId));
     return turn;
   }
 
@@ -135,7 +172,33 @@ export class TurnService {
     if (mode === 'plain' && !forced && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
     const plan = forced ? { ...fallbackPlan(request.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : undefined;
     const preview = await this.runtime.previewFirstRequest(request, mode, plan);
-    return { action: input.trigger, generationMode: mode, protocol: request.connection.protocol, personaName: request.persona?.name ?? null, ...preview };
+    const webPreview = mode === 'plain' ? preview : await this.runtime.previewFirstRequest(request, 'plain', plan);
+    if (this.repository.getConversation(chat.id)?.headMessageId !== chat.headMessageId) throw Object.assign(new Error('消息位置已变化，请重新预览。'), { statusCode: 409 });
+    return { action: input.trigger, generationMode: mode, protocol: request.connection.protocol, personaName: request.persona?.name ?? null, ...preview,
+      headMessageId: chat.headMessageId, webPrompt: formatWebPrompt(webPreview.requestBody, request.connection.protocol), webSpeaker: webPreview.speaker };
+  }
+
+  private async finishRecords(turn: TurnRecord, signal: AbortSignal, trace: ReturnType<typeof createTraceSink>) {
+    const emit = (type: string, payload = {}) => this.events.publish(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...payload });
+    emit('records.started');
+    try {
+      await this.postprocess(turn.conversationId, signal, trace);
+      signal.throwIfAborted(); await this.plugins?.settled(turn.conversationId);
+      this.repository.updateTurn(turn.id, { recordsStatus: 'completed' }); emit('records.completed');
+    } catch (error) {
+      const recordsStatus = signal.aborted ? 'cancelled' : 'failed';
+      this.repository.updateTurn(turn.id, { recordsStatus });
+      emit(`records.${recordsStatus}`, { error: signal.aborted ? null : this.repository.redactError(error) });
+    }
+  }
+
+  private async finishManual(turn: TurnRecord, signal: AbortSignal) {
+    const trace = createTraceSink(this.repository, this.events, turn);
+    try {
+      await this.finishRecords(turn, signal, trace);
+      this.repository.pruneTraces(turn.conversationId, 20);
+      this.events.publish(turn.conversationId, turn.id, 'turn.completed', { turnId: turn.id, storyTurnId: turn.storyTurnId });
+    } finally { trace.flush(); }
   }
 
   private async run(turn: TurnRecord, signal: AbortSignal) {
@@ -240,16 +303,7 @@ export class TurnService {
       })();
       settled = true;
       if (input.trigger !== 'continue' && !swipe) {
-        emit('records.started');
-        try {
-          await this.postprocess(turn.conversationId, signal, traceSink);
-          signal.throwIfAborted(); await this.plugins?.settled(turn.conversationId);
-          this.repository.updateTurn(turn.id, { recordsStatus: 'completed' }); emit('records.completed');
-        } catch (error) {
-          const recordsStatus = signal.aborted ? 'cancelled' : 'failed';
-          this.repository.updateTurn(turn.id, { recordsStatus });
-          emit(`records.${recordsStatus}`, { error: signal.aborted ? null : this.repository.redactError(error) });
-        }
+        await this.finishRecords(turn, signal, traceSink);
       }
       this.repository.pruneTraces(turn.conversationId, 20);
       emit('turn.completed');

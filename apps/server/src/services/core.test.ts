@@ -29,6 +29,58 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
 
+it('web copy previews plain prose and saves one User at the expected head without generation', async () => {
+  const network = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', network);
+  const input = { voice: 'narrator', text: '网页写作本轮输入' };
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'normal', input, replyTarget: { mode: 'auto' } } });
+  expect(response.statusCode).toBe(200);
+  const preview = response.json();
+  expect(preview.webPrompt).toContain(input.text);
+  expect(preview.webPrompt).toContain('[Current Speaker]');
+  expect(preview.webPrompt).not.toMatch(/select_output_voices|"tools"/u);
+  expect(preview.webSpeaker).toEqual({ kind: 'character', characterId: character });
+  const payload = { role: 'user', input, head: preview.headMessageId };
+  const saved = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/manual-messages`, payload });
+  expect(saved.statusCode).toBe(201);
+  expect(saved.json().turn).toBeNull();
+  expect(server.repository.getActiveBranch(chat)).toEqual([expect.objectContaining({ role: 'user', authorKind: 'user_narrator', content: input.text })]);
+  expect((await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/manual-messages`, payload })).statusCode).toBe(409);
+  expect(network).not.toHaveBeenCalled(); expect(runtime.requests).toEqual([]);
+});
+
+it('manual Assistant replies keep complete turns and run records only at the configured interval', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), memoryTurnInterval: 2, stateTurnInterval: 2, historyMessageLimit: 0 });
+  const legacy = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: '旧 User 正文', providerState: null, legacyPayload: null });
+  repo.setHead(chat, legacy.id);
+  const maintain = vi.spyOn(runtime, 'maintain');
+  const first = server.turns.appendManual(chat, { role: 'assistant', head: legacy.id, speaker: { kind: 'character', characterId: character }, text: '网页回复第一轮' });
+  await server.turns.idle(chat);
+  expect(repo.getMessage(legacy.id)!.storyTurnId).toBe(first.message.storyTurnId);
+  expect(maintain).not.toHaveBeenCalled();
+  const second = server.turns.appendManual(chat, { role: 'assistant', head: first.message.id, speaker: { kind: 'narrator' }, text: '手动续写第二轮' });
+  await server.turns.idle(chat);
+  expect(repo.getActiveBranch(chat).map(message => message.content)).toEqual(['旧 User 正文', '网页回复第一轮', '手动续写第二轮']);
+  expect(settledStoryIds(repo, chat)).toEqual([first.message.storyTurnId, second.message.storyTurnId]);
+  expect(maintain).toHaveBeenCalledTimes(2);
+  expect(repo.listMemories(chat)[0]!.coverage).toEqual({ startMessageId: legacy.id, endMessageId: second.message.id, storyTurnIds: [first.message.storyTurnId, second.message.storyTurnId] });
+  expect(repo.getTurn(second.turn!.id)).toMatchObject({ status: 'completed', recordsStatus: 'completed', trigger: 'manual' });
+  expect(second.message.generationInfo).toMatchObject({ mode: 'manual', usage: null, requestCount: 0 });
+  expect(runtime.requests).toEqual([]);
+});
+
+it('manual Assistant save survives record failure and rejects an invalid speaker without appending', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), memoryTurnInterval: 1, stateTurnInterval: 0 });
+  vi.spyOn(runtime, 'maintain').mockRejectedValue(new Error('offline record failure'));
+  const saved = server.turns.appendManual(chat, { role: 'assistant', head: null, speaker: { kind: 'narrator' }, text: '已经保存的手动正文' });
+  await server.turns.idle(chat);
+  expect(repo.getTurn(saved.turn!.id)).toMatchObject({ status: 'completed', recordsStatus: 'failed' });
+  expect(() => server.turns.appendManual(chat, { role: 'assistant', head: saved.message.id, speaker: { kind: 'character', characterId: 'foreign-character' }, text: '不应保存' })).toThrow('Speaker is not in this conversation');
+  expect(repo.getActiveBranch(chat)).toEqual([saved.message]);
+  expect(runtime.requests).toEqual([]);
+});
+
 it('developer Trace exposes live model and tool events before a turn completes', async () => {
   const repo = server.repository;
   repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.listConnections()[0]!, protocol: 'openai-chat-completions', reasoning: 'high' }));

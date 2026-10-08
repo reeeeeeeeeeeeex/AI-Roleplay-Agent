@@ -49,12 +49,13 @@ export default function App() {
     try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('story-drafts') ?? '{}')).filter(([, value]) => typeof value === 'string')) as Record<string, string>; }
     catch { return {}; }
   });
-  const text = chatId ? inputDrafts[chatId] ?? '' : '';
-  const setText = (value: string) => { if (chatId) setInputDrafts(old => ({ ...old, [chatId]: value })); };
+  const [voice, setVoice] = useState<UserVoice | 'assistant'>('protagonist');
+  const draftKey = chatId ? voice === 'assistant' ? `${chatId}:assistant` : chatId : '';
+  const text = inputDrafts[draftKey] ?? '';
+  const setText = (value: string) => { if (draftKey) setInputDrafts(old => ({ ...old, [draftKey]: value })); };
   const [sending, setSending] = useState(false);
   const [choicesBusy, setChoicesBusy] = useState(false);
   const sendPending = useRef(false);
-  const [voice, setVoice] = useState<UserVoice>('protagonist');
   const [replyTarget, setReplyTarget] = useState('auto');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -214,6 +215,7 @@ export default function App() {
     setLastTurn(null);
     setActivity([]);
     setReplyTarget('auto');
+    setVoice(current => current === 'assistant' ? 'protagonist' : current);
     if (chatId) { localStorage.setItem('selected-chat', chatId); act(refreshMessages(chatId)); }
   }, [chatId]);
 
@@ -304,7 +306,7 @@ export default function App() {
   }, [Object.keys(data).length]);
 
   async function turnPayload(trigger: TurnRequest['trigger'], targetMessageId?: string, choiceText?: string): Promise<TurnRequest> {
-    const draft = choiceText ?? text;
+    const draft = choiceText ?? (voice === 'assistant' ? '' : text);
     if (trigger === 'normal' && !draft.trim()) {
       // Read after autosave: editing a message can replace the branch head.
       const { branch: current } = await api<{ branch: MessageNode[] }>(`/conversations/${chat!.id}/messages`);
@@ -320,7 +322,7 @@ export default function App() {
       trigger,
       replyTarget: replyTargetValue,
       ...(targetMessageId ? { targetMessageId } : {}),
-      ...(trigger === 'normal' && !targetMessageId ? { input: { voice: choiceText === undefined ? voice : 'protagonist', text: draft } } : {}),
+      ...(trigger === 'normal' && !targetMessageId ? { input: { voice: choiceText === undefined && voice === 'narrator' ? 'narrator' : 'protagonist', text: draft } } : {}),
     };
   }
 
@@ -336,12 +338,29 @@ export default function App() {
 
   async function send(trigger: TurnRequest['trigger'] = 'normal', targetMessageId?: string, choiceText?: string) {
     if (!chat || turn || sendPending.current || messageEdit) return;
+    const manual = voice === 'assistant' && trigger === 'normal' && choiceText === undefined && !targetMessageId;
+    if (manual && !text.trim()) return;
     sendPending.current = true;
     setError('');
     setNotice('');
     try {
       await flushContentEdits();
       setSending(true);
+      if (manual) {
+        if (chatRef.current !== chat.id) return;
+        if (replyTarget === 'auto') throw new Error('请先选择录入回复的角色。');
+        const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', {
+          role: 'assistant', text, head: savedMessageId(chat.headMessageId ?? undefined) ?? null,
+          speaker: replyTarget === 'narrator' ? { kind: 'narrator' } : { kind: 'character', characterId: replyTarget },
+        });
+        setInputDrafts(old => old[draftKey] === text ? { ...old, [draftKey]: '' } : old);
+        if (chatRef.current !== chat.id) return;
+        setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        setPromptPreview(null);
+        await refreshMessages(chat.id);
+        await follow(result.turn.id, chat.id);
+        return;
+      }
       const payload = await turnPayload(trigger, savedMessageId(targetMessageId), choiceText);
       if (chatRef.current !== chat.id) return;
       const result = await api('/turns', 'POST', payload);
@@ -441,9 +460,42 @@ export default function App() {
       const { conversationId: _conversationId, ...payload } = await turnPayload('normal');
       if (chatRef.current !== chat.id) return;
       const preview = await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload);
-      if (chatRef.current === chat.id) setPromptPreview({ ...preview, existingUserInput: Boolean(payload.targetMessageId) });
+      if (chatRef.current === chat.id) setPromptPreview({ ...preview, conversationId: chat.id, input: payload.input, draftText: text, existingUserInput: Boolean(payload.targetMessageId) });
     }
     catch (err: any) { setError(err.message || '预览失败'); }
+  }
+
+  async function copyWebPrompt() {
+    if (!chat || !promptPreview || turn || sendPending.current) return;
+    const preview = promptPreview;
+    sendPending.current = true; setSending(true);
+    let copied = false;
+    try {
+      await flushContentEdits();
+      if (chatRef.current !== preview.conversationId) throw new Error('聊天已切换，请重新预览。');
+      await navigator.clipboard.writeText(preview.webPrompt);
+      copied = true;
+      if (preview.input) {
+        const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', { role: 'user', input: preview.input, head: preview.headMessageId });
+        setInputDrafts(old => old[chat.id] === preview.draftText ? { ...old, [chat.id]: '' } : old);
+        if (chatRef.current !== chat.id) return;
+        setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        // Clear this input before any refresh, so a retry never appends it twice.
+        setPromptPreview((old: any) => old ? { ...old, input: undefined, headMessageId: result.message.id, existingUserInput: true } : old);
+        await refreshMessages(chat.id);
+        setRecordsVersion(version => version + 1);
+      } else {
+        const current = await api<Conversation>(`/conversations/${chat.id}`);
+        if (current.headMessageId !== preview.headMessageId) throw new Error('消息位置已变化，请重新预览。');
+      }
+      if (chatRef.current !== chat.id) return;
+      setReplyTarget(preview.webSpeaker.kind === 'narrator' ? 'narrator' : preview.webSpeaker.characterId);
+      setVoice('assistant'); setPromptPreview(null);
+      setNotice('网页提示词已复制。粘贴到 AI 网页后，把回复填入“角色”模式保存。');
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : '复制失败';
+      setPromptPreview((old: any) => old ? { ...old, copyError: `${copied ? '提示词已复制，但本地保存或位置校验未完成。' : ''}${message} 草稿已保留。` } : old);
+    } finally { sendPending.current = false; setSending(false); }
   }
 
   const edit = (kind: Collection, value: any = defaults[kind]) =>
@@ -737,7 +789,7 @@ export default function App() {
                               : activePersona?.name ?? '你'
                             : speakerName(m.speaker)}
                         </strong>
-                        <span>{narrator ? '旁白' : m.role === 'user' ? '主角' : 'Writer'}</span>
+                        <span>{info?.mode === 'manual' ? '手动录入' : narrator ? '旁白' : m.role === 'user' ? '主角' : 'Writer'}</span>
                       </header>
                       {m.role === 'assistant' && info?.mode === 'plain' && <details className="message-thinking" open={plainThinkingExpanded}>
                         <summary>模型思考</summary>
@@ -754,7 +806,7 @@ export default function App() {
                         <small>{{ fact: '固定事实 · 保存到当前分支', rewrite: '一次性改写要求 · 不作为剧情输入', bookmark: '给这条消息命名书签' }[editing.action]}</small>
                         {inlineEditor}
                       </div>}
-                      {m.role === 'assistant' && <small className="generation-info">{info
+                      {m.role === 'assistant' && <small className="generation-info">{info?.mode === 'manual' ? '手动录入 · 未调用正文模型' : info
                         ? `${info.model} · 输入 ${totalInput ?? '未返回'} · 输出 ${info.usage?.output ?? '未返回'} · 缓存 ${info.usage?.cacheRead ?? '未返回'}${info.usage ? ` (${cacheRate}%)` : ''}`
                         : '生成信息不可用（旧消息）'}</small>}
                       {!editing && <div className="message-actions" onMouseDown={event => {
@@ -845,7 +897,7 @@ export default function App() {
               }}>
                 <textarea
                   aria-label="输入消息"
-                  placeholder={voice === 'narrator' ? '以旁白推动场景或描写事件…' : '输入主角的行动或对白…'}
+                  placeholder={voice === 'assistant' ? '粘贴或输入角色的回复，发送后直接保存为 Assistant 消息…' : voice === 'narrator' ? '以旁白推动场景或描写事件…' : '输入主角的行动或对白…'}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={(e) => {
@@ -863,11 +915,14 @@ export default function App() {
                     <button type="button" className={voice === 'narrator' ? 'active' : ''} onClick={() => setVoice('narrator')}>
                       用户旁白
                     </button>
+                    <button type="button" className={voice === 'assistant' ? 'active' : ''} onClick={() => {
+                      setVoice('assistant'); if (replyTarget === 'auto') setReplyTarget(cast[0] ?? 'narrator');
+                    }}>角色</button>
                   </div>
                   <label className="reply-select">
-                    由谁回复
+                    {voice === 'assistant' ? '录入为' : '由谁回复'}
                     <select aria-label="回复者" value={replyTarget} onChange={(e) => setReplyTarget(e.target.value)}>
-                      <option value="auto">自动选择</option>
+                      {voice !== 'assistant' && <option value="auto">自动选择</option>}
                       <option value="narrator">{generalSettings.narrator.name}</option>
                       {cast.map((id: string) => (
                         <option value={id} key={id}>{data.characters?.find((c) => c.id === id)?.name}</option>
@@ -879,13 +934,14 @@ export default function App() {
                       <Square size={14} />
                     </button>
                   ) : (
-                    <button type="submit" className="send primary" aria-label="发送" disabled={sending || !!messageEdit}>
+                    <button type="submit" className="send primary" aria-label="发送" title={voice === 'assistant' ? '保存角色回复' : '发送'} disabled={sending || !!messageEdit || (voice === 'assistant' && !text.trim())}>
                       <Send size={15} />
                     </button>
                   )}
                 </div>
               </form>
               <div className="composer-hint">
+                {voice === 'assistant' && <small>直接保存角色回复；Memory／主角状态仍按间隔更新。</small>}
                 <button disabled={sending || !!turn || !!messageEdit} onClick={() => act(send('auto'))}>让故事继续 →</button>
               </div>
             </div>
@@ -1260,6 +1316,14 @@ export default function App() {
               <section className="prompt-json" aria-label="Raw input">
                 <header><strong>Raw input · 首请求 Body</strong><button onClick={() => act(navigator.clipboard.writeText(promptPreview.requestBody))}>复制原始 Body</button></header>
                 <pre tabIndex={0}>{promptPreview.requestBody}</pre>
+              </section>
+              <section className="prompt-json" aria-label="网页提示词">
+                <header><strong>网页提示词 · {speakerName(promptPreview.webSpeaker)}</strong>
+                  <button disabled={sending || !!turn} onClick={() => void copyWebPrompt()}>{promptPreview.input ? '复制网页提示词并保存 User 输入' : '复制网页提示词'}</button></header>
+                <p className="muted">适用于手动粘贴到 Gemini、ChatGPT、Claude 等网页。整理为普通写作的单条文本，角色标签不等于网页端真正的 System 消息。建议在新对话中粘贴。</p>
+                {promptPreview.input && <p className="muted">复制成功后同步保存本轮主角／用户旁白内容，不调用正文模型。</p>}
+                {promptPreview.copyError && <p className="error" role="alert">{promptPreview.copyError}</p>}
+                <pre tabIndex={0}>{promptPreview.webPrompt}</pre>
               </section>
               <ContextReport report={promptPreview.contextReport} />
             </div>

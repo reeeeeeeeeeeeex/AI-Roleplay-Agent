@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Context } from '@earendil-works/pi-ai';
 import { PiModelGateway } from './pi-gateway.js';
+import { formatWebPrompt } from './web-prompt.js';
 import type { RuntimeConnection } from './types.js';
 
 const context: Context = { systemPrompt: 'Test', messages: [{ role: 'user', content: 'Go', timestamp: 1 }] };
@@ -113,6 +114,12 @@ describe('gateway transport contract', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(visibleOnly).toContain('visible history');
     expect(visibleOnly).not.toContain('private-reasoning');
+    const webPrompt = formatWebPrompt(visibleOnly, protocol);
+    expect(webPrompt).toContain(`## System · 写作要求\n\n${note.content}`);
+    expect(webPrompt).toContain('Go');
+    expect(webPrompt).toContain('Final writing control.');
+    expect(webPrompt).toContain('## Assistant · 历史回复与上下文资料\n\nvisible history');
+    expect(webPrompt).not.toMatch(/private-reasoning|author-note:|max_tokens|"stream"|"tools"/u);
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => { writes.push(String(chunk)); return true; }) as typeof process.stdout.write);
     for (const streaming of [true, false]) {
       let text = '', thinking = '';

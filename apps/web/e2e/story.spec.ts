@@ -25,6 +25,56 @@ test.beforeEach(async ({ page, request }, info) => {
   await page.goto('/');
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
 });
+test('web copy saves User and manual Assistant replies reappear in the next prompt', async ({ page, request }) => {
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__copiedPrompt = text; } } }));
+  let proseRequests = 0;
+  page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/api/turns')) proseRequests++; });
+  const input = page.getByRole('textbox', { name: '输入消息' });
+  await input.fill('走进网页端的旧书店。');
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  const web = page.getByRole('region', { name: '网页提示词', exact: true });
+  await expect(web.locator('pre')).toContainText('走进网页端的旧书店。');
+  const savedUser = page.waitForResponse(res => res.request().method() === 'POST' && res.url().endsWith('/manual-messages'));
+  await web.getByRole('button', { name: '复制网页提示词并保存 User 输入', exact: true }).click();
+  const user = (await (await savedUser).json()).message;
+  await expect(page.locator('article.message')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '角色', exact: true })).toHaveClass('active');
+  expect(await page.evaluate(() => (window as any).__copiedPrompt)).toContain('走进网页端的旧书店。');
+  await input.fill('她推开书柜，露出一扇暗门。');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+  await input.fill('暗门内传来细微的翻书声。');
+  await input.press('Enter');
+  await expect(page.locator('article.message')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+  const history = (await (await request.get(`/api/conversations/${user.conversationId}/messages`)).json()).branch;
+  expect(history.map((message: any) => message.role)).toEqual(['user', 'assistant', 'assistant']);
+  expect(history[1].storyTurnId).toBe(history[0].storyTurnId);
+  expect(history[1].speaker).toEqual(history[2].speaker);
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  await expect(web.locator('pre')).toContainText('她推开书柜，露出一扇暗门。');
+  await expect(web.locator('pre')).toContainText('暗门内传来细微的翻书声。');
+  expect(proseRequests).toBe(0);
+});
+
+test('manual reply save failure preserves separate User and Assistant drafts', async ({ page }) => {
+  const input = page.getByRole('textbox', { name: '输入消息' });
+  await input.fill('尚未发送的主角草稿');
+  await page.getByRole('button', { name: '角色', exact: true }).click();
+  await expect(input).toHaveValue('');
+  await input.fill('尚未保存的网页回复');
+  await page.route('**/api/conversations/*/manual-messages', route => route.fulfill({ status: 500, json: { error: '手动回复保存失败' } }));
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('手动回复保存失败');
+  await expect(input).toHaveValue('尚未保存的网页回复');
+  await expect(page.locator('article.message')).toHaveCount(0);
+  await page.locator('.voice-switch').getByRole('button', { name: '主角', exact: true }).click();
+  await expect(input).toHaveValue('尚未发送的主角草稿');
+  await page.getByRole('button', { name: '角色', exact: true }).click();
+  await expect(input).toHaveValue('尚未保存的网页回复');
+});
+
 test('startup distinguishes missing endpoints from required pairing', async ({ page }) => {
   let status = 404;
   await page.route('**/api/settings/general', route => status

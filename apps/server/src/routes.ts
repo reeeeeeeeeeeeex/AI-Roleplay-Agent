@@ -10,7 +10,7 @@ import { RecordService, applyProposal, settledStoryIds } from './services/record
 import { scanImport } from './services/import-scan.js';
 import { executeImport } from './services/importer.js';
 import { expandStoryMacros } from '@new-ai-chat/agent-runtime';
-import { generalSettingsSchema, promptPresetInputSchema, promptPresetPatchSchema } from '@new-ai-chat/contracts';
+import { generalSettingsSchema, promptPresetInputSchema, promptPresetPatchSchema, manualMessageSchema } from '@new-ai-chat/contracts';
 import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
@@ -118,6 +118,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       headers: Object.fromEntries(Object.entries(input.headers).map(([key, value]) => [key, value === '[stored]' && sameEndpoint ? saved.headers[key] ?? '' : value])) }) };
   });
   app.get('/api/conversations/:id/messages', async (req) => ({ branch: repo.getActiveBranch(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })), nodes: repo.listMessages(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })) }));
+  app.post('/api/conversations/:id/manual-messages', async (req, reply) => reply.code(201).send(turns.appendManual(idOf(req), manualMessageSchema.parse(req.body))));
   app.post('/api/conversations/:id/branches', async (req, reply) => {
     const chatId = idOf(req); turns.assertIdle(chatId);
     const { messageId, head } = z.object({ messageId: z.string().min(1), head: z.string().nullable() }).parse(req.body);

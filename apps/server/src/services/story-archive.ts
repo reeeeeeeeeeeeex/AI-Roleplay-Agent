@@ -16,7 +16,7 @@ const coverage = z.object({ startMessageId: ref, endMessageId: ref, storyTurnIds
 const usage = z.object({ input: z.number(), output: z.number(), cacheRead: z.number(), cacheWrite: z.number(), totalTokens: z.number(), reasoning: z.number().optional() })
   .transform(({ reasoning, ...rest }) => reasoning === undefined ? rest : { ...rest, reasoning }).nullable();
 const timing = z.object({ preparedAt: text, sentAt: text.nullable(), headersAt: text.nullable(), firstThinkingAt: text.nullable(), firstTextAt: text.nullable(), completedAt: text.nullable() }).nullable();
-const generationInfo = z.object({ mode: generationModeSchema, model: text, streaming: z.boolean(), thinking: text.nullable(), usage, timing, requestCount: z.number().int().nonnegative() }).nullable().default(null);
+const generationInfo = z.object({ mode: generationModeSchema.or(z.literal('manual')), model: text, streaming: z.boolean(), thinking: text.nullable(), usage, timing, requestCount: z.number().int().nonnegative() }).nullable().default(null);
 const assetUrl = /^\/api\/assets\/([a-f0-9]{64}\.(?:png|jpe?g|webp))$/u;
 const payloads: Record<string, z.ZodType> = {
   'checkpoint': z.object({ id: ref, head: maybeRef }),

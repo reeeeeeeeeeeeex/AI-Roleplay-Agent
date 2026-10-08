@@ -109,6 +109,12 @@ export const turnRequestSchema = z.object({
 });
 export type TurnRequest = z.infer<typeof turnRequestSchema>;
 
+export const manualMessageSchema = z.discriminatedUnion('role', [
+  z.object({ role: z.literal('user'), head: z.string().nullable(), input: z.object({ voice: userVoiceSchema, text: z.string().trim().min(1).max(100_000) }) }),
+  z.object({ role: z.literal('assistant'), head: z.string().nullable(), speaker: speakerRefSchema, text: z.string().trim().min(1).max(100_000) }),
+]);
+export type ManualMessageInput = z.infer<typeof manualMessageSchema>;
+
 export interface ConnectionSummary {
   id: string;
   name: string;
@@ -399,7 +405,7 @@ export interface RequestTiming {
 }
 
 export interface GenerationInfo {
-  mode: GenerationMode;
+  mode: GenerationMode | 'manual';
   model: string;
   streaming: boolean;
   thinking: string | null;
@@ -533,7 +539,7 @@ export interface TurnRecord {
   conversationId: string;
   storyTurnId: string;
   status: 'queued' | 'running' | 'partial' | 'completed' | 'failed' | 'cancelled';
-  trigger: 'normal' | 'regenerate' | 'continue' | 'auto';
+  trigger: 'normal' | 'regenerate' | 'continue' | 'auto' | 'manual';
   plan: TurnPlan | null;
   progress: TurnProgress | null;
   recordsStatus: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
