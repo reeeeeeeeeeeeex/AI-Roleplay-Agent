@@ -648,11 +648,36 @@ main {
   max-width: 840px;
 }
 
+.messages {
+  --avatar-width: 30px;
+  --avatar-height: 30px;
+  --avatar-radius: var(--radius-sm);
+}
+
+.messages.avatar-large {
+  --avatar-width: 58px;
+  --avatar-height: 80px;
+  --avatar-radius: var(--radius-md);
+}
+
+.messages.avatar-full {
+  --avatar-width: 80px;
+  --avatar-height: 112px;
+  --avatar-radius: var(--radius-md);
+}
+
+.avatar-column {
+  flex: 0 0 var(--avatar-width);
+  align-self: flex-start;
+  display: flex;
+  justify-content: center;
+}
+
 .avatar {
-  width: 30px;
-  height: 30px;
+  width: var(--avatar-width);
+  height: var(--avatar-height);
   flex-shrink: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--avatar-radius);
   border: 1px solid var(--border-default);
   display: flex;
   align-items: center;
@@ -662,45 +687,20 @@ main {
   font-size: 11px;
   font-weight: 500;
   overflow: hidden;
-  transition: width 0.15s ease, height 0.15s ease;
 }
 
 .avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top center;
-  transition: transform 0.15s;
-}
-
-.messages.avatar-large .avatar {
-  width: 58px;
-  height: 80px;
-  border-radius: var(--radius-md);
-}
-
-.messages.avatar-full .avatar {
-  width: 80px;
-  height: 112px;
-  border-radius: var(--radius-md);
-}
-
-.messages.avatar-fit-contain .avatar img {
-  object-fit: contain;
-  background: #00000030;
-}
-
-.messages.avatar-fit-cover .avatar img {
-  object-fit: cover;
-  object-position: top center;
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: calc(var(--avatar-width) - 2px);
+  max-height: calc(var(--avatar-height) - 2px);
 }
 
 .avatar.clickable {
+  width: fit-content;
+  height: fit-content;
   cursor: pointer;
-}
-
-.avatar.clickable:hover img {
-  transform: scale(1.05);
 }
 
 .message.user .avatar {
@@ -710,10 +710,13 @@ main {
 }
 
 .message.narration .avatar {
-  border-radius: 50%;
   background: transparent;
   border-color: var(--border-default);
   color: var(--text-muted);
+}
+
+.message.narration .avatar:not(.clickable) {
+  border-radius: 50%;
 }
 
 .message-body {

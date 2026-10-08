@@ -6,12 +6,11 @@ import AvatarField from './AvatarField';
 import ActionChoiceSettings from './ActionChoiceSettings';
 
 export type AvatarMode = 'compact' | 'large' | 'full';
-export type AvatarFit = 'cover' | 'contain';
 
 export default function SettingsModal({
   onClose, generalSettings, onSaveGeneral, generationActive, connections,
   onEditConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
-  avatarMode, setAvatarMode, avatarFit, setAvatarFit,
+  avatarMode, setAvatarMode,
   messageDisplayLimit, setMessageDisplayLimit, plainThinkingExpanded, setPlainThinkingExpanded,
 }: {
   onClose: () => void;
@@ -26,8 +25,6 @@ export default function SettingsModal({
   onSavePrompts: (value: PromptSettings) => Promise<void>;
   avatarMode: AvatarMode;
   setAvatarMode: (mode: AvatarMode) => void;
-  avatarFit: AvatarFit;
-  setAvatarFit: (fit: AvatarFit) => void;
   messageDisplayLimit: number;
   setMessageDisplayLimit: (limit: number) => void;
   plainThinkingExpanded: boolean;
@@ -251,14 +248,6 @@ export default function SettingsModal({
                 <option value="compact">紧凑标准</option>
                 <option value="large">大图立绘</option>
                 <option value="full">完整卡片</option>
-              </select>
-            </label>
-            <label>图片裁剪方式
-              <select value={avatarFit} onChange={e => {
-                setAvatarFit(e.target.value as AvatarFit); localStorage.setItem('avatar-fit', e.target.value);
-              }}>
-                <option value="cover">填充显示</option>
-                <option value="contain">完整显示</option>
               </select>
             </label>
           </div>}

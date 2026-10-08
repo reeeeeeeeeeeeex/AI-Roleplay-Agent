@@ -3,17 +3,20 @@ import { defaultGeneralSettings, type MessageNode } from '@new-ai-chat/contracts
 
 test.use({ serviceWorkers: 'block' });
 
-async function openHistory(page: Page, request: APIRequestContext, limit?: number) {
+async function openHistory(page: Page, request: APIRequestContext, limit?: number, avatar?: string) {
   const characters = await (await request.get('/api/characters')).json();
   const connections = await (await request.get('/api/connections')).json();
-  await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, connectionId: connections[0].id } });
+  await request.put('/api/settings/general', { data: {
+    ...defaultGeneralSettings, connectionId: connections[0].id,
+    narrator: { ...defaultGeneralSettings.narrator, avatarPath: avatar ?? null },
+  } });
   const chat = await (await request.post('/api/conversations', { data: { title: 'Chat display fixture', kind: 'solo', characterId: characters[0].id } })).json();
   const messages: MessageNode[] = Array.from({ length: 120 }, (_, index) => ({
     id: `display-${index}`, conversationId: chat.id, parentId: index ? `display-${index - 1}` : null,
     storyTurnId: null, role: index % 2 ? 'assistant' : 'user', authorKind: index % 2 ? 'narrator' : 'protagonist',
     speaker: index % 2 ? { kind: 'narrator' } : null,
-    content: `${index % 2 ? '回复' : '用户消息'} ${Math.floor(index / 2) + 1}\n` + '用于验证长聊天中的阅读位置。\n'.repeat(3),
-    generationInfo: index % 2 ? { mode: 'plain', model: 'offline-fixture', streaming: true, requestCount: 1, thinking: '模型返回的可见思考。', usage: null, timing: null } : null,
+    content: `${index % 2 ? '回复' : '用户消息'} ${Math.floor(index / 2) + 1}` + (avatar ? '' : '\n' + '用于验证长聊天中的阅读位置。\n'.repeat(3)),
+    generationInfo: index % 2 && !avatar ? { mode: 'plain', model: 'offline-fixture', streaming: true, requestCount: 1, thinking: '模型返回的可见思考。', usage: null, timing: null } : null,
     providerState: null, legacyPayload: null, createdAt: '2026-09-29T12:00:00.000Z',
   }));
   await page.route(`**/api/conversations/${chat.id}/messages`, route => route.fulfill({ json: { branch: messages, nodes: messages } }));
@@ -25,6 +28,101 @@ async function openHistory(page: Page, request: APIRequestContext, limit?: numbe
   await expect(page.locator('article.message')).toHaveCount(limit ?? 100);
   return messages;
 }
+
+function portraitSvg(width: number, height: number) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="#508080"/><path d="M0 0L${width} ${height}M${width} 0L0 ${height}" stroke="white" stroke-width="4"/></svg>`;
+}
+
+test('chat avatar keeps square framing despite legacy cropping and opens the original', async ({ page, request }) => {
+  await page.addInitScript(() => localStorage.setItem('avatar-fit', 'cover'));
+  await page.route('**/square-avatar.svg', route => route.fulfill({ contentType: 'image/svg+xml', body: portraitSvg(400, 400) }));
+  await openHistory(page, request, 20, '/square-avatar.svg');
+  const avatar = page.locator('.message.narration .avatar').last();
+  await expect(avatar.locator('img')).toHaveJSProperty('naturalWidth', 400);
+  const box = (await avatar.boundingBox())!;
+  expect(box.width).toBe(58);
+  expect(box.height).toBe(box.width);
+  await avatar.hover();
+  await expect(avatar.locator('img')).toHaveCSS('transform', 'none');
+  await avatar.click();
+  await expect(page.getByAltText('角色大图立绘')).toHaveAttribute('src', '/square-avatar.svg');
+  await page.locator('.lightbox-modal').click();
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '通用设置' });
+  await settings.getByRole('button', { name: '外观', exact: true }).click();
+  await expect(settings.getByLabel('图片裁剪方式')).toHaveCount(0);
+  await expect(settings.getByLabel('头像尺寸')).toHaveValue('large');
+});
+
+test('chat avatar bounds a tall portrait without distorting or circularly cropping it', async ({ page, request }) => {
+  await page.addInitScript(() => localStorage.setItem('avatar-mode', 'full'));
+  await page.route('**/tall-avatar.svg', route => route.fulfill({ contentType: 'image/svg+xml', body: portraitSvg(200, 2000) }));
+  await openHistory(page, request, 20, '/tall-avatar.svg');
+  const avatar = page.locator('.message.narration .avatar').last();
+  const image = avatar.locator('img');
+  await expect(image).toHaveJSProperty('naturalHeight', 2000);
+  const imageBox = (await image.boundingBox())!;
+  const frame = (await avatar.boundingBox())!;
+  const column = (await page.locator('.message.narration .avatar-column').last().boundingBox())!;
+  expect(imageBox.width / imageBox.height).toBeCloseTo(0.1, 2);
+  expect(frame.height).toBe(112);
+  expect(frame.width).toBeLessThan(80);
+  expect(frame.x + frame.width / 2).toBeCloseTo(column.x + column.width / 2, 1);
+  expect(await avatar.evaluate(element => getComputedStyle(element).borderRadius)).not.toBe('50%');
+});
+
+test('chat avatar preserves a wide image and aligned message columns on a narrow screen', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => localStorage.setItem('avatar-mode', 'compact'));
+  await page.route('**/wide-avatar.svg', route => route.fulfill({ contentType: 'image/svg+xml', body: portraitSvg(800, 200) }));
+  await openHistory(page, request, 20, '/wide-avatar.svg');
+  const avatar = page.locator('.message.narration .avatar').last();
+  await expect(avatar.locator('img')).toHaveJSProperty('naturalWidth', 800);
+  const image = (await avatar.locator('img').boundingBox())!;
+  expect(image.width / image.height).toBeCloseTo(4, 2);
+  expect((await avatar.boundingBox())!.width).toBe(30);
+  const assistantBody = (await page.locator('.message.narration .message-body').last().boundingBox())!;
+  const userBody = (await page.locator('.message.user .message-body').last().boundingBox())!;
+  expect(assistantBody.x).toBe(userBody.x);
+  const region = page.getByRole('region', { name: '聊天记录' });
+  expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test('chat avatar delayed loading follows the latest message without interrupting earlier reading', async ({ page, request }) => {
+  await page.addInitScript(() => localStorage.setItem('avatar-mode', 'full'));
+  let release!: () => void;
+  let ready = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/delayed-avatar.svg', async route => {
+    await ready;
+    await route.fulfill({ contentType: 'image/svg+xml', body: portraitSvg(200, 2000) });
+  });
+  try {
+    await openHistory(page, request, 20, '/delayed-avatar.svg');
+    const region = page.getByRole('region', { name: '聊天记录' });
+    const distanceFromBottom = () => region.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight);
+    await expect.poll(distanceFromBottom).toBeLessThan(2);
+    const beforeHeight = await region.evaluate(element => element.scrollHeight);
+    release();
+    await expect(page.locator('.message.narration .avatar img').last()).toHaveJSProperty('naturalHeight', 2000);
+    await expect.poll(() => region.evaluate(element => element.scrollHeight)).toBeGreaterThan(beforeHeight);
+    await expect.poll(distanceFromBottom).toBeLessThan(2);
+
+    ready = new Promise<void>(resolve => { release = resolve; });
+    await page.reload();
+    await expect(page.locator('article.message')).toHaveCount(20);
+    await page.getByRole('navigation', { name: '最近 20 条用户消息' }).getByRole('button', { name: '跳转到用户消息 52', exact: true }).click();
+    await expect(page.getByRole('button', { name: '回到最新 ↓' })).toBeVisible();
+    const anchor = page.locator('#message-display-102');
+    const beforeTop = (await anchor.boundingBox())!.y;
+    release();
+    await expect(page.locator('.message.narration .avatar img').first()).toHaveJSProperty('naturalHeight', 2000);
+    // Scroll offsets round to pixels while element geometry retains fractions.
+    await expect.poll(async () => Math.abs((await anchor.boundingBox())!.y - beforeTop)).toBeLessThan(1);
+    await expect(page.getByRole('button', { name: '回到最新 ↓' })).toBeVisible();
+  } finally {
+    release();
+  }
+});
 
 test('opening and reentering a conversation starts at its latest message', async ({ page, request }) => {
   let releaseSettings!: () => void;

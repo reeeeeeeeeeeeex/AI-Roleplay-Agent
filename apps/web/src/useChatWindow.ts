@@ -67,6 +67,13 @@ export function useChatWindow(messages: MessageNode[], chatId: string | null, li
     setWindow({ chatId, limit, firstId: null });
   }
 
+  function onAvatarLoad() {
+    const element = container.current;
+    if (!element || !followBottom.current || pending.current) return;
+    element.scrollTop = element.scrollHeight;
+    updatePosition();
+  }
+
   function scrollToMessage(id: string) {
     const index = messages.findIndex(message => message.id === id);
     if (index < 0) return;
@@ -94,5 +101,5 @@ export function useChatWindow(messages: MessageNode[], chatId: string | null, li
     updatePosition();
   }, [messages, window, chatId, limit, drafts, layout]);
 
-  return { container: attachContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom, olderCount: start, loadOlder, onScroll, scrollToLatest, scrollToMessage };
+  return { container: attachContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom, olderCount: start, loadOlder, onScroll, onAvatarLoad, scrollToLatest, scrollToMessage };
 }

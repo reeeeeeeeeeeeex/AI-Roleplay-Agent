@@ -9,7 +9,7 @@ import ContextReport from './ContextReport.js';
 import StoryNavigation from './StoryNavigation.js';
 import StoryImport from './StoryImport.js';
 import InlineEdit from './InlineEdit.js';
-import SettingsModal, { type AvatarMode, type AvatarFit } from './SettingsModal.js';
+import SettingsModal, { type AvatarMode } from './SettingsModal.js';
 import MessageNavigation from './MessageNavigation.js';
 import { useChatWindow } from './useChatWindow.js';
 import ActionChoices from './ActionChoices.js';
@@ -93,7 +93,6 @@ export default function App() {
 
   // Appearance preferences are local to this browser.
   const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => (localStorage.getItem('avatar-mode') as AvatarMode) || 'large');
-  const [avatarFit, setAvatarFit] = useState<AvatarFit>(() => (localStorage.getItem('avatar-fit') as AvatarFit) || 'cover');
   const [messageDisplayLimit, setMessageDisplayLimit] = useState(() => {
     const value = Number(localStorage.getItem('chat-message-display-limit'));
     return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : 100;
@@ -102,8 +101,8 @@ export default function App() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const { container: messageContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom,
-    olderCount, loadOlder, onScroll, scrollToLatest, scrollToMessage } = useChatWindow(
-    branch, chatId, messageDisplayLimit, drafts, `${page}:${avatarMode}:${avatarFit}:${plainThinkingExpanded}`,
+    olderCount, loadOlder, onScroll, onAvatarLoad, scrollToLatest, scrollToMessage } = useChatWindow(
+    branch, chatId, messageDisplayLimit, drafts, `${page}:${avatarMode}:${plainThinkingExpanded}`,
   );
   const streamAbort = useRef<AbortController | null>(null);
 
@@ -690,7 +689,7 @@ export default function App() {
               <button disabled={!!turn || sending} onClick={() => act(setHistoryStart(null))}>取消固定起点</button>
             </div>}
             <div className="messages-wrap">
-            <section ref={messageContainer} className={`messages avatar-${avatarMode} avatar-fit-${avatarFit}`} aria-label="聊天记录"
+            <section ref={messageContainer} className={`messages avatar-${avatarMode}`} aria-label="聊天记录"
               onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && event.currentTarget.scrollTop < 100) loadOlder(); }}>
               {olderCount > 0 && <button className="messages-older" onClick={loadOlder}>显示更早的消息（还有 {olderCount} 条）</button>}
               {!branch.length && (
@@ -714,13 +713,13 @@ export default function App() {
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
                   <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={messageRenderKey(m.id)} id={`message-${m.id}`} data-message-id={m.id}>
-                    <div
+                    <div className="avatar-column"><div
                       className={`avatar ${avatar ? 'clickable' : ''}`}
                       onClick={() => { if (avatar) setPreviewImage(avatar); }}
                       title={avatar ? '点击查看大图立绘' : undefined}
                     >
                       {avatar ? (
-                        <img src={avatar} alt="" loading="lazy" />
+                        <img src={avatar} alt="" loading="lazy" onLoad={onAvatarLoad} />
                       ) : narrator ? (
                         '旁'
                       ) : m.role === 'user' ? (
@@ -728,7 +727,7 @@ export default function App() {
                       ) : (
                         speakerName(m.speaker).slice(0, 1)
                       )}
-                    </div>
+                    </div></div>
                     <div className="message-body">
                       <header>
                         <strong>
@@ -806,7 +805,7 @@ export default function App() {
               })}
               {Object.values(drafts).map(draft => (
                 <article className="message streaming" key={draft.outputIndex}>
-                  <div className="avatar">...</div>
+                  <div className="avatar-column"><div className="avatar">...</div></div>
                   <div className="message-body">
                     <header>
                       <strong>{speakerName(draft.speaker)}</strong>
@@ -1140,8 +1139,6 @@ export default function App() {
         }}
         avatarMode={avatarMode}
         setAvatarMode={setAvatarMode}
-        avatarFit={avatarFit}
-        setAvatarFit={setAvatarFit}
         messageDisplayLimit={messageDisplayLimit}
         setMessageDisplayLimit={value => { setMessageDisplayLimit(value); localStorage.setItem('chat-message-display-limit', String(value)); }}
         plainThinkingExpanded={plainThinkingExpanded}
