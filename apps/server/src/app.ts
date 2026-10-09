@@ -86,7 +86,15 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     const heartbeat=setInterval(()=>{ if(!reply.raw.destroyed)reply.raw.write(': heartbeat\n\n'); },15_000);
     reply.raw.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
   });
-  await app.register(fastifyStatic,{root:config.assetDir,prefix:'/api/assets/',decorateReply:false,allowedPath:(path)=>/^[a-f0-9]{64}\.(png|jpe?g|webp)$/u.test(path.replace(/^\//u,''))});
+  await app.register(async assets => {
+    assets.addHook('onSend', async (_request, reply, payload) => {
+      // Asset names identify their bytes; replacements get a different URL.
+      // Keep private images out of shared proxy caches and never cache errors.
+      if ([200, 206, 304].includes(reply.statusCode)) reply.header('Cache-Control', 'private, max-age=31536000, immutable');
+      return payload;
+    });
+    await assets.register(fastifyStatic,{root:config.assetDir,prefix:'/api/assets/',decorateReply:false,allowedPath:(path)=>/^[a-f0-9]{64}\.(png|jpe?g|webp)$/u.test(path.replace(/^\//u,''))});
+  });
   if(existsSync(config.webDist)) {
     await app.register(fastifyStatic,{root:config.webDist,prefix:'/'});
     app.setNotFoundHandler((req,reply)=> req.url.startsWith('/api/') ? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') }) : reply.sendFile('index.html'));

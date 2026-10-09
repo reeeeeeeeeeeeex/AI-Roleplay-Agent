@@ -51,6 +51,39 @@ it('successful startup recovers interrupted generation after acquiring the port'
   expect(server.repository.getTurn(turn.id)).toMatchObject({ status: 'failed', recordsStatus: 'cancelled', error: 'Server restarted during generation.' });
 });
 
+it('local image caching keeps uploaded replacements at distinct URLs', async () => {
+  const original = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('original-image-fixture')]);
+  const upload = await server.app.inject({ method: 'POST', url: '/api/assets/upload', headers: { 'content-type': 'application/octet-stream' }, payload: original });
+  expect(upload.statusCode).toBe(200);
+  const firstUrl = upload.json().url;
+  const first = await server.app.inject({ url: firstUrl });
+  expect(first.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+  expect(first.rawPayload).toEqual(original);
+  const replacement = Buffer.concat([original, Buffer.from('-replacement')]);
+  const replaced = await server.app.inject({ method: 'POST', url: '/api/assets/upload', headers: { 'content-type': 'application/octet-stream' }, payload: replacement });
+  expect(replaced.json().url).not.toBe(firstUrl);
+  expect((await server.app.inject({ url: replaced.json().url })).rawPayload).toEqual(replacement);
+  expect((await server.app.inject({ url: firstUrl })).rawPayload).toEqual(original);
+});
+
+it('local image caching preserves pairing and no-store responses for private APIs and errors', async () => {
+  const config = server.config;
+  await server.app.close();
+  const token = 'offline-pairing-fixture-token';
+  server = await createApp({ ...config, pairingToken: token }, runtime);
+  const name = 'b'.repeat(64) + '.png';
+  writeFileSync(join(work, 'assets', name), Buffer.from('image-fixture'));
+  const denied = await server.app.inject({ url: `/api/assets/${name}` });
+  expect(denied.statusCode).toBe(401);
+  expect(denied.headers['cache-control']).toBe('no-store');
+  const headers = { authorization: `Bearer ${token}` };
+  expect((await server.app.inject({ url: `/api/assets/${name}`, headers })).headers['cache-control']).toContain('private');
+  expect((await server.app.inject({ url: '/api/settings/general', headers })).headers['cache-control']).toBe('no-store');
+  const missing = await server.app.inject({ url: `/api/assets/${'c'.repeat(64)}.png`, headers });
+  expect(missing.statusCode).toBe(404);
+  expect(missing.headers['cache-control']).toBe('no-store');
+});
+
 it('web copy previews plain prose and saves one User at the expected head without generation', async () => {
   const network = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', network);
   const input = { voice: 'narrator', text: '网页写作本轮输入' };
