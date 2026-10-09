@@ -876,7 +876,7 @@ export default function App() {
               <small>{{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}</small>
             </div>
 
-            <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
+            <StoryNavigation key={chat.id} chatId={chat.id} title={chat.title} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
             {showSearch && <MessageSearch key={chat.id} inputRef={searchInput} messages={branch} onClose={closeSearch}
               onMatch={id => { setSearchMatchId(id); if (id) scrollToMessage(id); }} />}
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">

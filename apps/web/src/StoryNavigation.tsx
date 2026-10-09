@@ -5,8 +5,8 @@ import { api } from './api.js';
 import AutoSaveField from './AutoSaveField.js';
 import { flushContentEdits } from './useContentAutosave.js';
 
-export default function StoryNavigation({ chatId, head, version, disabled, onJump, onChanged, onError }: {
-  chatId: string; head: string | null; version: number; disabled: boolean;
+export default function StoryNavigation({ chatId, title, head, version, disabled, onJump, onChanged, onError }: {
+  chatId: string; title: string; head: string | null; version: number; disabled: boolean;
   onJump: (id: string) => Promise<void>; onChanged: () => void; onError: (message: string) => void;
 }) {
   const [data, setData] = useState<Navigation | null>(null);
@@ -22,7 +22,9 @@ export default function StoryNavigation({ chatId, head, version, disabled, onJum
       const response = await fetch(`/api/conversations/${chatId}/export?format=${format}`);
       if (!response.ok) { const body = await response.json(); throw new Error(diagnosticText(body.errorText, body.error ?? t("导出失败"))); }
       const url = URL.createObjectURL(await response.blob());
-      const link = document.createElement('a'); link.href = url; link.download = `story-${chatId.slice(0, 8)}.${format === 'markdown' ? 'md' : 'airp.json'}`; link.click();
+      // Keep multilingual names short enough for common filesystems; the prefix avoids reserved device names.
+      const name = Array.from(title.trim().replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_')).slice(0, 48).join('');
+      const link = document.createElement('a'); link.href = url; link.download = `story-${name ? `${name}-` : ''}${chatId.slice(0, 8)}.${format === 'markdown' ? 'md' : 'airp.json'}`; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { onError((error as Error).message); }
   }
