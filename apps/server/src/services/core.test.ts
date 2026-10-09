@@ -120,6 +120,8 @@ it('compact chat history reads once and keeps full active prose without duplicat
   const original = repo.createMessage({ conversationId: chat, parentId: user.id, storyTurnId: 'turn', role: 'assistant', authorKind: 'character', speaker: { kind: 'character', characterId: character }, content: 'Original story. '.repeat(300), providerState: { private: 'provider-state' }, legacyPayload: { private: 'legacy-content' }, generationInfo: { mode: 'plain', model: 'offline', streaming: true, thinking: 'Visible thinking. '.repeat(300), usage: null, timing: null, requestCount: 1 } });
   const active = repo.createMessage({ ...original, content: 'Current story. '.repeat(300) });
   repo.setHead(chat, active.id);
+  expect(repo.getActiveBranch(chat)).toEqual([user, active]);
+  expect(repo.getActiveBranch(chat, original.id)).toEqual([user, original]);
   const reads = vi.spyOn(repo, 'listMessages');
   const full = await server.app.inject({ url: `/api/conversations/${chat}/messages` });
   expect(full.statusCode).toBe(200);
@@ -134,6 +136,13 @@ it('compact chat history reads once and keeps full active prose without duplicat
   expect(compact.body).not.toContain('provider-state');
   expect(compact.body).not.toContain('legacy-content');
   expect(compact.rawPayload.length).toBeLessThan(full.rawPayload.length / 2);
+});
+
+it('active history rejects cyclic message parents', () => {
+  const repo = server.repository;
+  const message = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: 'Offline cycle guard', providerState: null, legacyPayload: null });
+  repo.database.sqlite.prepare('UPDATE messages SET parent_id = ? WHERE id = ?').run(message.id, message.id);
+  expect(() => repo.getActiveBranch(chat, message.id)).toThrow('Cycle in message branch.');
 });
 
 it('web copy previews plain prose and saves one User at the expected head without generation', async () => {

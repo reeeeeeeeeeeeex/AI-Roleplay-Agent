@@ -359,7 +359,16 @@ export class Repository {
   }
   getActiveBranch(conversationId: string, headMessageId = this.getConversation(conversationId)?.headMessageId, nodes?: MessageNode[]): MessageNode[] {
     if (!headMessageId) return [];
-    const all = new Map((nodes ?? this.listMessages(conversationId)).map((message) => [message.id, message]));
+    // Follow IDs first so alternate versions' prose and provider state are never decoded.
+    // UNION terminates corrupt cycles; the traversal below still reports them as errors.
+    const ancestors = sql`(WITH RECURSIVE branch(id, parent_id) AS (
+      SELECT id, parent_id FROM messages WHERE id = ${headMessageId} AND conversation_id = ${conversationId}
+      UNION
+      SELECT parent.id, parent.parent_id FROM messages AS parent JOIN branch ON parent.id = branch.parent_id
+      WHERE parent.conversation_id = ${conversationId}
+    ) SELECT id FROM branch)`;
+    const selected = nodes ?? this.database.db.select().from(messages).where(inArray(messages.id, ancestors)).all().map(mapMessage);
+    const all = new Map(selected.map((message) => [message.id, message]));
     const branch: MessageNode[] = []; let current = all.get(headMessageId);
     const visited = new Set<string>();
     while (current) { if (visited.has(current.id)) throw new AppError("Cycle in message branch."); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }
