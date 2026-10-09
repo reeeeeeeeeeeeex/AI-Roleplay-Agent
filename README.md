@@ -1,84 +1,157 @@
-# New AI Chat · v0.2 Alpha
+# New AI Chat
 
-本地优先的 AI 角色扮演 WebUI。前端、后端、契约与 Agent 业务使用 TypeScript；原酒馆目录不被修改，不复制 SillyTavern 源码。
+**把角色、世界与平行故事，放进自己的创作空间。**
 
-## 直接运行
+**A local workspace for characters, worlds, and parallel stories.**
 
-安装依赖并构建后，双击 **Start.cmd**，会自动打开 [本地 WebUI](http://127.0.0.1:4310)。
+[中文](#zh-cn) · [English](#english) · [Architecture / 架构](docs/ARCHITECTURE.md)
 
-第一次使用：
+<a id="zh-cn"></a>
 
-1. 在「导入故事」扫描 SillyTavern 数据目录，查看预览后确认导入。请填写自己的 SillyTavern 数据目录；也可导入本项目的原生故事包。
-2. 在左下角「通用设置 → 模型」创建并选择连接，填写协议、Base URL、模型 ID 和你自己的 API Key。所有聊天统一使用它；导入不迁移旧 API Key。
-3. 在左下角主角入口设置默认 Persona，或在「故事资料」绑定当前故事的主角。故事资料只保存角色、主角、世界书和场景等内容。
-4. 默认普通写作、流式开启；单聊 Auto 使用当前角色，普通群聊需指定回复者。输入框可切换「主角 / 用户旁白」。
-5. 需要工具选人或前置规划时，在「通用设置 → 写作」选择 Writer Agent 或 Planner＋Writer。
+## 中文
 
-**Demo.cmd** 使用独立的演示数据库和假模型，完全不调用 API。演示中的回答是固定测试文本，不代表模型质量。真实模式与演示模式默认都占用 4310 端口，不能同时使用同一端口。
+New AI Chat 是一个**本地优先的角色扮演与长篇故事创作 WebUI**。它围绕角色、世界设定、剧情分支和长期记录组织写作，让故事可以持续发展，也可以随时探索另一种走向。
 
-## 从源码运行
+你可以连接模型 API 与角色共同创作，也可以自己写完整个故事，或将提示词复制到 AI 网页，再把回复粘贴回来。聊天、设定和记录保存在本机；使用 API 时，选入请求的内容会发送给你配置的服务商。
 
-需要 Node.js 24、pnpm 11。命令在项目根目录执行：
+项目遵循 **Minimalist**：清楚的创作流程、直接的内容编辑，以及能解释来源的上下文。目前处于 **Alpha**，界面以中文为主，功能和数据格式仍在演进。
 
-~~~powershell
+### 能用它做什么
+
+- **围绕角色写故事**：角色卡、主角 Persona、群聊与常驻旁白共同构成场景；支持普通写作、Writer Agent 和 Planner＋Writer。
+- **探索平行剧情**：从任意 Assistant 消息建立独立故事分支，在侧栏或分支列表切换；也可以为某条回复生成其他版本或定向改写。
+- **维持长篇连续性**：世界书提供背景知识，Memory 保存阶段记忆，六张主角状态表记录当前事实；用户固定的事实由用户维护。
+- **自由决定谁发言**：输入身份可选主角、用户旁白或角色。手动模式允许连续录入同一种身份，无须强制交替。
+- **掌握写作方向**：每个故事有独立作者注释；主角控制可选保护主角、共同创作或“无”。五项通用提示词可以保存为预设。
+- **看清实际请求**：预览 Gateway 捕获的原始请求 Body，查看上下文选择、生成 Trace 和供应商返回的用量；估算 token 与实际用量分开展示。
+- **带走自己的故事**：支持 Markdown 导出、包含本地图片的原生故事包，以及 SillyTavern 角色卡、聊天、世界书等数据的只读导入。
+
+### 快速开始
+
+需要 **Node.js 24** 和 **pnpm 11**；具体 pnpm 版本以根目录 `package.json` 的 `packageManager` 为准。在仓库根目录执行：
+
+```sh
 pnpm install --frozen-lockfile
 pnpm build
 pnpm start
-~~~
+```
 
-开发：pnpm dev（前端 5173，后端 4310）；开发演示：pnpm demo。
+打开 **[http://127.0.0.1:4310](http://127.0.0.1:4310)**。Windows 用户安装依赖并构建后，也可以双击 [`Start.cmd`](Start.cmd) 启动并自动打开页面。
 
-关闭启动终端或按 Ctrl+C 可停止服务。项目代码变更后重新执行 pnpm build；Start.cmd 只在没有前端构建时自动构建。
+第一次使用：
 
-## 已实现的主流程
+1. 创建角色和主角资料，或从「导入故事」导入现有数据。
+2. 使用 API 写作时，在「通用设置 → 模型」添加并选择连接。支持 **Chat Completions、Anthropic Messages、OpenAI Responses**；填写对应协议的实际 API Base URL、模型 ID 和自己的密钥。
+3. 开启故事，按需要绑定主角、世界书和场景，在聊天顶部填写作者注释。
+4. 发送主角行动或用户旁白，让角色回应；想手动创作时，开启输入框上方的全局手动输入开关。
 
-- 三种协议：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses。Pi AI / Pi Agent Core 精确固定为 0.85.0，隔离在 agent-runtime 包。
-- 普通写作一次正文请求、不带工具；Writer Agent 同一会话选人与写作，Planner 可选。支持显式回复者、选人失败回退、取消和可重放 SSE。
-- 每个聊天都有不可删除的旁白；名称、头像、风格和主角权限在通用设置统一控制。
-- 「通用设置 → 写作」直接显示保护主角和共同创作的原始提示词，可分别编辑、恢复默认并保存；模型只收到当前模式的提示词。模型中的 User 指用户扮演的主角，Assistant 指其他角色和旁白。
-- 用户旁白以 user 发送，AI 旁白以 assistant 发送；protected / coauthor 模式同时约束角色和旁白 Writer。
-- 一轮最多两条连续消息，共享 storyTurnId；第二个 Writer 能读取第一个 Writer 的成文。
-- 每条完整回复立即保存。第二条失败时保留第一条，可在原分支「重试剩余回复」；未完成片段只供查看和复制，不进入剧情。正文完成和 Memory／状态更新独立结算，重启不自动重发请求。
-- 分支树、Swipe、整轮 regenerate、单消息 continue、消息编辑与旧分支恢复。旧节点不被覆盖。
-- 回复可「按要求改写」为新 Swipe，旧文保留；书签引用原节点，切换时同时恢复该分支的 Memory、状态和固定事实。
-- 按故事保留浏览器草稿；上翻阅读时暂停自动滚动，可一键回到最新。
-- Lore 检索、七表主角状态及检查点、Planner 提案应用／拒绝／撤销。Memory 标注实际覆盖范围，只总结未覆盖的完整回合；用户维护的固定事实不被自动摘要覆盖。
-- 默认读取最近两阶段 Memory 加最多三条本地关键词命中的旧记录；Agent 可用只读 search_memory。无向量数据库或额外检索模型调用。
-- Memory 默认每 10 个完整回合更新；状态自动更新默认关闭。失败可重试，双输出不重复计数。
-- 实际首请求预览和 Trace 展示 Gateway 捕获的原始 Body，旁边提供真实检索／裁剪产生的上下文说明；分项 token 为估算，供应商用量是实际统计。
-- 「场景与书签」可导出当前分支 Markdown，或包含全部分支、生成信息、记录、书签、引用资料及本地图片的原生 JSON 包。导入先预览，在事务中新建故事，不覆盖原故事。
-- V2/V3 PNG 角色卡、Persona、世界书、聊天、Swipe、群组、Memory、状态和旧 Narrative Agent 历史的只读导入；逐文件哈希去重。
-- React 响应式界面与 PWA 静态应用外壳。没有聊天 API 离线缓存。
+**先体验、不接 API：** 运行 `pnpm demo`，打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)；Windows 也可双击 [`Demo.cmd`](Demo.cmd)，使用构建后的 4310 页面。两者使用独立演示数据和假模型，回复是测试文本。演示与真实服务默认共用后端端口 4310，请勿同时启动。
 
-这是用于接真实模型和打磨行为的 **Alpha**，不是与旧酒馆全部功能等价的稳定版。固定事实是故事约束，不是严格的角色秘密隔离；本版没有后台自动调用或自动备份调度。
+### 两种创作方式
 
-## 数据与安全
+| | API 写作 | 手动创作 / AI 网页回填 |
+| --- | --- | --- |
+| 主角、用户旁白发送 | 保存 User 消息，然后生成回复 | 只保存 User 消息 |
+| 「角色」发送 | 保存手动 Assistant 正文 | 保存手动 Assistant 正文 |
+| 主角／用户旁白身份下空白发送 | 回复末尾 User；否则新增续写 | 不执行动作 |
+| 连续发言 | 可在任意末尾追加 User 输入 | 三种身份均可连续录入 |
 
-默认只监听 127.0.0.1。生产数据库在 apps/server/data/new-ai-chat.db，资源在 apps/server/data/assets；演示分别使用 demo.db、demo-assets。
+网页回填流程：**填写输入 → 预览 → 复制网页提示词 → 手动粘贴到 AI 网页 → 将回复填入「角色」并发送**。复制成功时，尚未发送的 User 输入会同步保存；已保存的输入不会再复制成一条新消息。网页提示词是整理后的普通文本，不等同于网页产品真正的 System 消息。
 
-可选配置放在根目录 .env，格式参考 .env.example。通过 pnpm start/dev/demo 或启动脚本运行时会加载它。相对数据路径以 apps/server 为基准。不要提交 .env 或 data。
+手动输入开关**全局生效，默认关闭**，它只改变发送行为。主动点击行动选项生成、续写、改写或重试，仍可能调用 API；Memory／状态也会按各自的自动更新间隔调用记录模型。两者可共用一个独立记录模型连接。连续 User 在角色回复后结算为一轮，连续 Assistant 则每条另算一轮。Memory 默认每 10 轮更新，状态自动更新默认关闭。
 
-API Key / 自定义请求头只存本机 SQLite，REST 列表不会返回其值，错误会脱敏。**本地数据库没有加密**，应保护系统账户与备份。停止服务后备份整个 apps/server/data 目录；运行中不要仅复制 .db 文件而忽略 WAL。
+### 日常使用与数据
 
-流式请求不向 CMD 打印 raw input/output；非流式打印实际原始 Body，始终不输出认证 Header。原生故事包不含连接、认证信息、Trace、任务或 opaque provider state，也不会抓取外部图片链接；它是故事迁移包，不是整库备份。
+内容通常直接点击编辑，失焦自动保存；通用设置和提示词保留显式保存。选择提示词预设只载入草稿，点击「保存提示词」后才生效。保存失败会保留编辑草稿。
 
-局域网需要显式设置 HOST=0.0.0.0 和 24–256 位 URL-safe PAIRING_TOKEN。客户端先配对，后续使用 HttpOnly / SameSite=Strict Cookie。默认 HTTP 不加密局域网流量，只适合可信网络；不要直接暴露公网，也不自动修改防火墙。
+**分支与删除不同：** 分支复制截至所选消息的故事与记录，原聊天继续保留；删除会永久移除当前聊天从该消息起的后续内容，包括同一聊天内对应位置之后的旧版本，并恢复保留位置的记录。其他独立聊天不受影响。
 
-模型只会接收当前聊天的运行时故事上下文。Writer 不提供 Shell、文件系统、任意网络或 MCP 工具。导入不会加载扩展、主题、连接预设或运行时缓存；未知卡片/世界书字段保留为非运行时 legacyPayload。高级 Tavern 宏不执行。
+- 数据默认位于 `apps/server/data/`。备份前停止服务，复制整个目录；原生故事包用于迁移故事，不是整库备份。
+- 密钥和自定义请求头保存在本地 SQLite，数据库**未加密**。不要公开数据库、`.env`、含故事正文的日志或私人导出包。
+- 默认仅监听本机。局域网配置、配对和日志行为见[架构文档](docs/ARCHITECTURE.md#zh-cn)。PWA 可安装为应用外壳，聊天仍需要本地服务运行。
+- 改动代码后重新运行 `pnpm build`，重启服务，并刷新或重开应用。`Start.cmd` 只在缺少网页构建时自动构建。
 
-## 验证命令
+### 开发与项目状态
 
-~~~powershell
-pnpm typecheck
+全 TypeScript monorepo：**React + Vite** 前端、**Fastify** 服务端、**SQLite + Drizzle** 存储，模型适配隔离在独立运行时包中。开发使用 `pnpm dev`，前端默认 5173、后端 4310。
+
+模块结构、请求生命周期、分支与记录机制，以及验证方式见 **[架构与开发说明](docs/ARCHITECTURE.md#zh-cn)**。提交问题时，请提供复现步骤、使用协议和脱敏错误；提交改动时遵循 [AGENTS.md](AGENTS.md)，使用与改动相关的少量离线验证。
+
+这是独立实现的项目，支持导入不代表完整复刻 SillyTavern 的扩展和宏行为。主角控制依靠提示词约束，模型结果仍需阅读检查。目前未提供第三方插件市场、云端多用户托管或内置离线模型。
+
+**发布状态：项目许可证待确定，仓库目前未包含 `LICENSE`。** 第三方依赖和来源信息见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+---
+
+<a id="english"></a>
+
+## English
+
+New AI Chat is a **local-first WebUI for roleplay and long-form storytelling**. It brings characters, worldbuilding, parallel story branches, and persistent story records into one workspace, so you can develop a story over time and explore different outcomes.
+
+Connect a model API to write with your characters, write every voice yourself, or copy a prompt to an AI website and paste the reply back. Chats, settings, and records are stored on your machine. When you use an API, the content selected for that request is sent to your configured provider.
+
+The project follows a **Minimalist** approach: clear writing workflows, direct editing, and inspectable context. It is currently **Alpha**. The interface is primarily Chinese, and features and data formats are still evolving.
+
+### What you can do
+
+- **Write with a cast:** character cards, a protagonist Persona, group chats, and a persistent narrator. Choose plain writing, Writer Agent, or Planner＋Writer.
+- **Explore parallel stories:** branch from any Assistant message into an independent chat, switch between stories, or create alternate versions and targeted rewrites of individual replies.
+- **Maintain continuity:** lorebooks supply world knowledge, Memory stores stage summaries, and six protagonist-state tables track current facts. Pinned facts remain under your control.
+- **Choose who speaks:** enter protagonist actions, user narration, or character replies. Manual mode allows consecutive messages from the same voice.
+- **Set the direction:** use a per-story author's note, protagonist protection / coauthor / none modes, and presets for the five general prompt fields.
+- **Inspect requests:** preview the actual request body captured at the Gateway, examine context selection and generation traces, and distinguish token estimates from provider-reported usage.
+- **Keep your stories portable:** export Markdown or native story packages with local images; import supported SillyTavern cards, chats, lorebooks, and related data without modifying the source directory.
+
+### Quick start
+
+Install **Node.js 24** and **pnpm 11**. The root `package.json` pins the pnpm version in `packageManager`. From the repository root:
+
+```sh
+pnpm install --frozen-lockfile
 pnpm build
-pnpm exec vitest run apps/server/src/services/core.test.ts -t "v0.2"
-pnpm --filter @new-ai-chat/web exec playwright test --grep "v0.2"
-~~~
+pnpm start
+```
 
-v0.2 只运行七项核心场景和一条浏览器流程；旧重复场景已合并，不默认执行全量回归。Playwright 在 Windows 默认使用安装好的 Edge。其他环境可设置 PLAYWRIGHT_CHANNEL，并安装对应 Playwright 浏览器。端到端测试监听 4319，使用临时数据库与假模型。
+Open **[http://127.0.0.1:4310](http://127.0.0.1:4310)**. On Windows, after installing dependencies and building, [`Start.cmd`](Start.cmd) starts the app and opens the browser.
 
-真实模型测试默认跳过；只有显式设置 REAL_API_TESTS=1 以及 TEST_CHAT / TEST_ANTHROPIC / TEST_RESPONSES 三组 BASE_URL、MODEL、API_KEY 环境变量才运行。REAL_AGENCY_EVALS=1 还会额外启用主角权限模型评测，产生 Writer 和评判模型调用费用。不要把真实 Key 写进测试文件。
+1. Create a character and protagonist profile, or import existing data through **Import Stories / 导入故事**.
+2. For API writing, add and select a connection in **General Settings → Models / 通用设置 → 模型**. Supported protocols are **Chat Completions, Anthropic Messages, and OpenAI Responses**. Supply the actual API base URL for that protocol, a model ID, and your own key.
+3. Start a story, attach a Persona and lorebooks as needed, and add scene details or an author's note.
+4. Send a protagonist action or user narration to generate a reply. Enable the global manual-input switch above the composer when writing manually.
 
-## 架构与扩展
+**Try it without an API:** run `pnpm demo` and open [http://127.0.0.1:5173](http://127.0.0.1:5173). On Windows, [`Demo.cmd`](Demo.cmd) serves the built app on port 4310. Both use separate demo data and a fake model with test replies. Demo and real mode share backend port 4310 by default, so run only one at a time.
 
-见 [架构说明](docs/ARCHITECTURE.md) 和 [第三方说明](THIRD_PARTY_NOTICES.md)。这是新的本地项目，尚未选择对外发布许可证。
+### Two ways to write
+
+| | API writing | Manual writing / AI website workflow |
+| --- | --- | --- |
+| Send as protagonist or user narrator | Save a User message and generate a reply | Save a User message only |
+| Send as character | Save a manually entered Assistant message | Save a manually entered Assistant message |
+| Send an empty protagonist / narrator draft | Reply to the final User, or add a continuation otherwise | Do nothing |
+| Consecutive messages | Add User input after either role | Enter any voice repeatedly |
+
+Website workflow: **draft input → preview → copy the web prompt → paste it into an AI website → paste its reply into Character / 角色 and send**. Copying also saves an unsent User draft; it does not duplicate an already saved message. The web prompt is formatted text, not a real System-role message in the website's interface.
+
+Manual mode is **global and off by default**. It changes message sending only. Explicitly generating action choices, continuing, rewriting, or retrying can still call an API. Memory and protagonist state also use API calls when their update intervals are due; they can share a separate record-model connection. Consecutive User messages form one turn with the following Assistant reply; each additional Assistant message counts as a new turn. Memory defaults to every 10 completed turns; automatic state updates default to off.
+
+### Editing and data
+
+Most content is edited directly and saved on blur. General settings and prompts use explicit save buttons. Loading a prompt preset fills the draft; **Save Prompts / 保存提示词** applies it. Failed saves preserve your draft.
+
+**Branching and deletion have different effects.** Branching copies the story and records through the selected message into a separate chat. Deletion permanently removes that message and later content in the current chat, including alternate versions at those later positions, and restores records for the retained history. Other independent chats are unaffected.
+
+- Data defaults to `apps/server/data/`. Stop the server before backing up the entire directory. A native story package is a story-transfer format, not a full database backup.
+- API keys and custom headers are stored in local SQLite. The database is **not encrypted**. Keep databases, `.env`, story-bearing logs, and private exports out of public repositories.
+- The server listens on localhost by default. See the [architecture guide](docs/ARCHITECTURE.md#english) for LAN pairing and logging details. The installable PWA is an app shell; chatting still requires the local server.
+- After code changes, run `pnpm build`, restart the server, and refresh or reopen the app. `Start.cmd` builds automatically only when the web build is missing.
+
+### Development and status
+
+An all-TypeScript monorepo: **React + Vite** for the web app, **Fastify** for the server, and **SQLite + Drizzle** for storage. Model adapters live behind a dedicated runtime package. `pnpm dev` runs the frontend on port 5173 and the backend on 4310.
+
+Read the **[architecture and development guide](docs/ARCHITECTURE.md#english)** for module boundaries, request flow, branch-aware records, and focused verification. When reporting an issue, include reproduction steps, the protocol used, and sanitized errors. Follow [AGENTS.md](AGENTS.md) for contributions and keep offline checks scoped to the change.
+
+This is an independent implementation. Import support does not imply full compatibility with SillyTavern extensions or advanced macros. Protagonist-control modes are prompt instructions, so generated text still needs review. There is currently no third-party plugin marketplace, hosted multi-user service, or bundled offline model.
+
+**Release status: a project license has not yet been selected; this repository currently has no `LICENSE` file.** See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency and provenance information.
