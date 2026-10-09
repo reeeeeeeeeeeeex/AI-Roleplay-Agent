@@ -702,6 +702,7 @@ export default function App() {
                 {c.title}
                 <small>{c.kind === 'group' ? t("群聊") : t("单聊")} · {{ plain: t("普通写作"), 'writer-agent': 'Writer Agent', planner: 'Planner＋Writer' }[generalSettings.generationMode]}</small>
               </span>
+              {(inputDrafts[c.id]?.trim() || inputDrafts[`${c.id}:assistant`]?.trim()) && <small className="story-draft-indicator" title={t("有未发送草稿")} aria-label={t("有未发送草稿")}>{t("草稿")}</small>}
             </button>
           ))}
           {!data.conversations?.length && <p className="muted" style={{ padding: '4px 8px' }}>{t("暂无故事")}</p>}

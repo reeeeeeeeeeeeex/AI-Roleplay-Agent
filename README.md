@@ -63,7 +63,7 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 正文和资料通常直接点击编辑，失焦自动保存；设置和提示词使用显式保存。载入提示词预设只填入草稿，点击「保存提示词」后才生效。
 
-输入框草稿按故事和输入身份保存在当前浏览器。不同窗口编辑不同故事时，保存草稿不会互相覆盖。
+输入框草稿按故事和输入身份保存在当前浏览器，侧栏会标出有未发送草稿的故事。不同窗口编辑不同故事时，保存草稿不会互相覆盖。
 
 故事和资料列表可按名称或标题筛选；清除筛选或按 Esc 即可恢复完整列表。
 
@@ -152,7 +152,7 @@ Want to explore first? After the initial setup, Windows users can run [Demo.cmd]
 
 Most content is edited directly and saved on blur. Settings and prompts have explicit save actions. Loading a prompt preset fills the draft; **Save prompts** applies it.
 
-Composer drafts are saved in the current browser separately for each story and input identity. Writing in different stories across windows does not overwrite their drafts.
+Composer drafts are saved in the current browser separately for each story and input identity. Stories with unsent drafts are marked in the sidebar. Writing in different stories across windows does not overwrite their drafts.
 
 Filter story and resource lists by name or title. Clear the filter or press Esc to return to the full list.
 

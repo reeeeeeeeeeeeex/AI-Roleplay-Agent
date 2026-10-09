@@ -1,5 +1,7 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  "有未发送草稿": "Unsent draft",
+  "草稿": "Draft",
   "按名称或标题筛选": "Filter by name or title",
   "清除筛选": "Clear filter",
   "没有匹配的名称或标题。": "No matching names or titles.",

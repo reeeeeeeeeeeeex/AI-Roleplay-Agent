@@ -179,6 +179,8 @@ test('browser drafts: legacy drafts load and an accepted message stays cleared a
   await page.evaluate(id => localStorage.setItem('story-drafts', JSON.stringify({ [id]: '旧版保留的用户草稿。', [`${id}:assistant`]: '旧版保留的角色草稿。' })), chat.id);
   await page.reload();
   const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  const badge = page.locator('.story-list button').filter({ hasText: chat.title }).getByLabel('有未发送草稿');
+  await expect(badge).toHaveText('草稿');
   await expect(input).toHaveValue('旧版保留的用户草稿。');
   await page.locator('.voice-switch').getByRole('button', { name: '角色', exact: true }).click();
   await expect(input).toHaveValue('旧版保留的角色草稿。');
@@ -188,10 +190,13 @@ test('browser drafts: legacy drafts load and an accepted message stays cleared a
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.locator('article.message')).toHaveCount(1);
   await expect(input).toHaveValue('');
+  await expect(badge).toBeVisible(); // The separate Assistant draft is still pending.
   await page.reload();
   await expect(input).toHaveValue('');
   await page.locator('.voice-switch').getByRole('button', { name: '角色', exact: true }).click();
   await expect(input).toHaveValue('旧版保留的角色草稿。');
+  await input.fill('  \n');
+  await expect(badge).toHaveCount(0);
 });
 
 test('browser drafts: failed storage keeps the composer and prevents an update reload', async ({ page }) => {
