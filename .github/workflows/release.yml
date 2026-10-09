@@ -1,0 +1,38 @@
+name: Release check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+      - name: Install build dependencies
+        run: npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile
+      - name: Build
+        run: node scripts/tasks.mjs build
+      - name: Package tracked sources and built application
+        run: node scripts/package-release.mjs
+      - name: Install and start the extracted release
+        run: node scripts/release-smoke.mjs
+      - uses: actions/upload-artifact@v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          name: release-packages
+          path: |
+            release/*.zip
+            release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7

@@ -39,23 +39,23 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 ### 快速开始
 
-准备 **Node.js 24** 和 **pnpm 11**。pnpm 的具体版本见 [package.json](package.json) 中的 `packageManager`。
+安装 **[Node.js 24（含 npm）](https://nodejs.org/)**，然后从 [Releases](https://github.com/reeeeeeeeeeeeex/AI-Roleplay-Agent/releases) 下载 `AI-Roleplay-Agent-v*.zip` 或 `.tar.gz`，完整解压到可写目录。发布包已包含构建好的程序，不需要另装 pnpm 或 Git。
 
-下载或克隆仓库后，在项目根目录执行：
+| 系统 | 启动方式 |
+| --- | --- |
+| Windows | 双击 [Start.cmd](Start.cmd) |
+| macOS | 双击 [Start.command](Start.command)，或在终端运行 `sh ./Start.command` |
+| Linux | 在终端运行 `sh ./Start.sh` |
 
-```sh
-pnpm install --frozen-lockfile
-pnpm build
-pnpm start
-```
+首次启动会联网准备固定版本的依赖，随后打开 **[http://127.0.0.1:4310](http://127.0.0.1:4310)**。浏览器未自动打开时，请手动访问此地址。保持启动窗口开启，按 **Ctrl+C** 停止。SQLite 通常下载对应平台的预编译组件；没有匹配组件的设备可能需要本机编译工具。
 
-打开 **[http://127.0.0.1:4310](http://127.0.0.1:4310)**。Windows 用户完成安装和构建后，也可双击 [Start.cmd](Start.cmd) 启动。
+下载源码或克隆仓库也可使用这些入口，首次会额外构建应用。所有系统均可在项目根目录运行 `node scripts/start.mjs`。开发用 pnpm 版本由 [package.json](package.json) 的 `packageManager` 固定。
 
 1. **选择语言。** 打开左下角「设置 / Settings → 语言 / Language」，选择中文或 English，点击「保存 / Save」。语言只保存在当前浏览器，不改变故事内容或模型提示词。
 2. **准备角色。** 创建角色和主角资料，或导入已有内容，然后开启一个故事。
 3. **开始创作。** 使用 API 时，先在「设置 → 模型」添加并选择连接；手动创作时，开启输入框上方的手动输入开关。世界书、场景和作者注释可以随故事逐步补充。
 
-想先看看界面？安装依赖并构建后运行 `pnpm demo`，访问 [http://127.0.0.1:5173](http://127.0.0.1:5173)；Windows 也可使用 [Demo.cmd](Demo.cmd)，访问 4310。演示使用独立数据和假模型，回复是测试文本，不需要 API 密钥。演示与正式服务默认共用后端端口，请勿同时启动。
+想先看看界面？完成首次准备后，Windows 可使用 [Demo.cmd](Demo.cmd)，访问 4310；开发环境也可运行 `pnpm demo`，访问 [http://127.0.0.1:5173](http://127.0.0.1:5173)。演示使用独立数据和假模型，回复是测试文本，不需要 API 密钥。演示与正式服务默认共用后端端口，请勿同时启动。
 
 ### 编辑、保存与数据
 
@@ -71,13 +71,13 @@ pnpm start
 
 API 密钥保存在本地 SQLite，数据库未加密。公开项目时不要上传数据库、`.env` 或私人故事数据。默认仅监听本机；安装为 PWA 后，仍需要本地服务运行。
 
-更新代码后运行 `pnpm build`，重启服务，再刷新或重开应用。
+更新发布包时，先停止服务并备份数据，再解压新版，将原来的 `apps/server/data/` 和自定义 `.env` 放入新版目录后启动；不要复制旧 `node_modules`。源码开发者更新代码后运行 `pnpm build`。重启服务后刷新或重开应用。
 
 ### 开发与贡献
 
 项目采用全 TypeScript monorepo：**React + Vite** 构建界面，**Fastify** 提供 API，**SQLite + Drizzle** 保存数据，独立的 Agent Runtime 负责提示词组装和模型适配。
 
-运行 `pnpm dev` 启动开发环境。模块结构、请求流程、分支和记录机制见 [架构与开发说明](docs/ARCHITECTURE.md#zh-cn)；贡献约定见 [AGENTS.md](AGENTS.md)。反馈问题时，请附上复现步骤、使用协议和脱敏后的错误信息。
+开发环境使用 `pnpm install --frozen-lockfile`、`pnpm build` 和 `pnpm dev`。模块结构、请求流程、分支和记录机制见 [架构与开发说明](docs/ARCHITECTURE.md#zh-cn)；贡献约定见 [AGENTS.md](AGENTS.md)。反馈问题时，请附上复现步骤、使用协议和脱敏后的错误信息。
 
 这是独立实现的项目。SillyTavern 导入支持不包含其全部扩展与宏行为；项目不附带模型，也不提供云端多用户托管服务。
 
@@ -118,23 +118,23 @@ Manual mode changes message sending only. Explicit actions such as generating ch
 
 ### Quick start
 
-Install **Node.js 24** and **pnpm 11**. The exact pnpm version is pinned in the `packageManager` field of [package.json](package.json).
+Install **[Node.js 24 with npm](https://nodejs.org/)**, then download `AI-Roleplay-Agent-v*.zip` or `.tar.gz` from [Releases](https://github.com/reeeeeeeeeeeeex/AI-Roleplay-Agent/releases) and fully extract it into a writable folder. The release assets contain the built application. No separate pnpm or Git installation is needed.
 
-Download or clone the repository, then run from its root:
+| System | Start |
+| --- | --- |
+| Windows | Double-click [Start.cmd](Start.cmd) |
+| macOS | Double-click [Start.command](Start.command), or run `sh ./Start.command` |
+| Linux | Run `sh ./Start.sh` in a terminal |
 
-```sh
-pnpm install --frozen-lockfile
-pnpm build
-pnpm start
-```
+The first launch downloads pinned dependencies, then opens **[http://127.0.0.1:4310](http://127.0.0.1:4310)**. If the browser does not open, visit that address manually. Keep the terminal open and press **Ctrl+C** to stop. SQLite normally downloads a prebuilt native component; devices without a matching component may need a local compiler toolchain.
 
-Open **[http://127.0.0.1:4310](http://127.0.0.1:4310)**. On Windows, you can also use [Start.cmd](Start.cmd) after installing dependencies and building.
+These launchers also work with a source download or clone, building the app on first launch. On any system you can run `node scripts/start.mjs` from the project root. The development pnpm version is pinned in the `packageManager` field of [package.json](package.json).
 
 1. **Choose your language.** Open **设置 / Settings → 语言 / Language**, choose 中文 or English, then select **保存 / Save**. The preference stays in this browser and does not alter story content or model prompts.
 2. **Prepare your cast.** Create character and protagonist profiles, or import existing content, then start a story.
 3. **Start writing.** For API writing, add and select a connection in **Settings → Models**. For manual writing, enable the switch above the composer. Add lorebooks, scene details, and an author's note as your story develops.
 
-Want to explore first? After installing dependencies and building, run `pnpm demo` and visit [http://127.0.0.1:5173](http://127.0.0.1:5173). On Windows, [Demo.cmd](Demo.cmd) serves the built app on port 4310. The demo uses separate data and a fake model with test replies; no API key is needed. Demo and normal mode share the backend port by default, so run only one at a time.
+Want to explore first? After the initial setup, Windows users can run [Demo.cmd](Demo.cmd) on port 4310. Developers can also run `pnpm demo` and visit [http://127.0.0.1:5173](http://127.0.0.1:5173). The demo uses separate data and a fake model with test replies; no API key is needed. Demo and normal mode share the backend port by default, so run only one at a time.
 
 ### Editing, saving, and data
 
@@ -150,13 +150,13 @@ Chats and settings are stored locally in `apps/server/data/` by default. Stop th
 
 API keys are stored in local SQLite; the database is not encrypted. Keep databases, `.env`, and private story data out of public repositories. The server listens on localhost by default. Installing the PWA still requires the local server to run.
 
-After updating the code, run `pnpm build`, restart the server, and refresh or reopen the app.
+To update a release, stop the server and back up your data. Extract the new version, transfer your existing `apps/server/data/` and custom `.env` into it, then start it. Do not copy old `node_modules`. Source users should run `pnpm build` after updating. Refresh or reopen the app after restarting the server.
 
 ### Development and contributions
 
 The project is an all-TypeScript monorepo: **React + Vite** for the interface, **Fastify** for the API, **SQLite + Drizzle** for persistence, and a separate Agent Runtime for prompt assembly and model adapters.
 
-Run `pnpm dev` for development. Read the [architecture and development guide](docs/ARCHITECTURE.md#english) for module boundaries, request flow, branches, and records. Follow [AGENTS.md](AGENTS.md) when contributing. Issue reports should include reproduction steps, the protocol used, and sanitized error details.
+For development, use `pnpm install --frozen-lockfile`, `pnpm build`, and `pnpm dev`. Read the [architecture and development guide](docs/ARCHITECTURE.md#english) for module boundaries, request flow, branches, and records. Follow [AGENTS.md](AGENTS.md) when contributing. Issue reports should include reproduction steps, the protocol used, and sanitized error details.
 
 This is an independent implementation. SillyTavern import support does not cover all of its extensions or macro behavior. No model is bundled, and there is no hosted multi-user service.
 

@@ -13,3 +13,4 @@ data/
 .env
 .env.local
 !.env.example
+/release/

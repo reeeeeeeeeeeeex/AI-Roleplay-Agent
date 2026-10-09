@@ -5,9 +5,11 @@ const {app,config}=await createApp();
 await app.listen({host:config.host,port:config.port});
 const hostname=config.host.includes(':') ? `[${config.host}]` : config.host;
 const url=`http://${hostname}:${config.port}`;
-console.log(`New AI Chat: ${url}${config.fakeModel?' (offline demo)':''}`);
-if (process.env.OPEN_BROWSER === '1' && process.platform === 'win32') {
-  const browser=spawn('explorer.exe',[url],{detached:true,stdio:'ignore',windowsHide:true});
+console.log(`AI Roleplay Agent: ${url}${config.fakeModel?' (offline demo)':''}`);
+if (process.env.OPEN_BROWSER === '1') {
+  const command=process.platform==='win32'?'explorer.exe':process.platform==='darwin'?'open':'xdg-open';
+  const browser=spawn(command,[url],{detached:true,stdio:'ignore',windowsHide:true});
+  browser.once('error',()=>console.log(`Open / 请打开: ${url}`));
   browser.unref();
 }
 for(const event of ['SIGINT','SIGTERM'] as const) process.once(event,()=>{ void app.close(); });
