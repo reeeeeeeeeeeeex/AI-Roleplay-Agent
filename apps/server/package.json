@@ -2,6 +2,7 @@
   "name": "@new-ai-chat/server",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "tsx --conditions=development watch src/index.ts",

@@ -590,7 +590,7 @@ export default function App() {
       <aside className={`sidebar ${sidebarOpen ? '' : 'collapsed'} ${mobileNav ? 'mobile-open' : ''}`}>
         <div className="brand">
           <div className="brand-title">
-            <span>New AI Chat</span>
+            <span>AI Roleplay Agent</span>
           </div>
           <button className="sidebar-toggle-btn" title="收起侧栏" aria-label="收起侧栏" onClick={() => setSidebarOpen(false)}>
             <PanelLeftClose size={15} />

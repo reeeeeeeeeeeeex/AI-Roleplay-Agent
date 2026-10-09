@@ -1,4 +1,4 @@
-# New AI Chat
+# AI Roleplay Agent
 
 **把角色、世界与平行故事，放进自己的创作空间。**
 
@@ -10,7 +10,7 @@
 
 ## 中文
 
-New AI Chat 是一个**本地优先的角色扮演与长篇故事创作 WebUI**。它围绕角色、世界设定、剧情分支和长期记录组织写作，让故事可以持续发展，也可以随时探索另一种走向。
+AI Roleplay Agent 是一个**本地优先的角色扮演与长篇故事创作 WebUI**。它围绕角色、世界设定、剧情分支和长期记录组织写作，让故事可以持续发展，也可以随时探索另一种走向。
 
 你可以连接模型 API 与角色共同创作，也可以自己写完整个故事，或将提示词复制到 AI 网页，再把回复粘贴回来。聊天、设定和记录保存在本机；使用 API 时，选入请求的内容会发送给你配置的服务商。
 
@@ -79,7 +79,7 @@ pnpm start
 
 这是独立实现的项目，支持导入不代表完整复刻 SillyTavern 的扩展和宏行为。主角控制依靠提示词约束，模型结果仍需阅读检查。目前未提供第三方插件市场、云端多用户托管或内置离线模型。
 
-**发布状态：项目许可证待确定，仓库目前未包含 `LICENSE`。** 第三方依赖和来源信息见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本项目使用 **[MIT 许可证](LICENSE)**，允许修改、商用与再分发；分发时须保留版权和许可声明。 第三方依赖和来源信息见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ---
 
@@ -87,7 +87,7 @@ pnpm start
 
 ## English
 
-New AI Chat is a **local-first WebUI for roleplay and long-form storytelling**. It brings characters, worldbuilding, parallel story branches, and persistent story records into one workspace, so you can develop a story over time and explore different outcomes.
+AI Roleplay Agent is a **local-first WebUI for roleplay and long-form storytelling**. It brings characters, worldbuilding, parallel story branches, and persistent story records into one workspace, so you can develop a story over time and explore different outcomes.
 
 Connect a model API to write with your characters, write every voice yourself, or copy a prompt to an AI website and paste the reply back. Chats, settings, and records are stored on your machine. When you use an API, the content selected for that request is sent to your configured provider.
 
@@ -154,4 +154,4 @@ Read the **[architecture and development guide](docs/ARCHITECTURE.md#english)** 
 
 This is an independent implementation. Import support does not imply full compatibility with SillyTavern extensions or advanced macros. Protagonist-control modes are prompt instructions, so generated text still needs review. There is currently no third-party plugin marketplace, hosted multi-user service, or bundled offline model.
 
-**Release status: a project license has not yet been selected; this repository currently has no `LICENSE` file.** See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency and provenance information.
+Licensed under **[MIT](LICENSE)**. Modification, commercial use, and redistribution are permitted with the copyright and license notice retained. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency and provenance information.
