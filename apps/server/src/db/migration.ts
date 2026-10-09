@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS session_events (
   turn_id TEXT, type TEXT NOT NULL, payload TEXT, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS session_events_turn_idx ON session_events(turn_id, id);
+CREATE INDEX IF NOT EXISTS session_events_conversation_type_idx ON session_events(conversation_id, type, id);
 CREATE TABLE IF NOT EXISTS turn_traces (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   turn_id TEXT NOT NULL, phase TEXT NOT NULL, request_index INTEGER NOT NULL DEFAULT 0,

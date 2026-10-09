@@ -473,8 +473,7 @@ export class Repository {
     const active = this.checkpointFilter(conversationId);
     const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
     const edits = new Map<string, string>();
-    for (const event of this.events(conversationId)) {
-      if (event.type !== 'memory.edited') continue;
+    for (const event of this.events(conversationId, ['memory.edited'])) {
       const edit = event.payload as { id: string; head: string | null; content: string };
       if (!edit.head || heads.has(edit.head)) edits.set(edit.id, edit.content);
     }
@@ -522,8 +521,10 @@ export class Repository {
   }
   getProposal(proposalId: string) { return this.database.db.select().from(proposals).where(eq(proposals.id, proposalId)).get() ?? null; }
   listImports() { return this.database.db.select().from(imports).orderBy(desc(imports.createdAt)).all(); }
-  events(conversationId: string): SessionEvent[] {
-    return this.database.db.select().from(sessionEvents).where(eq(sessionEvents.conversationId, conversationId)).orderBy(asc(sessionEvents.id)).all() as SessionEvent[];
+  events(conversationId: string, types?: string[]): SessionEvent[] {
+    return this.database.db.select().from(sessionEvents)
+      .where(and(eq(sessionEvents.conversationId, conversationId), types ? inArray(sessionEvents.type, types) : undefined))
+      .orderBy(asc(sessionEvents.id)).all() as SessionEvent[];
   }
   checkpointActive(conversationId: string, checkpointId: string): boolean {
     return this.checkpointFilter(conversationId)(checkpointId);
@@ -531,8 +532,7 @@ export class Repository {
   listPinnedFacts(conversationId: string): PinnedFact[] {
     const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
     const facts = new Map<string, PinnedFact>();
-    for (const event of this.events(conversationId)) {
-      if (event.type !== 'fact.saved' && event.type !== 'fact.removed') continue;
+    for (const event of this.events(conversationId, ['fact.saved', 'fact.removed'])) {
       const value = event.payload as PinnedFact;
       if (value.head && !heads.has(value.head)) continue;
       if (event.type === 'fact.removed') facts.delete(value.id);
@@ -554,7 +554,7 @@ export class Repository {
   }
   listBookmarks(conversationId: string): StoryBookmark[] {
     const bookmarks = new Map<string, StoryBookmark>();
-    for (const event of this.events(conversationId)) {
+    for (const event of this.events(conversationId, ['bookmark.saved', 'bookmark.removed'])) {
       const value = event.payload as StoryBookmark;
       if (event.type === 'bookmark.saved') bookmarks.set(value.id, value);
       if (event.type === 'bookmark.removed') bookmarks.delete(value.id);
@@ -582,7 +582,7 @@ export class Repository {
   }
   private checkpointFilter(conversationId: string) {
     const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));
-    const checkpoints = new Map(this.events(conversationId).filter((event) => event.type === 'checkpoint').map((event) => {
+    const checkpoints = new Map(this.events(conversationId, ['checkpoint']).map((event) => {
       const value = event.payload as { id: string; head: string | null }; return [value.id, value.head];
     }));
     return (checkpointId: string) => { const head = checkpoints.get(checkpointId); return !head || heads.has(head); };
@@ -590,8 +590,7 @@ export class Repository {
   currentWorld(conversationId: string): Array<{ summary: string; evidence: string }> {
     const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));
     const applied = new Map<string, { summary: string; evidence: string }>();
-    for (const event of this.events(conversationId)) {
-      if (event.type !== 'world.applied' && event.type !== 'world.undone') continue;
+    for (const event of this.events(conversationId, ['world.applied', 'world.undone'])) {
       const value = event.payload as { head: string | null; proposalId: string; summary: string; evidence: string };
       if (value.head && !heads.has(value.head)) continue;
       if (event.type === 'world.undone') applied.delete(value.proposalId);

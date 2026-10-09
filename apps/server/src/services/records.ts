@@ -11,7 +11,7 @@ export function parseModelJson(text: string): unknown {
 export function settledStoryIds(repository: Repository, chat: string): string[] {
   const branch = repository.getActiveBranch(chat);
   const ids = new Set(branch.map((message) => message.id));
-  return [...new Set(repository.events(chat).filter((event) => event.type === 'story.settled' && ids.has((event.payload as { head: string }).head)).map((event) => (event.payload as { storyTurnId: string }).storyTurnId))];
+  return [...new Set(repository.events(chat, ['story.settled']).filter((event) => ids.has((event.payload as { head: string }).head)).map((event) => (event.payload as { storyTurnId: string }).storyTurnId))];
 }
 export class RecordService {
   private pending = new Set<string>();
@@ -33,7 +33,7 @@ export class RecordService {
       const head = this.repository.getConversation(chat)?.headMessageId;
       const beforeState = this.repository.latestState(chat);
       const beforeMemory = this.repository.listMemories(chat, 1)[0];
-      const beforeMemoryEdit = this.repository.events(chat).findLast(event => event.type === 'memory.edited')?.id;
+      const beforeMemoryEdit = this.repository.events(chat, ['memory.edited']).at(-1)?.id;
       const completed = settledStoryIds(this.repository, chat);
       let storyTurnId = completed.at(-1) ?? null;
       const request = await this.request(chat, storyTurnId ?? 'manual', AbortSignal.any([signal, AbortSignal.timeout(120_000)]), kind);
@@ -66,7 +66,7 @@ export class RecordService {
       }
       const answer = parseModelJson(await this.runtime.maintain(request, instruction));
       signal.throwIfAborted();
-      if (this.repository.events(chat).findLast(event => event.type === 'memory.edited')?.id !== beforeMemoryEdit) throw new AppError("Memory changed; discarded stale update.");
+      if (this.repository.events(chat, ['memory.edited']).at(-1)?.id !== beforeMemoryEdit) throw new AppError("Memory changed; discarded stale update.");
       if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new AppError("Records changed; discarded stale update.");
       return this.repository.database.sqlite.transaction(() => {
         if (kind === 'memory') {
@@ -108,7 +108,7 @@ export function applyProposal(repository: Repository, id: string, action: 'apply
     if (proposal.status !== 'applied') throw new AppError("Only applied proposals can be undone.");
     const checkpoint = proposal.committedSnapshot as Checkpoint;
     if (chat.headMessageId !== checkpoint.head || (checkpoint.afterId && current?.id !== checkpoint.afterId)) throw new AppError("State or branch changed after application; refusing destructive undo.");
-    if (checkpoint.worldEventId && repository.events(chat.id).filter((e) => e.type === 'world.applied' || e.type === 'world.undone').at(-1)?.id !== checkpoint.worldEventId) throw new AppError("World changed after application.");
+    if (checkpoint.worldEventId && repository.events(chat.id, ['world.applied', 'world.undone']).at(-1)?.id !== checkpoint.worldEventId) throw new AppError("World changed after application.");
     if (checkpoint.afterId) repository.createState(chat.id, proposal.storyTurnId, checkpoint.before);
     if (checkpoint.worldEventId) repository.addEvent(chat.id, null, 'world.undone', { proposalId: id, head: chat.headMessageId });
     repository.updateProposal(id, 'undone', checkpoint); return { status: 'undone' };

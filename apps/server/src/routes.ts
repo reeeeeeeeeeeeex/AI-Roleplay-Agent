@@ -243,7 +243,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     if (!snapshot) throw new AppError("Snapshot is not on the current branch.");
     return repo.createState(chat, settledStoryIds(repo, chat).at(-1) ?? null, snapshot.tables);
   });
-  app.get('/api/conversations/:id/planner-history', async req => repo.events(idOf(req)).filter((e) => ['planner.completed', 'routing.completed', 'planner.imported'].includes(e.type)).map((e) => ({ id: e.id, type: e.type, createdAt: e.createdAt, payload: e.payload })));
+  app.get('/api/conversations/:id/planner-history', async req => repo.events(idOf(req), ['planner.completed', 'routing.completed', 'planner.imported']).map((e) => ({ id: e.id, type: e.type, createdAt: e.createdAt, payload: e.payload })));
   app.post('/api/conversations/:id/state', async (req) => {
     const chat = idOf(req); turns.assertIdle(chat); const { tables } = z.object({ tables: z.unknown() }).parse(req.body);
     return repo.createState(chat, settledStoryIds(repo,chat).at(-1) ?? null, normalizeState(tables));
