@@ -25,6 +25,7 @@ export function decodeCard(bytes: Buffer): any {
   return JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
 }
 export async function scanImport(sourcePath: string): Promise<ImportBundle> {
+  if (!sourcePath.trim()) throw new AppError("Import source must be a directory.");
   const root = await realpath(resolve(sourcePath));
   if (!(await stat(root)).isDirectory()) throw new AppError("Import source must be a directory.");
   const files: ImportFile[] = []; const warningReport: { warnings: string[]; warningTexts?: Array<UiText | null> } = { warnings: [] }; const { warnings } = warningReport; let total = 0;

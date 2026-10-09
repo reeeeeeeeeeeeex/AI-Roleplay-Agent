@@ -61,6 +61,8 @@ pnpm start
 
 正文和资料通常直接点击编辑，失焦自动保存；设置和提示词使用显式保存。载入提示词预设只填入草稿，点击「保存提示词」后才生效。
 
+导入 SillyTavern 数据时，请填写自己的数据目录；也可通过 `SILLYTAVERN_DATA_PATH` 设置默认路径。
+
 「设置 → 外观」提供石墨黑、午夜蓝、暖墨棕和纸白配色，并搭配对应的文字颜色。可以选择正文字体和 12–28 px 字号，先预览再保存；偏好仅保存在当前浏览器。字体使用设备已安装的字体及回退，不需要下载字体文件。
 
 **分支用于探索另一种走向，删除用于回到之前。** 分支会复制截至所选消息的故事和记录，原聊天保持不变。删除会永久移除当前聊天中所选消息及后续内容，包括对应位置之后的旧版本，并恢复保留位置的记录；其他独立聊天不受影响。
@@ -137,6 +139,8 @@ Want to explore first? After installing dependencies and building, run `pnpm dem
 ### Editing, saving, and data
 
 Most content is edited directly and saved on blur. Settings and prompts have explicit save actions. Loading a prompt preset fills the draft; **Save prompts** applies it.
+
+To import SillyTavern data, enter your own data directory. You can optionally set its default with `SILLYTAVERN_DATA_PATH`.
 
 **Settings → Appearance** offers Graphite, Midnight blue, Warm dark, and Paper white palettes with matching text colors. Preview a story font and size from 12–28 px before saving. Preferences stay in this browser; fonts come from your device with automatic fallbacks, without font downloads.
 
