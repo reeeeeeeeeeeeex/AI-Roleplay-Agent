@@ -493,6 +493,41 @@ test('replacing a persona image preserves the original 20 MB file', async ({ pag
   expect((await imageResponse.body()).equals(image)).toBe(true);
 });
 
+test('returning to a story ignores an older history response that arrives last', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const first = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: null, input: { voice: 'protagonist', text: '早先的正文。' } } })).json();
+  const other = await (await request.post('/api/conversations', { data: { title: 'Another story while history loads', kind: 'solo', characterId: chat.characterId } })).json();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let delay = true;
+  await page.route(`**/api/conversations/${chat.id}/messages*`, async route => {
+    if (!delay) return route.continue();
+    delay = false;
+    const response = await route.fetch();
+    captured();
+    await waiting;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.reload();
+    await ready;
+    await page.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(other.title);
+    const appended = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: first.message.id, input: { voice: 'narrator', text: '之后保存的新正文。' } } });
+    expect(appended.status()).toBe(201);
+    await page.locator('.story-list button').filter({ hasText: chat.title }).click();
+    await expect(page.locator('article.message')).toHaveCount(2);
+    const late = page.waitForResponse(response => response.url().includes(`/conversations/${chat.id}/messages?`));
+    release();
+    await (await late).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page.locator('article.message')).toHaveCount(2);
+    await expect(page.locator('article.message textarea').last()).toHaveValue('之后保存的新正文。');
+  } finally { release(); }
+});
+
 test('switching versions reloads complete prose from compact navigation', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);

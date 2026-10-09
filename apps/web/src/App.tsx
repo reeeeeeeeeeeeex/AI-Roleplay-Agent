@@ -55,6 +55,7 @@ export default function App() {
   const [page, setPage] = useState<'chat' | Collection | 'import'>('chat');
   const [branch, setBranch] = useState<MessageNode[]>([]);
   const [nodes, setNodes] = useState<MessageSummary[]>([]);
+  const historyRequest = useRef(0);
   const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
   const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
@@ -221,14 +222,21 @@ export default function App() {
   }
 
   async function refreshMessages(id: string) {
-    const [value, latest] = await Promise.all([
-      api<{ branch: MessageNode[]; nodes: MessageSummary[] }>(`/conversations/${id}/messages?view=chat`),
-      api(`/conversations/${id}/last-turn`),
-    ]);
-    if (chatRef.current === id) {
-      setBranch(value.branch);
-      setNodes(value.nodes);
-      setLastTurn(latest);
+    if (chatRef.current !== id) return;
+    const request = ++historyRequest.current;
+    const current = () => chatRef.current === id && historyRequest.current === request;
+    try {
+      const [value, latest] = await Promise.all([
+        api<{ branch: MessageNode[]; nodes: MessageSummary[] }>(`/conversations/${id}/messages?view=chat`),
+        api(`/conversations/${id}/last-turn`),
+      ]);
+      if (current()) {
+        setBranch(value.branch);
+        setNodes(value.nodes);
+        setLastTurn(latest);
+      }
+    } catch (error) {
+      if (current()) throw error;
     }
   }
 
@@ -270,6 +278,7 @@ export default function App() {
     setReplyTarget('auto');
     setVoice(current => current === 'assistant' ? 'protagonist' : current);
     if (chatId) { rememberSession('selected-chat', chatId); act(refreshMessages(chatId)); }
+    return () => { historyRequest.current++; };
   }, [chatId]);
 
   useEffect(() => {
