@@ -337,6 +337,11 @@ export default function App() {
     setMobileNav(false);
   }
 
+  async function closeRecords() {
+    await flushContentEdits();
+    setPanel(false);
+  }
+
   async function selectChat(id: string, flush = true) {
     if (flush) await flushContentEdits();
     if (id !== chatRef.current) {
@@ -854,7 +859,7 @@ export default function App() {
                 <button ref={searchButton} title={t('搜索正文（Ctrl / ⌘ + F）')} aria-label={t('搜索正文')} aria-keyshortcuts="Control+f Meta+f" aria-expanded={showSearch}
                   onClick={() => showSearch ? closeSearch() : setShowSearch(true)}><Search size={14} /></button>
                 <button title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
-                <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => setPanel(!panel)}>
+                <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => panel ? act(closeRecords()) : setPanel(true)}>
                   {panel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
                   <span>{t("记录")}</span>
                 </button>
@@ -1350,7 +1355,7 @@ export default function App() {
           disabled={!!turn}
           onError={setError}
           onChanged={() => setRecordsVersion((v) => v + 1)}
-          onClose={() => setPanel(false)}
+          onClose={() => act(closeRecords())}
         />
       )}
 
