@@ -1,6 +1,6 @@
 import { AppError, errorText, uiText, type UiText } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { defaultPromptSettings, generalSettingsSchema, personaInputSchema, personaStateTemplateSchema, promptSettingsSchema, promptPresetSchema, type GeneralSettings, type PromptSettings, type PromptPreset, type PromptPresetInput, type PromptPresetPatch, type TurnTrace } from '@new-ai-chat/contracts';
 import type {
   Character,
@@ -403,9 +403,13 @@ export class Repository {
   }
   eventsForTurn(turnId: string, afterId = 0): SessionEvent[] {
     return this.database.db.select().from(sessionEvents)
-      .where(eq(sessionEvents.turnId, turnId))
-      .orderBy(asc(sessionEvents.id)).all()
-      .filter((event) => event.id > afterId) as SessionEvent[];
+      .where(and(eq(sessionEvents.turnId, turnId), gt(sessionEvents.id, afterId)))
+      .orderBy(asc(sessionEvents.id)).all() as SessionEvent[];
+  }
+  hasTerminalEvent(turnId: string): boolean {
+    return Boolean(this.database.db.select({ id: sessionEvents.id }).from(sessionEvents)
+      .where(and(eq(sessionEvents.turnId, turnId), inArray(sessionEvents.type, ['turn.completed', 'turn.partial', 'turn.failed', 'turn.cancelled'])))
+      .limit(1).get());
   }
 
   private traceSafe(value: unknown): unknown {

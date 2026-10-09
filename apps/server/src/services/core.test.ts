@@ -1043,7 +1043,22 @@ describe('HTTP boundary',()=>{
   it('does not return API keys or custom header values',async()=>{const response=await server.app.inject({method:'GET',url:'/api/connections'});expect(response.statusCode).toBe(200);expect(response.body).not.toContain('secret-do-not-return');expect(response.body).not.toContain('header-secret');});
   it.each(['https://evil.example','null','http://127.0.0.1.evil.example'])('rejects untrusted origin %s',async(origin)=>{const r=await server.app.inject({method:'POST',url:'/api/turns',headers:{origin},payload:{}});expect(r.statusCode).toBe(403);});
   it('rejects DNS rebinding hostnames',async()=>{expect((await server.app.inject({url:'/api/connections',headers:{host:'evil.example'}})).statusCode).toBe(403);});
-  it('replays durable SSE events in increasing order',async()=>{const turn=await normal();const r=await server.app.inject({url:`/api/turns/${turn.id}/events`});expect(r.statusCode).toBe(200);const events=r.body.split('\n\n').filter((line)=>line.includes('data:')).map((line)=>JSON.parse(line.split('data: ')[1]!));expect(events.at(-1).type).toBe('turn.completed');expect(events.map((e:any)=>e.id)).toEqual([...events.map((e:any)=>e.id)].sort((a,b)=>a-b));const after=events[2].id;const resumed=await server.app.inject({url:`/api/turns/${turn.id}/events?after=${after}`});expect(resumed.body).not.toContain(`id: ${after}\n`);});
+  it('replays only SSE events after the cursor and closes completed streams', async () => {
+    const turn = await normal();
+    const url = `/api/turns/${turn.id}/events`;
+    const parse = (body: string) => [...body.matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]!));
+    const response = await server.app.inject({ url });
+    expect(response.statusCode).toBe(200);
+    const events = parse(response.body);
+    expect(events.at(-1).type).toBe('turn.completed');
+    expect(events.map(event => event.id)).toEqual(events.map(event => event.id).sort((a, b) => a - b));
+    const resumed = await server.app.inject({ url: `${url}?after=${events[2].id}` });
+    expect(resumed.statusCode).toBe(200);
+    expect(parse(resumed.body)).toEqual(events.slice(3));
+    const completed = await server.app.inject({ url, headers: { 'last-event-id': String(events.at(-1).id) } });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.body).toBe('');
+  });
   it('does not expose provider reasoning as chat prose',async()=>{await normal();const r=await server.app.inject({url:`/api/conversations/${chat}/messages`});expect(r.json().branch.every((m:any)=>m.providerState===null)).toBe(true);});
   it('validates explicit narrator identity',async()=>{const r=await server.app.inject({method:'POST',url:'/api/turns',payload:{conversationId:chat,input:{text:'hi',voice:'narrator'},replyTarget:{mode:'explicit',speaker:{kind:'narrator'}}}});expect(r.statusCode).toBe(202);await server.turns.idle(chat);});
 });

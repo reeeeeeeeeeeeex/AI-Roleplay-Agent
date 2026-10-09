@@ -74,7 +74,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     const terminal=(type:string)=>['turn.completed','turn.partial','turn.failed','turn.cancelled'].includes(type);
     const send=(event:ReturnType<Repository['addEvent']>)=>{ if (!reply.raw.destroyed) reply.raw.write(`${event.id > 0 ? `id: ${event.id}\n` : ''}data: ${JSON.stringify(event)}\n\n`); };
     const prior=repository.eventsForTurn(id,after); for(const event of prior) send(event);
-    const all=repository.eventsForTurn(id); if (all.some((event)=>terminal(event.type))) {reply.raw.end();return;}
+    if (repository.hasTerminalEvent(id)) {reply.raw.end();return;}
     const current=repository.getTurn(id)!;
     if (['partial','failed','cancelled'].includes(current.status) || (current.status==='completed' && current.recordsStatus!=='running')) {
       // A restart can occur after the durable status but before its final SSE event.
