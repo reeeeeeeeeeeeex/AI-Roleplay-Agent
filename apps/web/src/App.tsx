@@ -293,6 +293,12 @@ export default function App() {
     catch { setNotice(t("浏览器无法保存草稿，请在关闭页面前复制输入。")); }
   }, [inputDrafts]);
 
+  async function selectPage(next: typeof page) {
+    await flushContentEdits();
+    setPage(next);
+    setMobileNav(false);
+  }
+
   async function selectChat(id: string, flush = true) {
     if (flush) await flushContentEdits();
     if (id !== chatRef.current) {
@@ -688,7 +694,7 @@ export default function App() {
         <button
           type="button"
           className={`nav-label-btn ${page === 'conversations' ? 'selected' : ''}`}
-          onClick={() => { setPage('conversations'); setMobileNav(false); }}
+          onClick={() => act(selectPage('conversations'))}
           title={t("查看全部故事卡片")}
         >
           <span className="nav-label-title"><MessageSquare size={13} />  {t("故事列表")}</span>
@@ -713,7 +719,7 @@ export default function App() {
         </div>
         <nav className="studio-nav">
           {studioCollections.map((kind) => (
-            <button className={page === kind ? 'selected' : ''} key={kind} onClick={() => { setPage(kind); setMobileNav(false); }}>
+            <button className={page === kind ? 'selected' : ''} key={kind} onClick={() => act(selectPage(kind))}>
               {kind === 'groups' ? <Users size={14} /> : <Library size={14} />}
               {titles[kind]} <span>{data[kind]?.length ?? 0}</span>
             </button>
@@ -723,7 +729,7 @@ export default function App() {
           <button onClick={() => { setShowPersona(true); setMobileNav(false); }}>
             <Users size={14} />{t("主角：")}{activePersona?.name ?? t("未选择")}
           </button>
-          <button className={page === 'import' ? 'selected' : ''} onClick={() => { setPage('import'); setMobileNav(false); }}>
+          <button className={page === 'import' ? 'selected' : ''} onClick={() => act(selectPage('import'))}>
             <Upload size={14} />{t("导入故事")}</button>
         </nav>
 
@@ -818,7 +824,7 @@ export default function App() {
             <div className="welcome-actions">
               <button className="primary" onClick={newChat}>
                 <Plus size={15} />  {t("开启新故事")}</button>
-              <button onClick={() => setPage('import')}>
+              <button onClick={() => act(selectPage('import'))}>
                 <Upload size={15} />  {t("导入旧故事")}</button>
             </div>
           </section>
@@ -1108,10 +1114,7 @@ export default function App() {
                             <div className="character-card-footer">
                               <button
                                 className="primary"
-                                onClick={() => {
-                                  void selectChat(c.id);
-                                  setPage('chat');
-                                }}
+                                onClick={() => act(selectChat(c.id))}
                               >
                                 {t("进入故事")}</button>
                               <button className="danger" onClick={() => act(remove('conversations', c))}>{t("删除")}</button>

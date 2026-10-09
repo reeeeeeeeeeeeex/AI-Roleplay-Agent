@@ -1168,7 +1168,7 @@ test('empty send replies after deleting and editing, then Enter adds an assistan
   expect(saved.branch.filter((message: any) => message.role === 'user').map((message: any) => message.id)).toEqual([savedUser.id]);
 });
 
-test('empty send preserves a failed user edit and does not request generation', async ({ page }) => {
+test('empty send and page navigation preserve a failed user edit', async ({ page }) => {
   await page.getByLabel('回复者').selectOption('narrator');
   await send(page, '打开信。', 2);
   page.once('dialog', dialog => dialog.accept());
@@ -1187,6 +1187,17 @@ test('empty send preserves a failed user edit and does not request generation', 
   await page.reload();
   await expect(input).toHaveValue(revised);
   await expect(page.locator('article.message')).toHaveCount(1);
+  const navigationDraft = '离开故事前也必须成功保存这次修改。';
+  await input.fill(navigationDraft);
+  await page.locator('.nav-label-btn').click();
+  await expect(input).toHaveValue(navigationDraft);
+  await expect(page.getByRole('alert').filter({ hasText: '内容尚未保存' })).toBeVisible();
+  await page.unroute('**/api/messages/*/edit');
+  const saved = page.waitForResponse(response => /\/api\/messages\/[^/]+\/edit$/.test(response.url()));
+  await page.locator('.nav-label-btn').click();
+  expect((await saved).ok()).toBe(true);
+  await expect(page.locator('.management')).toBeVisible();
+  expect(requests).toBe(0);
 });
 
 test('inline facts bookmarks scene and rewrite controls stay beside their content', async ({ page, request }, info) => {
