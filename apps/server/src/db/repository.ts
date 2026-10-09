@@ -15,6 +15,7 @@ import type {
   StoryBookmark,
   StoryNavigation,
   MessageNode,
+  MessageSummary,
   Persona,
   ProtagonistStateSnapshot,
   ProtagonistTables,
@@ -359,6 +360,13 @@ export class Repository {
 
   listMessages(conversationId: string): MessageNode[] {
     return this.database.db.select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt)).all().map(mapMessage);
+  }
+  listMessageSummaries(conversationId: string): MessageSummary[] {
+    // A byte prefix bounds reads and preserves embedded NULs; 400 UTF-8 bytes contain at least the first 100 UTF-16 units.
+    return this.database.db.select({ id: messages.id, parentId: messages.parentId, role: messages.role, speaker: messages.speaker,
+      content: sql<string>`CAST(substr(CAST(${messages.content} AS BLOB), 1, 400) AS TEXT)`,
+    }).from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt)).all()
+      .map(row => ({ ...row, role: row.role as MessageSummary['role'], content: row.content.slice(0, 100) }));
   }
   getMessage(messageId: string): MessageNode | null {
     const row = this.database.db.select().from(messages).where(eq(messages.id, messageId)).get(); return row ? mapMessage(row) : null;
