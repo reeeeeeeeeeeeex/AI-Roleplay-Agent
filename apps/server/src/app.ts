@@ -21,7 +21,7 @@ const same = (a: string,b: string) => { const left=Buffer.from(a); const right=B
 export async function createApp(config: AppConfig = loadConfig(), runtime?: AgentRuntime, configurePlugins?: (registry: PluginRegistry) => void) {
   const app = Fastify({ bodyLimit: 2_000_000, logger: false });
   const database = createDatabase(config.databasePath); const repository = new Repository(database);
-  repository.recoverInterruptedTurns(); mkdirSync(config.assetDir,{recursive:true});
+  mkdirSync(config.assetDir,{recursive:true});
   if(config.fakeModel) seedDemo(repository);
   const gateway = runtime ?? (config.fakeModel ? new FakeRuntime() : new PiAgentRuntime());
   const events = new EventBroker(repository);
@@ -92,5 +92,16 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     app.setNotFoundHandler((req,reply)=> req.url.startsWith('/api/') ? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') }) : reply.sendFile('index.html'));
   }
   app.addHook('onClose',async()=>{await choices.shutdown();await turns.shutdown();database.sqlite.close();});
-  return { app,repository,turns,records,choices,events,plugins,config };
+  async function listen() {
+    try {
+      // A second launcher must acquire the port before changing persisted tasks.
+      const address = await app.listen({ host: config.host, port: config.port });
+      repository.recoverInterruptedTurns();
+      return address;
+    } catch (error) {
+      await app.close();
+      throw error;
+    }
+  }
+  return { app,repository,turns,records,choices,events,plugins,config,listen };
 }

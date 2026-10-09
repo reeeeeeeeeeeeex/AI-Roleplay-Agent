@@ -29,6 +29,28 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
 
+it('duplicate startup leaves the active server generation and record updates intact', async () => {
+  await server.listen();
+  const port = (server.app.server.address() as { port: number }).port;
+  const turn = server.repository.createTurn(chat, 'active-story-turn', 'normal');
+  server.repository.updateTurn(turn.id, { status: 'running', recordsStatus: 'running' });
+  const duplicate = await createApp({ ...server.config, port }, new InspectRuntime());
+  await expect(duplicate.listen()).rejects.toMatchObject({ code: 'EADDRINUSE' });
+  expect(server.repository.getTurn(turn.id)).toMatchObject({ status: 'running', recordsStatus: 'running', error: null });
+  expect(server.repository.eventsForTurn(turn.id)).toEqual([]);
+});
+
+it('successful startup recovers interrupted generation after acquiring the port', async () => {
+  const turn = server.repository.createTurn(chat, 'interrupted-story-turn', 'normal');
+  server.repository.updateTurn(turn.id, { status: 'running', recordsStatus: 'running' });
+  const config = server.config;
+  await server.app.close();
+  server = await createApp(config, new InspectRuntime());
+  expect(server.repository.getTurn(turn.id)?.status).toBe('running');
+  await server.listen();
+  expect(server.repository.getTurn(turn.id)).toMatchObject({ status: 'failed', recordsStatus: 'cancelled', error: 'Server restarted during generation.' });
+});
+
 it('web copy previews plain prose and saves one User at the expected head without generation', async () => {
   const network = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', network);
   const input = { voice: 'narrator', text: '网页写作本轮输入' };
