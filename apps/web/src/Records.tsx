@@ -10,6 +10,7 @@ import RecordHistory from './RecordHistory.js';
 import AgentTrace from './AgentTrace.js';
 import AutoSaveField from './AutoSaveField.js';
 import { flushContentEdits } from './useContentAutosave.js';
+import { useBackdropClose } from './useBackdropClose.js';
 
 const tableNames: Record<string, string> = {
   get global_state() { return t("全局状态"); },
@@ -44,6 +45,7 @@ export default function Records({
 }) {
   const [tab, setTab] = useState('memory');
   const [expanded, setExpanded] = useState(false);
+  const backdrop = useBackdropClose(() => setExpanded(false));
   const [memorySection, setMemorySection] = useState<string | null>(null);
   const [stateSection, setStateSection] = useState('global_state');
   const [memory, setMemory] = useState<any[]>([]);
@@ -108,7 +110,7 @@ export default function Records({
   }
 
   return (
-    <div className={expanded ? 'records-shade' : 'records-host'} onClick={event => { if (event.target === event.currentTarget) setExpanded(false); }}>
+    <div className={expanded ? 'records-shade' : 'records-host'} {...backdrop}>
     <aside className={`records${expanded ? ' records-expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label={expanded ? t("故事记录窗口") : undefined}>
       <header>
         <h2>{t("故事记录")}</h2>

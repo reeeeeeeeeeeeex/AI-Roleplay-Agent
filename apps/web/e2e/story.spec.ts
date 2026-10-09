@@ -1186,12 +1186,14 @@ test('developer Trace viewer shows live thinking, tool results and exact raw inp
   await dialog.getByRole('button', { name: '复制原文', exact: true }).click();
   await expect(page.getByRole('alert').filter({ hasText: '剪贴板不可用或未获授权' })).toBeVisible();
   await expect(dialog.locator('.trace-raw').filter({ hasText: 'Raw input' }).locator('pre')).toHaveText(raw);
+  await dragLeftOutside(page, dialog.locator('.trace-raw').filter({ hasText: 'Raw input' }).locator('pre'));
+  await expect(dialog).toBeVisible();
   await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__traceClipboard = text; } } }));
   await dialog.getByRole('button', { name: '复制原文', exact: true }).click();
   expect(await page.evaluate(() => (window as any).__traceClipboard)).toBe(raw);
   await dialog.getByText('Raw output · 原始响应 / SSE 流', { exact: true }).click();
   await expect(dialog.locator('.trace-raw').filter({ hasText: 'Raw output' }).locator('pre')).toHaveText(done.response);
-  await page.keyboard.press('Escape');
+  await page.mouse.click(4, 100);
   await expect(dialog).toHaveCount(0);
   expect(errors).toEqual([]);
 });
