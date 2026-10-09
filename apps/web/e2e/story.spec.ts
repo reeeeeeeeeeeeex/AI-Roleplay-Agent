@@ -37,6 +37,27 @@ async function englishInterface(page: Page) {
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
 }
 
+test('state history keeps the newest checkpoint visible and restorable after its display limit', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const state = await (await request.get(`/api/conversations/${chat.id}/state`)).json();
+  state.tables.global_state[0].current_location = 'Newest checkpoint';
+  const newest = await (await request.post(`/api/conversations/${chat.id}/state`, { data: state })).json();
+  const history = [newest, ...Array.from({ length: 100 }, (_, i) => ({ ...newest, id: `older-${i}`, tables: { global_state: [{ current_location: `Older checkpoint ${i}` }] } }))];
+  await page.route(`**/api/conversations/${chat.id}/state/history`, route => route.fulfill({ json: history }));
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  const panel = page.locator('.records details').filter({ has: page.locator('summary').filter({ hasText: '状态检查点' }) });
+  await panel.locator(':scope > summary').click();
+  const checkpoints = panel.locator(':scope > details');
+  await expect(checkpoints).toHaveCount(100);
+  await checkpoints.first().locator('summary').click();
+  await expect(checkpoints.first().locator('pre')).toContainText('Newest checkpoint');
+  const restored = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith('/state/restore'));
+  await checkpoints.first().getByRole('button', { name: '恢复为新检查点', exact: true }).click();
+  expect((await restored).postDataJSON()).toEqual({ snapshotId: newest.id });
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).id).not.toBe(newest.id);
+});
+
 async function enableUpdateNotification(page: Page) {
   // Simulate a controller change without installing a worker in the test browser.
   await page.addInitScript(() => Object.defineProperty(navigator, 'serviceWorker', {
