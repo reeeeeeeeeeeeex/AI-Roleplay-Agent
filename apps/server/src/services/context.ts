@@ -49,7 +49,7 @@ export class StoryContext implements StoryContextSource {
   }
   async searchLore(query: string, limit: number): Promise<RetrievedContext[]> {
     const haystack = query.normalize('NFKC').toLowerCase();
-    return this.lore.filter((e) => !e.constant && e.keys.some((key) => key && haystack.includes(key.normalize('NFKC').toLowerCase())) && (!e.secondaryKeys.length || e.secondaryKeys.some((key) => key && haystack.includes(key.toLowerCase()))))
+    return this.lore.filter((e) => !e.constant && e.keys.some((key) => key && haystack.includes(key.normalize('NFKC').toLowerCase())) && (!e.secondaryKeys.length || e.secondaryKeys.some((key) => key && haystack.includes(key.normalize('NFKC').toLowerCase()))))
       .sort((a, b) => a.order - b.order).slice(0, limit).map((e) => ({ source: 'lore', title: e.title, content: e.content, priority: 1000 - e.order, sourceId: e.id }));
   }
   async readMemory(limit: number) { return this.memory.slice(-limit); }

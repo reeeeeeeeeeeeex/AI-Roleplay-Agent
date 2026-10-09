@@ -9,6 +9,7 @@ import { Repository } from '../db/repository.js';
 import { executeImport } from './importer.js';
 import { scanImport } from './import-scan.js';
 import { exportStory, importStory, readStoryArchive } from './story-archive.js';
+import { StoryContext } from './context.js';
 
 let folder: string, repo: Repository;
 beforeEach(() => { folder = mkdtempSync(join(tmpdir(), 'lorebook-test-')); repo = new Repository(createDatabase(join(folder, 'test.db'))); });
@@ -25,6 +26,22 @@ it('lists complete lorebooks with entries ordered and scoped to their own book',
   const books = repo.listLorebooks();
   expect(books).toEqual([alpha, beta, empty]);
   expect(books[1]!.entries.map(entry => entry.title)).toEqual(['Lighthouse', 'Harbor']);
+});
+
+it('matches primary and secondary lore keywords with the same Unicode normalization', async () => {
+  const book = repo.createLorebook(lorebookInputSchema.parse({ name: 'City lore', entries: [
+    { keys: ['ＣＡＦÉ'], secondaryKeys: ['ＮＯＲＴＨ'], content: 'A quiet northern cafe.' },
+    { keys: ['ＣＡＦÉ'], secondaryKeys: ['south'], content: 'A separate southern cafe.' },
+    { keys: ['café'], secondaryKeys: ['north'], content: 'Disabled cafe.', enabled: false },
+  ] }));
+  const character = repo.createCharacter(characterInputSchema.parse({ name: 'Traveler' }));
+  const chat = repo.createConversation(conversationInputSchema.parse({ title: 'City walk', kind: 'solo', characterId: character.id, lorebookIds: [book.id] }));
+  const context = new StoryContext(repo, chat.id);
+  const query = 'Go NORTH to the Cafe\u0301.';
+  expect((await context.searchLore(query, 8)).map(item => item.content)).toEqual(['A quiet northern cafe.']);
+  expect((await context.dynamic(query)).filter(item => item.source === 'lore').map(item => item.content)).toEqual(['A quiet northern cafe.']);
+  expect(await context.searchLore('Go to the cafe\u0301.', 8)).toEqual([]);
+  expect(repo.getLorebook(book.id)!.entries[0]).toMatchObject({ keys: ['ＣＡＦÉ'], secondaryKeys: ['ＮＯＲＴＨ'] });
 });
 
 it('recovers legacy lore titles once and imports Tavern titles without losing entry data', async () => {
