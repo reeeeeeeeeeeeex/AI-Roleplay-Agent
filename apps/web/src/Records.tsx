@@ -1,6 +1,9 @@
+import { stateLabel } from './state-labels.js';
+import { t } from './i18n.js';
+import { proposalLabel } from './ui-labels.js';
 import { useEffect, useState } from 'react';
 import { Maximize2, Minimize2, X } from 'lucide-react';
-import { stateColumnLabels, type Conversation, type GenerationMode, type PinnedFact, type StateTableName } from '@new-ai-chat/contracts';
+import { type Conversation, type GenerationMode, type PinnedFact, type StateTableName } from '@new-ai-chat/contracts';
 import StateCollectionRow from './StateCollectionRow.js';
 import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
@@ -9,12 +12,12 @@ import AutoSaveField from './AutoSaveField.js';
 import { flushContentEdits } from './useContentAutosave.js';
 
 const tableNames: Record<string, string> = {
-  global_state: '全局状态',
-  protagonist_info: '主角信息',
-  important_characters: '重要角色',
-  protagonist_skills: '主角技能',
-  inventory: '背包物品',
-  quests_events: '任务与事件',
+  get global_state() { return t("全局状态"); },
+  get protagonist_info() { return t("主角信息"); },
+  get important_characters() { return t("重要角色"); },
+  get protagonist_skills() { return t("主角技能"); },
+  get inventory() { return t("背包物品"); },
+  get quests_events() { return t("任务与事件"); },
 };
 export default function Records({
   chat,
@@ -106,23 +109,23 @@ export default function Records({
 
   return (
     <div className={expanded ? 'records-shade' : 'records-host'} onClick={event => { if (event.target === event.currentTarget) setExpanded(false); }}>
-    <aside className={`records${expanded ? ' records-expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label={expanded ? '故事记录窗口' : undefined}>
+    <aside className={`records${expanded ? ' records-expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label={expanded ? t("故事记录窗口") : undefined}>
       <header>
-        <h2>故事记录</h2>
+        <h2>{t("故事记录")}</h2>
         <div className="records-header-actions">
-        <button aria-label={expanded ? '收起记录窗口' : '展开记录窗口'} title={expanded ? '收起记录窗口（Esc）' : '展开记录窗口'} onClick={() => setExpanded(!expanded)}>
+        <button aria-label={expanded ? t("收起记录窗口") : t("展开记录窗口")} title={expanded ? t("收起记录窗口（Esc）") : t("展开记录窗口")} onClick={() => setExpanded(!expanded)}>
           {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
-        <button aria-label={expanded ? '关闭记录窗口' : '关闭记录面板'} onClick={() => expanded ? setExpanded(false) : onClose()}>
+        <button aria-label={expanded ? t("关闭记录窗口") : t("关闭记录面板")} onClick={() => expanded ? setExpanded(false) : onClose()}>
           <X size={16} />
         </button>
         </div>
       </header>
 
-      <nav aria-label="故事记录标签页">
+      <nav aria-label={t("故事记录标签页")}>
         {[
           ['memory', 'Memory'],
-          ['state', '主角状态'],
+          ['state', t("主角状态")],
           ['planner', 'Agent'],
         ].map(([id, label]) => (
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => void selectTab(id!)}>
@@ -132,45 +135,45 @@ export default function Records({
       </nav>
 
       <div className={`records-layout${tab === 'planner' ? ' records-agent-layout' : ''}`}>
-        {expanded && tab === 'memory' && <nav className="records-section-nav" aria-label="Memory 记录导航">
-          <button className={selectedMemory === 'facts' ? 'selected' : ''} onClick={() => setMemorySection('facts')}><strong>固定事实</strong><small>仅由你维护 · {facts.length} 条</small></button>
+        {expanded && tab === 'memory' && <nav className="records-section-nav" aria-label={t("Memory 记录导航")}>
+          <button className={selectedMemory === 'facts' ? 'selected' : ''} onClick={() => setMemorySection('facts')}><strong>{t("固定事实")}</strong><small>{t("仅由你维护 ·")} {facts.length}  {t("条")}</small></button>
           {[...memory].reverse().map(entry => <button key={entry.id} className={selectedMemory === entry.id ? 'selected' : ''} onClick={() => setMemorySection(entry.id)}>
-            <strong>Stage {entry.stage}</strong><small>{String(entry.content).trim().slice(0, 60) || '空记忆标记'}</small>
+            <strong>{t("阶段 {0}", entry.stage)}</strong><small>{String(entry.content).trim().slice(0, 60) || t("空记忆标记")}</small>
           </button>)}
-          {!memory.length && <p className="muted">尚无 Memory 记录。</p>}
-          <button className={selectedMemory === 'new' ? 'selected' : ''} onClick={() => setMemorySection('new')}>手动添加记录</button>
+          {!memory.length && <p className="muted">{t("尚无 Memory 记录。")}</p>}
+          <button className={selectedMemory === 'new' ? 'selected' : ''} onClick={() => setMemorySection('new')}>{t("手动添加记录")}</button>
         </nav>}
-        {expanded && tab === 'state' && <nav className="records-section-nav" aria-label="主角状态表导航">
+        {expanded && tab === 'state' && <nav className="records-section-nav" aria-label={t("主角状态表导航")}>
           {Object.entries(state.tables ?? {}).map(([table, rows]) => <button key={table} className={stateSection === table ? 'selected' : ''} onClick={() => setStateSection(table)}>
-            <strong>{tableNames[table] ?? table}</strong><small>{(rows as any[]).length} 条记录</small>
+            <strong>{tableNames[table] ?? table}</strong><small>{(rows as any[]).length}  {t("条记录")}</small>
           </button>)}
         </nav>}
       <div className={`records-content${tab === 'planner' ? ' records-agent-content' : ''}`}>
         {tab === 'memory' && (
           <>
             <details open hidden={expanded && selectedMemory !== 'facts'}>
-              <summary>固定事实 · 仅由你修改</summary>
+              <summary>{t("固定事实 · 仅由你修改")}</summary>
               {facts.map(fact => <article className="memory-entry" key={fact.id}>
-                <AutoSaveField key={`${fact.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:fact:${fact.id}`} initial={fact.content} label="固定事实内容" disabled={disabled || busy} onError={onError}
+                <AutoSaveField key={`${fact.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:fact:${fact.id}`} initial={fact.content} label={t("固定事实内容")} disabled={disabled || busy} onError={onError}
                   onSave={async (content, previous) => {
                     const saved = await api(`/conversations/${chat.id}/facts`, 'POST', { id: fact.id, content, previous, head: chat.headMessageId }, { keepalive: true });
                     setFacts(items => items.map(item => item.id === fact.id ? saved : item)); onChanged(); return saved.content;
                   }} />
-                {fact.sourceMessageId && <button onClick={() => onSource(fact.sourceMessageId!)}>查看来源</button>}
-                  <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/facts/${fact.id}`, {}, 'DELETE')}>取消固定</button>
+                {fact.sourceMessageId && <button onClick={() => onSource(fact.sourceMessageId!)}>{t("查看来源")}</button>}
+                  <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/facts/${fact.id}`, {}, 'DELETE')}>{t("取消固定")}</button>
               </article>)}
-              <AutoSaveField key={`new-fact:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:new-fact`} initial="" label="添加固定事实" placeholder="填写固定事实，离开自动保存" disabled={disabled || busy} resetOnSave lockWhileSaving onError={onError}
+              <AutoSaveField key={`new-fact:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:new-fact`} initial="" label={t("添加固定事实")} placeholder={t("填写固定事实，离开自动保存")} disabled={disabled || busy} resetOnSave lockWhileSaving onError={onError}
                 onSave={async content => { await api(`/conversations/${chat.id}/facts`, 'POST', { content, head: chat.headMessageId }, { keepalive: true }); onChanged(); }} />
             </details>
             <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory/generate`)}>
-              {busy ? '更新中…' : '立即生成 Memory'}
+              {busy ? t("更新中…") : t("立即生成 Memory")}
             </button>
             {[...memory].reverse().map((entry) => (
               <article className="memory-entry" key={entry.id} hidden={expanded && selectedMemory !== entry.id}>
-                <div className="memory-stage">Stage {entry.stage}</div>
-                <small className="muted">{entry.coverage ? `覆盖 ${entry.coverage.storyTurnIds.length} 个完整回合` : '覆盖范围：历史记录未提供'}</small>
-                {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>起点</button><button onClick={() => onSource(entry.coverage.endMessageId)}>终点</button></div>}
-                <AutoSaveField key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content} label={`Memory Stage ${entry.stage}`} placeholder="（空记忆标记）" disabled={disabled || busy} onError={onError}
+                <div className="memory-stage">{t("阶段 {0}", entry.stage)}</div>
+                <small className="muted">{entry.coverage ? t("覆盖 {0} 个完整回合", entry.coverage.storyTurnIds.length) : t("覆盖范围：历史记录未提供")}</small>
+                {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>{t("起点")}</button><button onClick={() => onSource(entry.coverage.endMessageId)}>{t("终点")}</button></div>}
+                <AutoSaveField key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content} label={t("阶段 {0}", entry.stage)} placeholder={t("（空记忆标记）")} disabled={disabled || busy} onError={onError}
                   onSave={async (content, previous) => {
                     const saved = await api(`/conversations/${chat.id}/memory/${entry.id}`, 'PATCH', { content, previous, head: chat.headMessageId }, { keepalive: true });
                     setMemory(items => items.map(item => item.id === entry.id ? saved : item)); onChanged();
@@ -178,8 +181,8 @@ export default function Records({
               </article>
             ))}
             <details open={expanded || undefined} hidden={expanded && selectedMemory !== 'new'}>
-              <summary>手动添加记录</summary>
-              <AutoSaveField key={`new-memory:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:new-memory`} initial="" label="手动记忆" placeholder="填写记忆，离开自动保存" disabled={disabled || busy} resetOnSave lockWhileSaving onError={onError}
+              <summary>{t("手动添加记录")}</summary>
+              <AutoSaveField key={`new-memory:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:new-memory`} initial="" label={t("手动记忆")} placeholder={t("填写记忆，离开自动保存")} disabled={disabled || busy} resetOnSave lockWhileSaving onError={onError}
                 onSave={async content => { await api(`/conversations/${chat.id}/memory`, 'POST', { content, head: chat.headMessageId }, { keepalive: true }); onChanged(); }} />
             </details>
 
@@ -188,7 +191,7 @@ export default function Records({
 
         {tab === 'state' && (
           <>
-            <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/state/generate`)}>AI 更新</button>
+            <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/state/generate`)}>{t("AI 更新")}</button>
             {Object.entries(state.tables ?? {}).map(([table, rows]) => (
                 <details className="state-table" key={table} hidden={expanded && stateSection !== table} open={expanded || table === 'global_state' || table === 'protagonist_info'}>
                   <summary>
@@ -203,8 +206,8 @@ export default function Records({
                         .filter(([key]) => key !== 'row_id')
                         .map(([key, value]) => (
                           <div key={key}>
-                            <dt>{stateColumnLabels[table as StateTableName]?.[key] ?? key}</dt>
-                            <dd><AutoSaveField key={`${chat.headMessageId}:${table}:${row.row_id}:${key}`} draftKey={`${chat.id}:${chat.headMessageId}:state:${table}:${row.row_id}:${key}`} initial={String(value ?? '')} label={`${tableNames[table]} ${row.row_id} ${stateColumnLabels[table as StateTableName]?.[key] ?? key}`} disabled={disabled || busy} onError={onError}
+                            <dt>{stateLabel(key)}</dt>
+                            <dd><AutoSaveField key={`${chat.headMessageId}:${table}:${row.row_id}:${key}`} draftKey={`${chat.id}:${chat.headMessageId}:state:${table}:${row.row_id}:${key}`} initial={String(value ?? '')} label={`${tableNames[table]} ${row.row_id} ${stateLabel(key)}`} disabled={disabled || busy} onError={onError}
                               onSave={async (content, previous) => {
                                 const saved = await api(`/conversations/${chat.id}/state/cell`, 'PATCH', { table, rowId: row.row_id, column: key, content, previous, head: chat.headMessageId }, { keepalive: true });
                                 setState(saved); onChanged();
@@ -213,7 +216,7 @@ export default function Records({
                         ))}
                     </dl>
                   ))}
-                  {!(rows as any[]).length && <p className="muted" style={{ padding: '6px 0' }}>暂无记录</p>}
+                  {!(rows as any[]).length && <p className="muted" style={{ padding: '6px 0' }}>{t("暂无记录")}</p>}
                 </details>
               ))}
           </>
@@ -221,21 +224,21 @@ export default function Records({
 
         <div className="records-agent-view" hidden={tab !== 'planner'}>
           <AgentTrace key={chat.id} chatId={chat.id} version={version} activeTurnId={activeTurnId} expanded={expanded} visible={tab === 'planner'} onError={onError}>
-            <h3 className="planner-status">{generationMode === 'plain' ? '普通写作' : generationMode === 'planner' ? 'Planner → Writer' : '统一 Writer Agent'}</h3>
+            <h3 className="planner-status">{generationMode === 'plain' ? t("普通写作") : generationMode === 'planner' ? 'Planner → Writer' : t("统一 Writer Agent")}</h3>
             {proposals.map((p) => (
               <article className="proposal" key={p.id}>
-                <small className="muted">{p.kind === 'state' ? '状态提案' : '世界事件'} · {p.status}</small>
+                <small className="muted">{p.kind === 'state' ? t("状态提案") : t("世界事件")} · {proposalLabel(p.status)}</small>
                 <pre>{JSON.stringify(p.payload, null, 2)}</pre>
                 <div>
                   {(p.status === 'pending' ? ['apply', 'reject'] : p.status === 'applied' ? ['undo'] : []).map((action) => (
                     <button disabled={disabled || busy} key={action} onClick={() => void run(`/proposals/${p.id}/${action}`)}>
-                      {{ apply: '应用', reject: '拒绝', undo: '撤销' }[action]}
+                      {{ apply: t("应用"), reject: t("拒绝"), undo: t("撤销") }[action]}
                     </button>
                   ))}
                 </div>
               </article>
             ))}
-            {activity.length > 0 && <details className="activity"><summary>当前回合事件 · 最近 80 条</summary><pre>{JSON.stringify(activity, null, 2)}</pre></details>}
+            {activity.length > 0 && <details className="activity"><summary>{t("当前回合事件 · 最近 80 条")}</summary><pre>{JSON.stringify(activity, null, 2)}</pre></details>}
             {tab === 'planner' && <RecordHistory chatId={chat.id} tab={tab} version={version} disabled={disabled || busy} onChanged={onChanged} onError={onError} />}
           </AgentTrace>
         </div>

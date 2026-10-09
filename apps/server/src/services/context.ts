@@ -1,3 +1,5 @@
+import { uiText } from '@new-ai-chat/contracts';
+import { AppError } from '@new-ai-chat/contracts';
 import { estimateTokens, type RetrievedContext, type StoryContextSource, type RuntimeCharacter } from '@new-ai-chat/agent-runtime';
 import type { MessageNode, ContextReport } from '@new-ai-chat/contracts';
 import { historyStartIndex, stateColumnLabels } from '@new-ai-chat/contracts';
@@ -19,13 +21,13 @@ export class StoryContext implements StoryContextSource {
     const branch = [...repository.getActiveBranch(conversationId), ...(virtualMessage ? [virtualMessage] : [])];
     const start = chat.historyStartMessageId ? repository.getMessage(chat.historyStartMessageId) : null;
     const startIndex = start ? historyStartIndex(branch, start) : 0;
-    if (chat.historyStartMessageId && (!start || startIndex < 0)) throw new Error('固定发送起点不在当前分支，请重新选择起点或取消固定起点。');
+    if (chat.historyStartMessageId && (!start || startIndex < 0)) throw new AppError("固定发送起点不在当前分支，请重新选择起点或取消固定起点。");
     this.fixedHistory = Boolean(start);
     const history = branch.slice(startIndex).filter(message => message.role !== 'system');
     const ceiling = options.choiceHistoryLimit ?? (this.fixedHistory ? 0 : settings.historyMessageLimit);
     this.history = ceiling > 0 ? history.slice(-ceiling) : history;
-    this.contextReport.items.push(...branch.filter(message => message.role !== 'system' && !this.history.includes(message)).map(message => ({ id: message.id, source: 'history' as const, title: `${message.role} · ${message.id.slice(0, 8)}`, role: message.role, included: false, reason: !history.includes(message) ? '固定发送起点之前' : '历史消息上限', estimatedTokens: estimateTokens(message.content) + 32, messageIds: [message.id] })));
-    if (start) this.contextReport.items.push({ id: 'history-start', source: 'control', title: '固定发送起点', role: 'user', included: false, reason: options.choiceHistoryLimit === undefined ? '从选定位置开始，覆盖全局条数上限；超出上下文时提示调整起点' : '行动选项以固定起点为最早边界，再取独立历史条数', estimatedTokens: 0, messageIds: [start.id] });
+    this.contextReport.items.push(...branch.filter(message => message.role !== 'system' && !this.history.includes(message)).map(message => ({ id: message.id, source: 'history' as const, title: `${message.role} · ${message.id.slice(0, 8)}`, role: message.role, included: false, reason: !history.includes(message) ? '固定发送起点之前' : '历史消息上限', reasonText: (!history.includes(message) ? uiText("固定发送起点之前") : uiText("历史消息上限")), estimatedTokens: estimateTokens(message.content) + 32, messageIds: [message.id] })));
+    if (start) this.contextReport.items.push({ id: 'history-start', source: 'control', title: '固定发送起点', titleText: uiText("固定发送起点"), role: 'user', included: false, reason: options.choiceHistoryLimit === undefined ? '从选定位置开始，覆盖全局条数上限；超出上下文时提示调整起点' : '行动选项以固定起点为最早边界，再取独立历史条数', reasonText: (options.choiceHistoryLimit === undefined ? uiText("从选定位置开始，覆盖全局条数上限；超出上下文时提示调整起点") : uiText("行动选项以固定起点为最早边界，再取独立历史条数")), estimatedTokens: 0, messageIds: [start.id] });
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
       .map(({ id, name, description, personality, scenario, exampleDialogue, systemPrompt, postHistoryInstructions }) => ({ id, name, description, personality, scenario: group || chat.scenario ? '' : scenario, exampleDialogue, systemPrompt, postHistoryInstructions }));
@@ -67,7 +69,7 @@ export class StoryContext implements StoryContextSource {
     const older = (await this.searchMemory(query, this.memory.length)).filter(item => !recent.includes(item)).slice(0, 3);
     const lore = await this.searchLore(query, 12);
     const excluded: RetrievedContext[] = [...this.memory.filter(item => !recent.includes(item) && !older.includes(item)), ...this.lore.filter(item => !item.constant && !lore.some(match => match.sourceId === item.id)).map(item => ({ source: 'lore' as const, title: item.title, content: item.content, sourceId: item.id, priority: 0 }))];
-    this.contextReport.items.push(...excluded.map(item => ({ id: item.sourceId!, source: item.source, title: item.title, role: 'assistant' as const, included: false, reason: item.source === 'memory' ? '非最近两阶段，且未进入相关旧记忆前三项' : '未匹配 Lore 关键词或超过检索上限', estimatedTokens: estimateTokens(item.content) + estimateTokens(item.title) })));
+    this.contextReport.items.push(...excluded.map(item => ({ id: item.sourceId!, source: item.source, title: item.title, titleText: item.source === 'memory' ? uiText('Stage {0}', item.title.replace(/^Stage /, '')) : undefined, role: 'assistant' as const, included: false, reason: item.source === 'memory' ? '非最近两阶段，且未进入相关旧记忆前三项' : '未匹配 Lore 关键词或超过检索上限', reasonText: (item.source === 'memory' ? uiText("非最近两阶段，且未进入相关旧记忆前三项") : uiText("未匹配 Lore 关键词或超过检索上限")), estimatedTokens: estimateTokens(item.content) + estimateTokens(item.title) })));
     return [...this.facts, ...lore, ...recent, ...older, ...(this.world.length ? [{ source: 'lore' as const, title: 'Applied world facts', content: JSON.stringify(this.world), priority: 1100 }] : []), ...(this.state ? [{ source: 'state' as const, title: 'Current state', content: JSON.stringify({ tables: this.state.tables, column_labels: stateColumnLabels }), priority: 500, sourceId: this.state.id }] : [])];
   }
 }

@@ -1,5 +1,7 @@
+import { t, diagnosticText } from './i18n.js';
+import type { UiText } from '@new-ai-chat/contracts';
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
+  constructor(readonly status: number, readonly original: string, readonly errorText?: UiText) { super(diagnosticText(errorText, original)); }
 }
 
 export async function api<T=any>(path:string, method='GET', value?:unknown, options: { keepalive?: boolean; signal?: AbortSignal } = {}):Promise<T> {
@@ -7,14 +9,14 @@ export async function api<T=any>(path:string, method='GET', value?:unknown, opti
   // Browsers cap keepalive bodies at 64 KiB; normal large edits must still save.
   const keepalive = options.keepalive === true && new Blob([bodyText ?? '']).size < 60_000;
   const response=await fetch(`/api${path}`,{keepalive,method,...(options.signal ? { signal: options.signal } : {}),...(bodyText===undefined?{}:{headers:{'Content-Type':'application/json'},body:bodyText})});
-  const body=await response.json(); if(!response.ok)throw new ApiError(response.status,body.error??`HTTP ${response.status}`); return body as T;
+  const body=await response.json(); if(!response.ok)throw new ApiError(response.status,body.error??`HTTP ${response.status}`,body.errorText); return body as T;
 }
 export async function streamTurn(id:string,onEvent:(event:any)=>void,signal:AbortSignal) {
   let after=0;
   for(let attempt=0;attempt<4;attempt++) {
     try {
       const response=await fetch(`/api/turns/${id}/events?after=${after}`,{signal});
-      if(!response.ok||!response.body)throw new Error('无法连接生成事件流。');
+      if(!response.ok||!response.body)throw new Error(t("无法连接生成事件流。"));
       const reader=response.body.getReader(); const decoder=new TextDecoder(); let buffer='';
       try {
         while(true) {
@@ -33,5 +35,5 @@ export async function streamTurn(id:string,onEvent:(event:any)=>void,signal:Abor
     } catch(error) {if(signal.aborted||attempt===3)throw error;}
     await new Promise((resolve)=>setTimeout(resolve,500*(attempt+1)));
   }
-  throw new Error('事件连接已断开，可刷新页面恢复。');
+  throw new Error(t("事件连接已断开，可刷新页面恢复。"));
 }

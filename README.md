@@ -14,7 +14,7 @@ AI Roleplay Agent 是一个**本地优先的角色扮演与长篇故事创作 We
 
 你可以连接模型 API 与角色共同创作，也可以自己写完整个故事，或将提示词复制到 AI 网页，再把回复粘贴回来。聊天、设定和记录保存在本机；使用 API 时，选入请求的内容会发送给你配置的服务商。
 
-项目遵循 **Minimalist**：清楚的创作流程、直接的内容编辑，以及能解释来源的上下文。目前处于 **Alpha**，界面以中文为主，功能和数据格式仍在演进。
+项目遵循 **Minimalist**：清楚的创作流程、直接的内容编辑，以及能解释来源的上下文。目前处于 **Alpha**，界面支持中文和英文，功能和数据格式仍在演进。
 
 ### 能用它做什么
 
@@ -38,10 +38,12 @@ pnpm start
 
 打开 **[http://127.0.0.1:4310](http://127.0.0.1:4310)**。Windows 用户安装依赖并构建后，也可以双击 [`Start.cmd`](Start.cmd) 启动并自动打开页面。
 
+在左下角 **设置 / Settings → 语言 / Language** 选择中文或 English，再点击 **保存 / Save**。语言仅影响当前浏览器的界面，刷新后保留；故事内容与模型提示词不会被翻译。
+
 第一次使用：
 
 1. 创建角色和主角资料，或从「导入故事」导入现有数据。
-2. 使用 API 写作时，在「通用设置 → 模型」添加并选择连接。支持 **Chat Completions、Anthropic Messages、OpenAI Responses**；填写对应协议的实际 API Base URL、模型 ID 和自己的密钥。
+2. 使用 API 写作时，在「设置 → 模型」添加并选择连接。支持 **Chat Completions、Anthropic Messages、OpenAI Responses**；填写对应协议的实际 API Base URL、模型 ID 和自己的密钥。
 3. 开启故事，按需要绑定主角、世界书和场景，在聊天顶部填写作者注释。
 4. 发送主角行动或用户旁白，让角色回应；想手动创作时，开启输入框上方的全局手动输入开关。
 
@@ -91,7 +93,7 @@ AI Roleplay Agent is a **local-first WebUI for roleplay and long-form storytelli
 
 Connect a model API to write with your characters, write every voice yourself, or copy a prompt to an AI website and paste the reply back. Chats, settings, and records are stored on your machine. When you use an API, the content selected for that request is sent to your configured provider.
 
-The project follows a **Minimalist** approach: clear writing workflows, direct editing, and inspectable context. It is currently **Alpha**. The interface is primarily Chinese, and features and data formats are still evolving.
+The project follows a **Minimalist** approach: clear writing workflows, direct editing, and inspectable context. It is currently **Alpha**. The interface supports Chinese and English; features and data formats are still evolving.
 
 ### What you can do
 
@@ -115,8 +117,10 @@ pnpm start
 
 Open **[http://127.0.0.1:4310](http://127.0.0.1:4310)**. On Windows, after installing dependencies and building, [`Start.cmd`](Start.cmd) starts the app and opens the browser.
 
+Choose Chinese or English in **设置 / Settings → 语言 / Language**, then select **保存 / Save**. The preference is saved in this browser. Story content and model prompts are not translated.
+
 1. Create a character and protagonist profile, or import existing data through **Import Stories / 导入故事**.
-2. For API writing, add and select a connection in **General Settings → Models / 通用设置 → 模型**. Supported protocols are **Chat Completions, Anthropic Messages, and OpenAI Responses**. Supply the actual API base URL for that protocol, a model ID, and your own key.
+2. For API writing, add and select a connection in **Settings → Models / 设置 → 模型**. Supported protocols are **Chat Completions, Anthropic Messages, and OpenAI Responses**. Supply the actual API base URL for that protocol, a model ID, and your own key.
 3. Start a story, attach a Persona and lorebooks as needed, and add scene details or an author's note.
 4. Send a protagonist action or user narration to generate a reply. Enable the global manual-input switch above the composer when writing manually.
 

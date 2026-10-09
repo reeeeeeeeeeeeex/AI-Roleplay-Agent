@@ -1,3 +1,5 @@
+import { reasoningLabel } from './ui-labels.js';
+import { t } from './i18n.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from './api';
 import AvatarField from './AvatarField';
@@ -9,12 +11,12 @@ import { useBackdropClose } from './useBackdropClose';
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
 export const titles: Record<Collection, string> = {
-  characters: '角色',
-  personas: '主角',
-  connections: '模型连接',
-  lorebooks: '世界书',
-  groups: '群组',
-  conversations: '故事资料',
+  get characters() { return t("角色"); },
+  get personas() { return t("主角"); },
+  get connections() { return t("模型连接"); },
+  get lorebooks() { return t("世界书"); },
+  get groups() { return t("群组"); },
+  get conversations() { return t("故事资料"); },
 };
 
 export const defaults: Record<Collection, any> = {
@@ -36,7 +38,7 @@ export const defaults: Record<Collection, any> = {
   lorebooks: { name: '', description: '', entries: [] },
   groups: { name: '', avatarPath: null, memberIds: [], scenario: '' },
   conversations: {
-    title: '新的故事',
+    get title() { return t("新的故事"); },
     authorNote: '',
     kind: 'solo',
     characterId: null,
@@ -69,7 +71,7 @@ export default function Editor({
   const automatic = kind !== 'connections' && kind !== 'lorebooks';
   const autosave = useContentAutosave<any>({ initial: { ...defaults[kind], ...initial }, draftKey: `${kind}:${initial?.id ?? 'new'}`, enabled: automatic,
     onSave: async draft => {
-      if (!String(draft.name ?? draft.title ?? '').trim()) throw new Error('请填写名称。');
+      if (!String(draft.name ?? draft.title ?? '').trim()) throw new Error(t("请填写名称。"));
       record.current = await onSave({ ...draft, id: record.current?.id ?? draft.id, expectedUpdatedAt: record.current?.updatedAt ?? draft.updatedAt });
       return { saved: { ...draft, id: record.current.id, updatedAt: record.current.updatedAt } };
     },
@@ -104,9 +106,9 @@ export default function Editor({
       });
       if (request !== modelRequest.current) return;
       setModels(result.models);
-      setModelsNotice(result.models.length ? `已获取 ${result.models.length} 个模型；选择一个，也可继续手填。` : '未返回可用模型，请手动填写模型 ID。');
+      setModelsNotice(result.models.length ? t("已获取 {0} 个模型；选择一个，也可继续手填。", result.models.length) : t("未返回可用模型，请手动填写模型 ID。"));
     } catch (error) {
-      if (request === modelRequest.current) setModelsNotice(error instanceof Error ? error.message : '获取模型失败');
+      if (request === modelRequest.current) setModelsNotice(error instanceof Error ? error.message : t("获取模型失败"));
     } finally {
       if (request === modelRequest.current) setModelsBusy(false);
     }
@@ -148,7 +150,7 @@ export default function Editor({
     <label key={key}>
       {label}
       <select value={value[key] ?? ''} onChange={(event) => set(key, event.target.value || null, true)}>
-        {empty && <option value="">未选择</option>}
+        {empty && <option value="">{t("未选择")}</option>}
         {options.map(([id, name]) => (
           <option key={id} value={id}>
             {name}
@@ -178,7 +180,7 @@ export default function Editor({
           {item.name}
         </label>
       ))}
-      {!items.length && <small className="muted">请先在资料管理中创建。</small>}
+      {!items.length && <small className="muted">{t("请先在资料管理中创建。")}</small>}
     </fieldset>
   );
 
@@ -197,10 +199,10 @@ export default function Editor({
   return (
     <>
       <div className="modal-shade" style={{ zIndex }} {...backdrop}>
-        <section className={`modal${kind === 'conversations' || kind === 'characters' || kind === 'personas' ? ' editor-wide-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`编辑${titles[kind]}`}>
+        <section className={`modal${kind === 'conversations' || kind === 'characters' || kind === 'personas' ? ' editor-wide-modal' : ''}`} role="dialog" aria-modal="true" aria-label={t("编辑{0}", titles[kind])}>
           <header>
-            <h2>{record.current?.id ? titles[kind] : `创建${titles[kind]}`}</h2>
-            <button onClick={() => void close()} aria-label="关闭">✕</button>
+            <h2>{record.current?.id ? titles[kind] : t("创建{0}", titles[kind])}</h2>
+            <button onClick={() => void close()} aria-label={t("关闭窗口")}>✕</button>
           </header>
 
           <form
@@ -217,64 +219,63 @@ export default function Editor({
           >
             {kind === 'conversations' ? (
               <>
-                {field('title', '故事标题')}
-                {select('kind', '聊天类型', [
-                  ['solo', '单聊'],
-                  ['group', '群聊'],
+                {field('title', t("故事标题"))}
+                {select('kind', t("聊天类型"), [
+                  ['solo', t("单聊")],
+                  ['group', t("群聊")],
                 ])}
                 {select(
                   value.kind === 'solo' ? 'characterId' : 'groupId',
-                  value.kind === 'solo' ? '角色' : '群组',
+                  value.kind === 'solo' ? t("角色") : t("群组"),
                   (data[value.kind === 'solo' ? 'characters' : 'groups'] ?? []).map((v) => [v.id, v.name]),
                   true
                 )}
                 <label>
-                  绑定主角（留空跟随全局默认）
-                  <PersonaPicker
+                  {t("绑定主角（留空跟随全局默认）")}<PersonaPicker
                     value={value.personaId ?? null}
                     personas={data.personas ?? []}
-                    emptyLabel="跟随全局默认"
+                    emptyLabel={t("跟随全局默认")}
                     defaultPersonaId={defaultPersonaId}
                     disabled={busy}
                     onChange={(id) => set('personaId', id, true)}
                     onCreatePersona={() => setCreatingPersona(true)}
                   />
                 </label>
-                {choices('lorebookIds', '关联世界书', data.lorebooks ?? [])}
-                {field('scenario', '当前聊天场景（留空使用默认场景）', true)}
+                {choices('lorebookIds', t("关联世界书"), data.lorebooks ?? [])}
+                {field('scenario', t("当前聊天场景（留空使用默认场景）"), true)}
               </>
             ) : (
-              field('name', '名称')
+              field('name', t("名称"))
             )}
 
           {(kind === 'characters' || kind === 'personas') && (
             <AvatarField
-              label={kind === 'characters' ? '角色头像' : '主角头像'}
+              label={kind === 'characters' ? t("角色头像") : t("主角头像")}
               value={value.avatarPath}
               disabled={busy}
               onChange={(url) => set('avatarPath', url, true)}
             />
           )}
 
-          {(kind === 'characters' || kind === 'personas') && field('description', '描述', true)}
+          {(kind === 'characters' || kind === 'personas') && field('description', t("描述"), true)}
 
           {kind === 'personas' && <fieldset className="persona-state-template">
-            <legend>初始主角状态</legend>
-            <p className="muted">首次发送消息时复制到当前故事，之后由故事独立更新。姓名沿用上方名称。</p>
-            {templateField('gender_age', '性别／年龄')}
-            {templateField('appearance', '外貌', 4)}
-            {templateField('occupation', 'Occupation / 身份与地位')}
-            {templateField('personality', '性格', 4)}
-            {templateField('current_outfit', 'Current Outfit / 当前穿搭', 4)}
-            {templateField('past_experience_before_story', 'Past Experience Before Story / 故事前经历', 6)}
+            <legend>{t("初始主角状态")}</legend>
+            <p className="muted">{t("首次发送消息时复制到当前故事，之后由故事独立更新。姓名沿用上方名称。")}</p>
+            {templateField('gender_age', t("性别／年龄"))}
+            {templateField('appearance', t("外貌"), 4)}
+            {templateField('occupation', t("Occupation / 身份与地位"))}
+            {templateField('personality', t("性格"), 4)}
+            {templateField('current_outfit', t("Current Outfit / 当前穿搭"), 4)}
+            {templateField('past_experience_before_story', t("Past Experience Before Story / 故事前经历"), 6)}
             <div className="persona-skills">
               <div className="persona-skills-header">
-                <h3>初始技能</h3>
-                <button type="button" onClick={() => set('stateTemplate', { ...template, skills: [...(template.skills ?? []), { skill_name: '', skill_type: '', skill_level: '', effect_description: '' }] })}>添加技能</button>
+                <h3>{t("初始技能")}</h3>
+                <button type="button" onClick={() => set('stateTemplate', { ...template, skills: [...(template.skills ?? []), { skill_name: '', skill_type: '', skill_level: '', effect_description: '' }] })}>{t("添加技能")}</button>
               </div>
             {(template.skills ?? []).map((skill: any, index: number) => <fieldset className="persona-skill" key={index}>
-              <legend>技能 {index + 1}</legend>
-              {([['skill_name', '技能名称'], ['skill_type', '技能类型'], ['skill_level', '等级／阶段'], ['effect_description', '效果描述']] as const).map(([key, label]) => {
+              <legend>{t("技能")} {index + 1}</legend>
+              {([['skill_name', t("技能名称")], ['skill_type', t("技能类型")], ['skill_level', t("等级／阶段")], ['effect_description', t("效果描述")]] as const).map(([key, label]) => {
                 const change = (text: string) => {
                   const skills = [...template.skills]; skills[index] = { ...skill, [key]: text };
                   set('stateTemplate', { ...template, skills });
@@ -283,72 +284,71 @@ export default function Editor({
                   ? <PersonaTextarea rows={3} value={skill[key] ?? ''} onChange={change} />
                   : <input value={skill[key] ?? ''} onChange={event => change(event.target.value)} />}</label>;
               })}
-              <button type="button" onClick={() => set('stateTemplate', { ...template, skills: template.skills.filter((_: any, i: number) => i !== index) })}>删除技能</button>
+              <button type="button" onClick={() => set('stateTemplate', { ...template, skills: template.skills.filter((_: any, i: number) => i !== index) })}>{t("删除技能")}</button>
             </fieldset>)}
             </div>
           </fieldset>}
 
           {kind === 'characters' && (
             <>
-              {field('personality', '性格', true)}
-              {field('scenario', '场景', true)}
-              {field('firstMessage', '开场白', true)}
+              {field('personality', t("性格"), true)}
+              {field('scenario', t("场景"), true)}
+              {field('firstMessage', t("开场白"), true)}
               <details>
-                <summary>高级角色指令</summary>
-                {field('exampleDialogue', '示例对白', true)}
-                {field('systemPrompt', '角色指令', true)}
-                {field('postHistoryInstructions', '后置指令', true)}
+                <summary>{t("高级角色指令")}</summary>
+                {field('exampleDialogue', t("示例对白"), true)}
+                {field('systemPrompt', t("角色指令"), true)}
+                {field('postHistoryInstructions', t("后置指令"), true)}
               </details>
             </>
           )}
 
           {kind === 'connections' && (
             <>
-              {select('protocol', 'API 协议', [
+              {select('protocol', t("API 协议"), [
                 ['openai-chat-completions', 'Chat Completions'],
                 ['anthropic-messages', 'Anthropic Messages'],
                 ['openai-responses', 'OpenAI Responses'],
               ])}
               {field('baseUrl', 'Base URL')}
               <div className="model-id-row">
-                {field('model', '模型 ID')}
+                {field('model', t("模型 ID"))}
                 <button type="button" onClick={() => void fetchModels()} disabled={modelsBusy || !value.baseUrl?.trim()}>
-                  {modelsBusy ? '获取中…' : '自动获取'}
+                  {modelsBusy ? t("获取中…") : t("自动获取")}
                 </button>
               </div>
               {modelsNotice && <small className="muted" role="status">{modelsNotice}</small>}
               {models.length > 0 && <label>
-                可用模型
-                <select value={models.includes(value.model) ? value.model : ''} onChange={(e) => { if (e.target.value) set('model', e.target.value); }}>
-                  <option value="">请选择模型</option>
+                {t("可用模型")}<select value={models.includes(value.model) ? value.model : ''} onChange={(e) => { if (e.target.value) set('model', e.target.value); }}>
+                  <option value="">{t("请选择模型")}</option>
                   {models.map((model) => <option key={model} value={model}>{model}</option>)}
                 </select>
               </label>}
-              {field('apiKey', initial?.id ? 'API Key（留空保留已保存值）' : 'API Key', false, 'password')}
+              {field('apiKey', initial?.id ? t("API Key（留空保留已保存值）") : 'API Key', false, 'password')}
               <div className="two-col">
-                {field('temperature', `温度（0–${temperatureMax}）`, false, 'number', { min: 0, max: temperatureMax, step: 0.1 })}
-                {field('maxTokens', '最大输出 tokens', false, 'number')}
-                {field('contextWindow', '上下文窗口 tokens（默认 1000000）', false, 'number')}
+                {field('temperature', t("温度（0–{0}）", temperatureMax), false, 'number', { min: 0, max: temperatureMax, step: 0.1 })}
+                {field('maxTokens', t("最大输出 tokens"), false, 'number')}
+                {field('contextWindow', t("上下文窗口 tokens（默认 1000000）"), false, 'number')}
               </div>
               {select(
                 'reasoning',
-                '推理强度',
-                ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((v) => [v, v])
+                t("推理强度"),
+                ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((v) => [v, reasoningLabel(v)])
               )}
-              {json('headers', '自定义请求头 JSON')}
+              {json('headers', t("自定义请求头 JSON"))}
             </>
           )}
 
           {kind === 'groups' && (
             <>
               <AvatarField
-                label="群封面图片"
+                label={t("群封面图片")}
                 value={value.avatarPath}
                 disabled={busy}
                 onChange={(url) => set('avatarPath', url, true)}
               />
-              {choices('memberIds', '成员（按选择顺序）', data.characters ?? [])}
-              {field('scenario', '群聊场景', true)}
+              {choices('memberIds', t("成员（按选择顺序）"), data.characters ?? [])}
+              {field('scenario', t("群聊场景"), true)}
             </>
           )}
 
@@ -356,9 +356,9 @@ export default function Editor({
 
           <footer>
             {automatic ? <>
-              {autosave.error ? <p className="error" role="alert">{autosave.error}</p> : <small className="muted" role="status">{autosave.status === 'saving' ? '保存中…' : autosave.dirty ? '离开编辑框自动保存' : autosave.status === 'saved' ? '已自动保存' : '点击内容编辑，离开自动保存'}</small>}
-              <button type="button" onClick={() => void close()}>关闭</button>
-            </> : <><button type="button" onClick={onClose}>取消</button><button className="primary" disabled={busy} type="submit">{busy ? '保存中…' : '保存'}</button></>}
+              {autosave.error ? <p className="error" role="alert">{autosave.error}</p> : <small className="muted" role="status">{autosave.status === 'saving' ? t("保存中…") : autosave.dirty ? t("离开编辑框自动保存") : autosave.status === 'saved' ? t("已自动保存") : t("点击内容编辑，离开自动保存")}</small>}
+              <button type="button" onClick={() => void close()}>{t("关闭窗口")}</button>
+            </> : <><button type="button" onClick={onClose}>{t("取消")}</button><button className="primary" disabled={busy} type="submit">{busy ? t("保存中…") : t("保存")}</button></>}
           </footer>
         </form>
       </section>
@@ -418,7 +418,7 @@ export function JsonField({ label, initial, onChange }: { label: string; initial
             setError('');
             e.target.setCustomValidity('');
           } catch {
-            setError('JSON 格式不完整');
+            setError(t("JSON 格式不完整"));
             e.target.setCustomValidity('Invalid JSON');
           }
         }}

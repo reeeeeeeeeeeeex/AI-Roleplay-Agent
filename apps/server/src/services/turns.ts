@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
 import { fallbackPlan, formatWebPrompt, validatePlan, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
 import { seedStateFromPersona, type ManualMessageInput, type TurnRequest, type TurnRecord, type TurnPlan, type SpeakerRef, type TurnProgress, type InterruptedOutput } from '@new-ai-chat/contracts';
@@ -12,7 +13,7 @@ export class TurnService {
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime, readonly events: EventBroker,
     private postprocess: (chat: string, signal: AbortSignal, trace?: BaseAgentRequest['trace']) => Promise<void> = async () => {}, private plugins?: InternalPluginHost) {}
   busy(chat: string) { return this.active.has(chat); }
-  assertIdle(chat: string) { if (this.busy(chat)) throw Object.assign(new Error('Generation is active. Stop it before editing this conversation.'), { statusCode: 409 }); }
+  assertIdle(chat: string) { if (this.busy(chat)) throw Object.assign(new AppError("Generation is active. Stop it before editing this conversation."), { statusCode: 409 }); }
   async idle(chat: string) { await this.active.get(chat)?.done; }
   async shutdown() { for (const task of this.active.values()) task.controller.abort(); await Promise.all([...this.active.values()].map((task) => task.done)); }
   cancel(id: string): boolean { const task = [...this.active.values()].find((task) => task.id === id); task?.controller.abort(); return Boolean(task); }
@@ -22,7 +23,7 @@ export class TurnService {
     const message = this.repository.getMessage(request.targetMessageId);
     if (!message || message.conversationId !== request.conversationId || message.role !== 'user'
       || this.repository.getConversation(request.conversationId)?.headMessageId !== message.id) {
-      throw Object.assign(new Error('待回复的 User 消息已变化，请刷新后重试。'), { statusCode: 409 });
+      throw Object.assign(new AppError("待回复的 User 消息已变化，请刷新后重试。"), { statusCode: 409 });
     }
     return message;
   }
@@ -30,21 +31,21 @@ export class TurnService {
   start(request: TurnRequest, swipe = false): TurnRecord {
     swipe ||= Boolean(request.rewriteInstruction);
     const chat = this.repository.getConversation(request.conversationId);
-    if (!chat) throw new Error('Conversation not found.');
+    if (!chat) throw new AppError("Conversation not found.");
     this.assertIdle(chat.id);
     if ((request.trigger === 'normal' || request.trigger === 'auto') && this.repository.getGeneralSettings().manualInput) {
-      throw Object.assign(new Error('当前为手动输入模式，请保存消息或关闭手动输入后再生成回复。'), { statusCode: 409 });
+      throw Object.assign(new AppError("当前为手动输入模式，请保存消息或关闭手动输入后再生成回复。"), { statusCode: 409 });
     }
-    if (!this.repository.resolveConnection()) throw new Error('请在左下角通用设置中选择模型连接。');
+    if (!this.repository.resolveConnection()) throw new AppError("请在左下角通用设置中选择模型连接。");
     const source = new StoryContext(this.repository, chat.id);
     const fullHistory = this.repository.getActiveBranch(chat.id);
     const explicit = request.replyTarget.mode === 'explicit' ? request.replyTarget.speaker : null;
-    if (explicit?.kind === 'character' && !source.cast.some((c) => c.id === explicit.characterId)) throw new Error('Speaker is not in this conversation.');
+    if (explicit?.kind === 'character' && !source.cast.some((c) => c.id === explicit.characterId)) throw new AppError("Speaker is not in this conversation.");
     const existingInput = this.existingUserInput(request);
     const target = existingInput ?? (request.targetMessageId ? this.repository.getMessage(request.targetMessageId) : null);
     if (request.trigger === 'continue' || request.trigger === 'regenerate') {
-      if (!target || target.conversationId !== chat.id || target.role !== 'assistant' || !fullHistory.some((m) => m.id === target.id)) throw new Error('Target must be an assistant message on the current branch.');
-      if (source.fixedHistory && !source.history.some(message => message.id === target.id)) throw new Error('目标消息位于固定发送起点之前，请先调整或取消起点。');
+      if (!target || target.conversationId !== chat.id || target.role !== 'assistant' || !fullHistory.some((m) => m.id === target.id)) throw new AppError("Target must be an assistant message on the current branch.");
+      if (source.fixedHistory && !source.history.some(message => message.id === target.id)) throw new AppError("目标消息位于固定发送起点之前，请先调整或取消起点。");
     }
     const last = fullHistory.at(-1);
     const pendingUser = (request.trigger === 'normal' || request.trigger === 'auto') && last?.role === 'user' ? last : null;
@@ -79,11 +80,11 @@ export class TurnService {
 
   retry(id: string): TurnRecord {
     const previous = this.repository.getTurn(id);
-    if (!previous?.progress || !['partial', 'failed', 'cancelled'].includes(previous.status)) throw new Error('此回合没有可重试的输出。');
+    if (!previous?.progress || !['partial', 'failed', 'cancelled'].includes(previous.status)) throw new AppError("此回合没有可重试的输出。");
     this.assertIdle(previous.conversationId);
-    if (!this.repository.resolveConnection()) throw new Error('请在左下角通用设置中选择模型连接。');
+    if (!this.repository.resolveConnection()) throw new AppError("请在左下角通用设置中选择模型连接。");
     const progress = structuredClone(previous.progress);
-    if (this.repository.getConversation(previous.conversationId)?.headMessageId !== progress.head) throw new Error('当前分支已变化，请返回原分支后重试。');
+    if (this.repository.getConversation(previous.conversationId)?.headMessageId !== progress.head) throw new AppError("当前分支已变化，请返回原分支后重试。");
     if (previous.plan) validatePlan(previous.plan, previous.storyTurnId, new StoryContext(this.repository, previous.conversationId).cast);
     const turn = this.repository.database.sqlite.transaction(() => {
       const next = this.repository.createTurn(previous.conversationId, previous.storyTurnId, previous.trigger);
@@ -99,11 +100,11 @@ export class TurnService {
   appendManual(chatId: string, input: ManualMessageInput) {
     this.assertIdle(chatId);
     const chat = this.repository.getConversation(chatId);
-    if (!chat) throw new Error('Conversation not found.');
-    if (chat.headMessageId !== input.head) throw Object.assign(new Error('当前消息位置已变化，请重新预览或核对后再保存。'), { statusCode: 409 });
+    if (!chat) throw new AppError("Conversation not found.");
+    if (chat.headMessageId !== input.head) throw Object.assign(new AppError("当前消息位置已变化，请重新预览或核对后再保存。"), { statusCode: 409 });
     if (input.role === 'assistant' && input.speaker.kind === 'character') {
       const speakerId = input.speaker.characterId;
-      if (!new StoryContext(this.repository, chatId).cast.some(character => character.id === speakerId)) throw new Error('Speaker is not in this conversation.');
+      if (!new StoryContext(this.repository, chatId).cast.some(character => character.id === speakerId)) throw new AppError("Speaker is not in this conversation.");
     }
     const result = this.repository.database.sqlite.transaction(() => {
       const head = chat.headMessageId ? this.repository.getMessage(chat.headMessageId) : null;
@@ -146,7 +147,7 @@ export class TurnService {
     const chat = this.repository.getConversation(chatId)!;
     const settings = this.repository.getGeneralSettings();
     const connection = this.repository.resolveConnection(maintenance ? settings.recordConnectionId : null);
-    if (!connection) throw new Error(maintenance ? '请在通用设置中配置 Memory / 主角状态使用的模型连接。' : '请在左下角通用设置中选择模型连接。');
+    if (!connection) throw new AppError(maintenance ? 'record.connectionMissing' : '请在左下角通用设置中选择模型连接。');
     const virtualMessage = virtualInput ? { id: `preview-${storyTurnId}`, conversationId: chatId, parentId: chat.headMessageId, storyTurnId, role: 'user' as const,
       authorKind: virtualInput.voice === 'narrator' ? 'user_narrator' as const : 'protagonist' as const, speaker: null, content: virtualInput.text,
       providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() } : undefined;
@@ -165,20 +166,20 @@ export class TurnService {
   }
 
   async preview(input: TurnRequest, signal: AbortSignal) {
-    if (input.trigger !== 'normal' && input.trigger !== 'auto') throw new Error('Prompt preview supports normal send and auto continue only.');
+    if (input.trigger !== 'normal' && input.trigger !== 'auto') throw new AppError("Prompt preview supports normal send and auto continue only.");
     const chat = this.repository.getConversation(input.conversationId);
-    if (!chat) throw new Error('Conversation not found.');
+    if (!chat) throw new AppError("Conversation not found.");
     this.assertIdle(chat.id);
     this.existingUserInput(input);
     const request = await this.request(chat.id, `preview-${Date.now()}`, signal, input.trigger === 'auto', input.trigger === 'normal' ? input.input : undefined);
     const forced = input.replyTarget.mode === 'explicit' ? input.replyTarget.speaker : null;
-    if (forced?.kind === 'character' && !request.characters.some((character) => character.id === forced.characterId)) throw new Error('Speaker is not in this conversation.');
+    if (forced?.kind === 'character' && !request.characters.some((character) => character.id === forced.characterId)) throw new AppError("Speaker is not in this conversation.");
     const mode = this.repository.getGeneralSettings().generationMode;
-    if (mode === 'plain' && !forced && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
+    if (mode === 'plain' && !forced && chat.kind === 'group') throw new AppError("普通写作的群聊需要先手动选择角色或旁白。");
     const plan = forced ? { ...fallbackPlan(request.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : undefined;
     const preview = await this.runtime.previewFirstRequest(request, mode, plan);
     const webPreview = mode === 'plain' ? preview : await this.runtime.previewFirstRequest(request, 'plain', plan);
-    if (this.repository.getConversation(chat.id)?.headMessageId !== chat.headMessageId) throw Object.assign(new Error('消息位置已变化，请重新预览。'), { statusCode: 409 });
+    if (this.repository.getConversation(chat.id)?.headMessageId !== chat.headMessageId) throw Object.assign(new AppError("消息位置已变化，请重新预览。"), { statusCode: 409 });
     return { action: input.trigger, generationMode: mode, protocol: request.connection.protocol, personaName: request.persona?.name ?? null, ...preview,
       headMessageId: chat.headMessageId, webPrompt: formatWebPrompt(webPreview.requestBody, request.connection.protocol), webSpeaker: webPreview.speaker };
   }
@@ -193,7 +194,7 @@ export class TurnService {
     } catch (error) {
       const recordsStatus = signal.aborted ? 'cancelled' : 'failed';
       this.repository.updateTurn(turn.id, { recordsStatus });
-      emit(`records.${recordsStatus}`, { error: signal.aborted ? null : this.repository.redactError(error) });
+      emit(`records.${recordsStatus}`, { error: signal.aborted ? null : this.repository.redactError(error), errorText: signal.aborted ? undefined : this.repository.describeError(error) });
     }
   }
 
@@ -219,7 +220,7 @@ export class TurnService {
     const live = new Map<number, Omit<InterruptedOutput, 'outputIndex'>>();
     const emit = (type: string, data: unknown = {}) => this.events.publish(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
     const emitVolatile = (type: string, data: unknown = {}) => this.events.publishVolatile(turn.conversationId, turn.id, type, { turnId: turn.id, storyTurnId: turn.storyTurnId, ...data as object });
-    const fresh = () => { signal.throwIfAborted(); if (this.repository.getConversation(turn.conversationId)?.headMessageId !== expectedHead) throw new Error('Branch changed; discarded stale generation.'); };
+    const fresh = () => { signal.throwIfAborted(); if (this.repository.getConversation(turn.conversationId)?.headMessageId !== expectedHead) throw new AppError("Branch changed; discarded stale generation."); };
     try {
       this.repository.updateTurn(turn.id, { status: 'running' }); emit('turn.started');
       const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto' || input.trigger === 'continue');
@@ -228,7 +229,7 @@ export class TurnService {
       const mode = this.repository.getGeneralSettings().generationMode;
       let actualMode = mode;
       let plan: TurnPlan | null = turn.plan ?? (forced ? { ...fallbackPlan(turn.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : null);
-      if (mode === 'plain' && !forced && !plan && chat.kind === 'group') throw new Error('普通写作的群聊需要先手动选择角色或旁白。');
+      if (mode === 'plain' && !forced && !plan && chat.kind === 'group') throw new AppError("普通写作的群聊需要先手动选择角色或旁白。");
       if (mode === 'plain' && !plan) { plan = fallbackPlan(turn.storyTurnId, request.characters); plan.warnings = []; }
       if (mode === 'planner' && !forced && !plan) {
         try {
@@ -248,7 +249,7 @@ export class TurnService {
       const saveOutput = (result: Awaited<ReturnType<AgentRuntime['writeTurn']>>['results'][number], localIndex: number) => {
         const outputIndex = offset + localIndex;
         if (progress.completedMessageIds[outputIndex]) return;
-        if (!plan || outputIndex !== progress.completedMessageIds.length) throw new Error('Invalid output sequence.');
+        if (!plan || outputIndex !== progress.completedMessageIds.length) throw new AppError("Invalid output sequence.");
         const output = plan.outputs[outputIndex]!;
         fresh(); startOutput(output.speaker, outputIndex);
         this.repository.database.sqlite.transaction(() => {
@@ -322,7 +323,7 @@ export class TurnService {
       const status = progress.completedMessageIds.length ? 'partial' : signal.aborted ? 'cancelled' : 'failed';
       this.repository.updateTurn(turn.id, { status, progress, error: message, completedAt: new Date().toISOString() });
       this.repository.pruneTraces(turn.conversationId, 20);
-      emit(`turn.${status}`, { error: message });
+      emit(`turn.${status}`, { error: message, errorText: this.repository.describeError(error) });
     } finally { traceSink.flush(); this.events.clearSnapshot(turn.id); }
   }
 }

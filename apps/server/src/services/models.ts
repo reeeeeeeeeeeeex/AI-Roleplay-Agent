@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import { connectionInputSchema } from '@new-ai-chat/contracts';
 import { z } from 'zod';
 
@@ -24,18 +25,18 @@ export async function listModels(input: z.infer<typeof modelListInputSchema>): P
     for (;;) {
       // Do not forward credentials to a redirected host or reflect upstream error bodies.
       const response = await fetch(url, { headers, signal, redirect: 'error' });
-      if (!response.ok) throw new Error(`获取模型失败（HTTP ${response.status}），请检查 Base URL、API Key 和模型列表接口支持。`);
+      if (!response.ok) throw new AppError("获取模型失败（HTTP {0}），请检查 Base URL、API Key 和模型列表接口支持。", response.status);
       const body = await response.json() as { data?: Array<{ id?: unknown }>; has_more?: boolean; last_id?: string };
-      if (!Array.isArray(body.data)) throw new Error('服务未返回有效模型列表，请手动填写模型 ID。');
+      if (!Array.isArray(body.data)) throw new AppError("服务未返回有效模型列表，请手动填写模型 ID。");
       for (const model of body.data) if (typeof model?.id === 'string' && model.id.trim()) models.add(model.id);
       if (!anthropic || !body.has_more) break;
-      if (!body.last_id || body.last_id === url.searchParams.get('after_id')) throw new Error('模型列表分页异常，请手动填写模型 ID。');
+      if (!body.last_id || body.last_id === url.searchParams.get('after_id')) throw new AppError("模型列表分页异常，请手动填写模型 ID。");
       url.searchParams.set('after_id', body.last_id);
     }
   } catch (error) {
-    if (signal.aborted) throw new Error('获取模型超时，请重试或手动填写模型 ID。');
+    if (signal.aborted) throw new AppError("获取模型超时，请重试或手动填写模型 ID。");
     if (error instanceof Error && /^(获取模型失败|服务未返回|模型列表分页)/u.test(error.message)) throw error;
-    throw new Error('无法获取模型列表，请检查连接地址与网络，或手动填写模型 ID。');
+    throw new AppError("无法获取模型列表，请检查连接地址与网络，或手动填写模型 ID。");
   }
   return [...models].sort();
 }

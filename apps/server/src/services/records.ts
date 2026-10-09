@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import { z } from 'zod';
 import { applyStateOperations, blankState, modelStateColumns, stateColumnLabels, stateDeathInstruction, type ProtagonistTables, type MemoryCoverage, type MessageNode } from '@new-ai-chat/contracts';
 import { fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
@@ -26,7 +27,7 @@ export class RecordService {
     if (config.stateTurnInterval > 0 && since(state?.storyTurnId) >= config.stateTurnInterval) await this.generate(chat, 'state', signal, trace);
   }
   async generate(chat: string, kind: 'memory' | 'state', signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
-    if (this.pending.has(chat)) throw new Error('A record update is already running.');
+    if (this.pending.has(chat)) throw new AppError("A record update is already running.");
     this.pending.add(chat);
     try {
       const head = this.repository.getConversation(chat)?.headMessageId;
@@ -58,15 +59,15 @@ export class RecordService {
           if (fitted.history.length !== candidate.length) break;
           selected = candidate;
         }
-        if (!selected.length) throw new Error('Memory 无法容纳一个完整回合，请增大历史消息上限或上下文窗口。');
+        if (!selected.length) throw new AppError("Memory 无法容纳一个完整回合，请增大历史消息上限或上下文窗口。");
         request.history = selected; request.latestUserText = '';
         storyTurnId = selected.at(-1)!.storyTurnId;
         coverage = { startMessageId: selected[0]!.id, endMessageId: selected.at(-1)!.id, storyTurnIds: [...new Set(selected.map(message => message.storyTurnId!))] };
       }
       const answer = parseModelJson(await this.runtime.maintain(request, instruction));
       signal.throwIfAborted();
-      if (this.repository.events(chat).findLast(event => event.type === 'memory.edited')?.id !== beforeMemoryEdit) throw new Error('Memory changed; discarded stale update.');
-      if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new Error('Records changed; discarded stale update.');
+      if (this.repository.events(chat).findLast(event => event.type === 'memory.edited')?.id !== beforeMemoryEdit) throw new AppError("Memory changed; discarded stale update.");
+      if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new AppError("Records changed; discarded stale update.");
       return this.repository.database.sqlite.transaction(() => {
         if (kind === 'memory') {
           const record = chronicle.parse(answer);
@@ -82,18 +83,18 @@ export class RecordService {
 interface Checkpoint { before: ProtagonistTables; afterId: string | null; worldEventId: number | null; head: string | null }
 export function applyProposal(repository: Repository, id: string, action: 'apply' | 'reject' | 'undo') {
   const proposal = repository.getProposal(id);
-  if (!proposal) throw new Error('Proposal not found.');
+  if (!proposal) throw new AppError("Proposal not found.");
   const chat = repository.getConversation(proposal.conversationId)!;
   if (action === 'reject') {
-    if (proposal.status !== 'pending') throw new Error('Only pending proposals can be rejected.');
+    if (proposal.status !== 'pending') throw new AppError("Only pending proposals can be rejected.");
     repository.updateProposal(id, 'rejected'); return { status: 'rejected' };
   }
   return repository.database.sqlite.transaction(() => {
     const current = repository.latestState(chat.id);
     if (action === 'apply') {
-      if (proposal.status !== 'pending') throw new Error('Proposal already handled.');
-      if (!proposal.originHead || !repository.getActiveBranch(chat.id).some(m => m.id === proposal.originHead)) throw new Error('Proposal belongs to an obsolete branch or has no bound source node. Replan before applying.');
-      if (!repository.getActiveBranch(chat.id).some((m) => m.storyTurnId === proposal.storyTurnId)) throw new Error('Proposal belongs to another branch.');
+      if (proposal.status !== 'pending') throw new AppError("Proposal already handled.");
+      if (!proposal.originHead || !repository.getActiveBranch(chat.id).some(m => m.id === proposal.originHead)) throw new AppError("Proposal belongs to an obsolete branch or has no bound source node. Replan before applying.");
+      if (!repository.getActiveBranch(chat.id).some((m) => m.storyTurnId === proposal.storyTurnId)) throw new AppError("Proposal belongs to another branch.");
       const checkpoint: Checkpoint = { before: current?.tables ?? blankState(), afterId: null, worldEventId: null, head: chat.headMessageId };
       if (proposal.kind === 'state') {
         const result = applyStateOperations(checkpoint.before, Array.isArray(proposal.payload) ? proposal.payload : [proposal.payload]);
@@ -104,10 +105,10 @@ export function applyProposal(repository: Repository, id: string, action: 'apply
       }
       repository.updateProposal(id, 'applied', checkpoint); return { status: 'applied' };
     }
-    if (proposal.status !== 'applied') throw new Error('Only applied proposals can be undone.');
+    if (proposal.status !== 'applied') throw new AppError("Only applied proposals can be undone.");
     const checkpoint = proposal.committedSnapshot as Checkpoint;
-    if (chat.headMessageId !== checkpoint.head || (checkpoint.afterId && current?.id !== checkpoint.afterId)) throw new Error('State or branch changed after application; refusing destructive undo.');
-    if (checkpoint.worldEventId && repository.events(chat.id).filter((e) => e.type === 'world.applied' || e.type === 'world.undone').at(-1)?.id !== checkpoint.worldEventId) throw new Error('World changed after application.');
+    if (chat.headMessageId !== checkpoint.head || (checkpoint.afterId && current?.id !== checkpoint.afterId)) throw new AppError("State or branch changed after application; refusing destructive undo.");
+    if (checkpoint.worldEventId && repository.events(chat.id).filter((e) => e.type === 'world.applied' || e.type === 'world.undone').at(-1)?.id !== checkpoint.worldEventId) throw new AppError("World changed after application.");
     if (checkpoint.afterId) repository.createState(chat.id, proposal.storyTurnId, checkpoint.before);
     if (checkpoint.worldEventId) repository.addEvent(chat.id, null, 'world.undone', { proposalId: id, head: chat.headMessageId });
     repository.updateProposal(id, 'undone', checkpoint); return { status: 'undone' };

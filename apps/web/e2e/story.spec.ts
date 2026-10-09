@@ -25,6 +25,123 @@ test.beforeEach(async ({ page, request }, info) => {
   await page.goto('/');
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
 });
+
+async function languageSettings(page: Page) {
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  return page.getByRole('dialog', { name: '设置 / Settings', exact: true });
+}
+async function englishInterface(page: Page) {
+  const settings = await languageSettings(page);
+  await settings.getByRole('combobox', { name: '语言 / Language', exact: true }).selectOption('en');
+  await settings.getByRole('button', { name: '保存 / Save', exact: true }).click();
+  await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
+}
+
+test('language: defaults to Chinese and persists with bilingual discovery', async ({ page }, info) => {
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  const settings = await languageSettings(page);
+  await expect(settings.getByRole('button', { name: '语言 / Language', exact: true })).toHaveClass('active');
+  await expect(settings.getByRole('combobox', { name: '语言 / Language', exact: true })).toHaveValue('zh-CN');
+  await settings.getByRole('combobox', { name: '语言 / Language', exact: true }).selectOption('en');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await settings.getByRole('button', { name: '保存 / Save', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await settings.getByRole('button', { name: 'Models', exact: true }).click();
+  await expect(settings.getByRole('button', { name: 'Create model connection', exact: true })).toBeVisible();
+  await page.screenshot({ path: info.outputPath('english-settings.png') });
+  await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await languageSettings(page);
+  await expect(settings.getByRole('button', { name: '语言 / Language', exact: true })).toHaveClass('active');
+  await expect(settings.getByRole('combobox', { name: '语言 / Language', exact: true })).toHaveValue('en');
+});
+
+test('language: changing labels preserves composer and prompt drafts', async ({ page }) => {
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method())) writes++; });
+  await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('尚未发送的故事草稿');
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '提示词', exact: true }).click();
+  await settings.getByLabel('附加指令', { exact: true }).fill('自定义 System 草稿，不应被翻译');
+  await settings.getByRole('button', { name: '语言 / Language', exact: true }).click();
+  await settings.getByRole('combobox', { name: '语言 / Language', exact: true }).selectOption('en');
+  await settings.getByRole('button', { name: '保存 / Save', exact: true }).click();
+  await settings.getByRole('button', { name: 'Prompts', exact: true }).click();
+  await expect(settings.getByRole('textbox', { name: 'Additional instructions', exact: true })).toHaveValue('自定义 System 草稿，不应被翻译');
+  await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toHaveValue('尚未发送的故事草稿');
+  expect(writes).toBe(0);
+});
+
+test('language: storage failure keeps active language and selected draft', async ({ page }) => {
+  const settings = await languageSettings(page);
+  await settings.getByRole('combobox', { name: '语言 / Language', exact: true }).selectOption('en');
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) { if (key === 'interface-language') throw new DOMException('Storage blocked', 'SecurityError'); original.call(this, key, value); };
+  });
+  await settings.getByRole('button', { name: '保存 / Save', exact: true }).click();
+  await expect(settings.getByRole('alert')).toContainText('当前语言未改变');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await expect(settings.getByRole('combobox', { name: '语言 / Language', exact: true })).toHaveValue('en');
+  expect(await page.evaluate(() => localStorage.getItem('interface-language'))).toBeNull();
+});
+
+test('language: English manual sending fits a narrow screen', async ({ page }, info) => {
+  await englishInterface(page);
+  await page.getByRole('button', { name: 'Close records panel', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  let proseRequests = 0;
+  page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/api/turns')) proseRequests++; });
+  await page.getByRole('checkbox', { name: 'Solo writing / manual web chat', exact: true }).click();
+  const input = page.getByRole('textbox', { name: 'Message input', exact: true });
+  await input.fill('中文剧情内容原样保留。');
+  const sendButton = page.getByRole('button', { name: 'Send', exact: true });
+  const bounds = await sendButton.boundingBox();
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await sendButton.click();
+  await expect(page.locator('article.message')).toHaveCount(1);
+  await expect(page.locator('article.message .prose')).toHaveText('中文剧情内容原样保留。');
+  expect(proseRequests).toBe(0);
+  expect(await page.locator('.composer').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('english-narrow.png') });
+});
+
+test('language: application errors translate and provider errors stay verbatim', async ({ page }) => {
+  await englishInterface(page);
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: 'Models', exact: true }).click();
+  await settings.getByRole('combobox', { name: 'Current model connection', exact: true }).selectOption('');
+  await expect(settings.getByRole('status')).toContainText('Model saved');
+  await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Message input', exact: true }).fill('Keep this draft');
+  const failed = page.waitForResponse(res => res.url().endsWith('/api/turns') && res.status() === 400);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  expect((await (await failed).json()).errorText.key).toBe('请在左下角通用设置中选择模型连接。');
+  await expect(page.getByRole('alert')).toContainText('Select a model connection in Settings');
+  const original = '供应商原始诊断: upstream Connection error. code=E123';
+  await page.route('**/api/turns', route => route.fulfill({ status: 502, json: { error: original } }));
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByRole('alert').locator('span')).toHaveText(original);
+  await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toHaveValue('Keep this draft');
+});
+
+test('language: Gateway preview and web prompt remain identical', async ({ page, request }) => {
+  const general = await (await request.get('/api/settings/general')).json();
+  await request.put('/api/settings/general', { data: { ...general, generationMode: 'plain' } });
+  await page.reload();
+  await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('在石桥下寻找线索。');
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  const body = await page.getByRole('region', { name: 'Raw input', exact: true }).locator('pre').textContent();
+  const prompt = await page.getByRole('region', { name: '网页提示词', exact: true }).locator('pre').textContent();
+  await page.getByRole('dialog', { name: '提示词预览', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+  await englishInterface(page);
+  await page.getByRole('button', { name: 'Preview prompt before sending', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Raw input', exact: true }).locator('pre')).toHaveText(body!);
+  await expect(page.getByRole('region', { name: 'Web prompt', exact: true }).locator('pre')).toHaveText(prompt!);
+  await expect(page.getByRole('dialog', { name: 'Prompt preview', exact: true })).toContainText('Context report');
+});
 test('web copy saves User and manual Assistant replies reappear in the next prompt', async ({ page, request }) => {
   const manualToggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
   await manualToggle.click();
@@ -165,7 +282,7 @@ test('startup distinguishes missing endpoints from required pairing', async ({ p
   });
   await page.getByRole('textbox', { name: '配对令牌' }).fill('browser-test-token');
   await page.getByRole('button', { name: '配对', exact: true }).click();
-  await expect(page.getByRole('button', { name: '通用设置', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '设置 / Settings', exact: true })).toBeVisible();
 });
 
 test('deleting a persona sends no JSON header with an empty body', async ({ page, request }) => {
@@ -210,8 +327,8 @@ test('replacing a persona image preserves the original 20 MB file', async ({ pag
 test('global send count and fixed message start control the raw prompt range', async ({ page }) => {
   await send(page, '仅早期历史包含蓝色车票。', 3);
   await send(page, '现在进入旧书店。', 6);
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings', exact: true });
   await settings.getByRole('button', { name: '写作', exact: true }).click();
   await settings.getByRole('spinbutton', { name: '发送最近多少条消息（0 不限）', exact: true }).fill('2');
   await settings.getByRole('combobox', { name: '生成模式', exact: true }).selectOption('plain');
@@ -245,8 +362,8 @@ test('prompt presets load drafts and only apply after saving, preserving failed 
   const created = await request.post('/api/settings/prompt-presets', { data: { name: '浏览器预设', prompts: { ...active, additionalInstruction: '来自预设的附加指令' } } });
   expect(created.status()).toBe(201);
   const saved = await created.json();
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings', exact: true });
   await settings.getByRole('button', { name: '提示词', exact: true }).click();
   const select = settings.getByRole('combobox', { name: '提示词预设', exact: true });
   const additional = settings.getByRole('textbox', { name: '附加指令', exact: true });
@@ -268,7 +385,7 @@ test('prompt presets load drafts and only apply after saving, preserving failed 
   await expect(settings.getByRole('status')).toContainText('提示词已保存');
   expect((await (await request.get('/api/settings/prompt-presets')).json()).find((item: any) => item.id === saved.id).prompts.additionalInstruction).toBe('来自预设的附加指令');
   await page.reload();
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
   await settings.getByRole('button', { name: '提示词', exact: true }).click();
   await expect(select).toHaveValue('');
   await expect(additional).toHaveValue('修改后要应用的内容');
@@ -314,8 +431,8 @@ test('delete story tail confirms deletion and keeps bookmark jumps non-destructi
 });
 
 test('writing settings preserve agency prompts in none mode and omit control from the request preview', async ({ page }) => {
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings', exact: true });
   await settings.getByRole('button', { name: '写作', exact: true }).click();
   const protectedPrompt = settings.getByRole('textbox', { name: '保护主角提示词', exact: true });
   const coauthorPrompt = settings.getByRole('textbox', { name: '共同创作提示词', exact: true });
@@ -328,7 +445,7 @@ test('writing settings preserve agency prompts in none mode and omit control fro
   await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
   await expect(settings.getByRole('status')).toContainText('写作设置已保存');
   await page.reload();
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
   await settings.getByRole('button', { name: '写作', exact: true }).click();
   await expect(protectedPrompt).toHaveValue('Wait for User to choose.');
   await expect(coauthorPrompt).toHaveValue('Collaborate with User on actions and dialogue.');
@@ -452,8 +569,8 @@ test('story author note and global additional instruction persist into raw Syste
   await authorNote.getByRole('textbox', { name: '作者注释', exact: true }).fill(note);
   await authorNote.getByRole('button', { name: '关闭作者注释' }).click();
   await expect(authorNote).toHaveCount(0);
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings', exact: true });
   await settings.getByRole('button', { name: '提示词', exact: true }).click();
   const main = await settings.getByRole('textbox', { name: '写作主指令', exact: true }).inputValue();
   await settings.getByRole('textbox', { name: '附加指令', exact: true }).fill(additional);
@@ -466,7 +583,7 @@ test('story author note and global additional instruction persist into raw Syste
   await page.getByRole('button', { name: '作者注释', exact: true }).click();
   await expect(authorNote.getByRole('textbox', { name: '作者注释', exact: true })).toHaveValue(note);
   await authorNote.getByRole('button', { name: '关闭作者注释' }).click();
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
   await settings.getByRole('button', { name: '提示词', exact: true }).click();
   await expect(settings.getByRole('textbox', { name: '写作主指令', exact: true })).toHaveValue(main);
   await expect(settings.getByRole('textbox', { name: '附加指令', exact: true })).toHaveValue(additional);
@@ -570,8 +687,9 @@ test('mobile layout and forced character', async ({ page }, info) => {
   await page.screenshot({ path: info.outputPath('story-mobile.png'), fullPage: true });
 });
 test('modal drag: connection draft survives dragging left outside and only its own backdrop closes it', async ({ page }) => {
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings', exact: true });
+  await page.getByRole('dialog', { name: '设置 / Settings', exact: true }).getByRole('button', { name: '模型', exact: true }).click();
   await settings.getByRole('button', { name: '创建模型连接', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '编辑模型连接', exact: true });
   const name = dialog.getByRole('textbox', { name: '名称', exact: true });
@@ -603,7 +721,8 @@ test('modal drag: selecting raw prompt text outside the preview does not dismiss
 
 test('creates a connection through the UI with only the supported protocols', async ({ page }) => {
   await page.route('**/api/connections/models', route => route.fulfill({ json: { models: ['local-test', 'other-test'] } }));
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  await page.getByRole('dialog', { name: '设置 / Settings', exact: true }).getByRole('button', { name: '模型', exact: true }).click();
   await page.getByRole('button', { name: '创建模型连接', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '编辑模型连接' });
   await dialog.getByRole('textbox', { name: '名称', exact: true }).fill('Browser connection');
@@ -651,8 +770,9 @@ test('v0.2 drafts, persona creation, reading position and bookmarked branch reco
   await page.getByRole('button', { name: new RegExp(`Browser ${info.title}`) }).click();
   await expect(input).toHaveValue(text);
 
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置', exact: true });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings', exact: true });
+  await settings.getByRole('button', { name: '模型', exact: true }).click();
   await settings.getByLabel('当前模型连接').selectOption('');
   await expect(settings.getByRole('status')).toContainText('模型已保存');
   await settings.getByRole('button', { name: '关闭设置' }).click();
@@ -660,7 +780,8 @@ test('v0.2 drafts, persona creation, reading position and bookmarked branch reco
   await expect(page.getByRole('alert')).toContainText('请在左下角通用设置中选择模型连接。');
   await expect(input).toHaveValue(text);
 
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  await settings.getByRole('button', { name: '模型', exact: true }).click();
   await settings.getByLabel('当前模型连接').selectOption(connections[0].id);
   await expect(settings.getByRole('status')).toContainText('模型已保存');
   await settings.getByRole('button', { name: '关闭设置' }).click();

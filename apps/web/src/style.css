@@ -859,6 +859,7 @@ main {
 
 .composer-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding-top: 8px;
@@ -1671,6 +1672,7 @@ fieldset label {
 
 .settings-nav {
   display: flex;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-sidebar);
   padding: 0 16px;
@@ -1688,6 +1690,7 @@ fieldset label {
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow-wrap: anywhere;
 }
 
 .settings-nav button:hover {

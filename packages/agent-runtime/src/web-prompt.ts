@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import type { ModelProtocol } from '@new-ai-chat/contracts';
 
 // Format captured plain-writing requests, never provider parameters or Agent tools.
@@ -18,6 +19,6 @@ export function formatWebPrompt(requestBody: string, protocol: ModelProtocol): s
     else if (message.role === 'user') add('User · 用户输入与本轮要求', message.content);
     else if (message.role === 'assistant') add('Assistant · 历史回复与上下文资料', message.content);
   }
-  if (!blocks.length) throw new Error('当前请求没有可复制的提示词。');
+  if (!blocks.length) throw new AppError("当前请求没有可复制的提示词。");
   return ['以下是一次角色扮演写作任务。请遵循写作要求，参考历史和上下文资料，只输出最后指定发言者接下来的正文；不要复述这些说明、角色标签或调用工具。', ...blocks].join('\n\n');
 }

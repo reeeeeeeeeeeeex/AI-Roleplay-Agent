@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import { turnPlanSchema, type ReplyTarget, type SpeakerRef, type TurnPlan } from '@new-ai-chat/contracts';
 import type { RuntimeCharacter } from './types.js';
 
@@ -7,10 +8,10 @@ export function validatePlan(plan: unknown, storyTurnId: string, characters: Run
   const seen = new Set<string>();
   for (const output of parsed.outputs) {
     const key = output.speaker.kind === 'narrator' ? 'narrator' : `character:${output.speaker.characterId}`;
-    if (seen.has(key)) throw new Error(`Duplicate output speaker: ${key}`);
+    if (seen.has(key)) throw new AppError("Duplicate output speaker: {0}", key);
     seen.add(key);
     if (output.speaker.kind === 'character' && !characterIds.has(output.speaker.characterId)) {
-      throw new Error(`Unknown character: ${output.speaker.characterId}`);
+      throw new AppError("Unknown character: {0}", output.speaker.characterId);
     }
   }
   return parsed;

@@ -425,6 +425,8 @@ export interface SessionEvent<T = unknown> {
 }
 
 export interface ContextReportItem {
+  titleText?: import('./diagnostics.js').UiText | undefined;
+  reasonText?: import('./diagnostics.js').UiText | undefined;
   id: string;
   source: 'system' | 'history' | 'lore' | 'memory' | 'state' | 'control';
   title: string;
@@ -562,6 +564,7 @@ export type TurnEvent =
   | { type: 'turn.cancelled'; turnId: string };
 
 export interface ImportPreview {
+  warningTexts?: Array<import('./diagnostics.js').UiText | null>;
   sourcePath: string;
   sourceHash: string;
   counts: {
@@ -579,7 +582,9 @@ export interface ImportPreview {
 }
 
 export interface ApiErrorBody {
+  errorText?: import('./diagnostics.js').UiText;
   error: string;
   details?: unknown;
 }
 export { historyStartIndex } from './history.js';
+export { AppError, errorText, uiText, formatUiText, appendWarning, type UiText, type UiDiagnostic } from './diagnostics.js';

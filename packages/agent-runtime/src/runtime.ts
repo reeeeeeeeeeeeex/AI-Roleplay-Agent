@@ -1,3 +1,5 @@
+import { uiText } from '@new-ai-chat/contracts';
+import { AppError } from '@new-ai-chat/contracts';
 import { Agent, type AgentEvent, type AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type AssistantMessage, type AssistantMessageEvent, type Context, type Message } from '@earendil-works/pi-ai';
 import type { RequestTiming, SpeakerRef, TurnPlan, ContextReport } from '@new-ai-chat/contracts';
@@ -73,9 +75,9 @@ function recordHeaders(request: BaseAgentRequest, traceId: string | null, respon
 
 function appendedReport(base: ContextReport, initial: number, messages: Context['messages']): ContextReport {
   return { items: [...base.items, ...messages.slice(initial).map((message, index) => ({
-    id: `agent-append-${index}`, source: 'control' as const, title: `Agent 追加 · ${message.role}`,
+    id: `agent-append-${index}`, source: 'control' as const, title: `Agent 追加 · ${message.role}`, titleText: uiText("Agent 追加 · {0}", message.role),
     role: message.role === 'toolResult' ? 'assistant' as const : message.role,
-    included: true, reason: '同一会话的工具结果或写作控制', estimatedTokens: estimateTokens(typeof message.content === 'string' ? message.content : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')),
+    included: true, reason: '同一会话的工具结果或写作控制', reasonText: uiText("同一会话的工具结果或写作控制"), estimatedTokens: estimateTokens(typeof message.content === 'string' ? message.content : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')),
   }))] };
 }
 
@@ -195,7 +197,7 @@ function routingStart(request: RouteRequest, fullPlanner: boolean, capture: (pla
   const dynamic = fullPlanner ? buildDynamicAnchor({ ...fitted, latestUserText: '' }, '', { kind: 'narrator' }).replace(/\[Current Speaker\][\s\S]*$/u, '') : '';
   const prompt = `${dynamic}\n\n${routingPrompt(fitted, fullPlanner)}`;
   for (const item of fitted.contextReport!.items) if (item.source !== 'history' && item.role === 'assistant') item.role = 'user';
-  fitted.contextReport!.items.push({ id: 'planner-control', source: 'control', title: 'Planner 规划控制', role: 'user', included: true, reason: '首请求规划', estimatedTokens: estimateTokens(routingPrompt(fitted, fullPlanner)) });
+  fitted.contextReport!.items.push({ id: 'planner-control', source: 'control', title: 'Planner 规划控制', titleText: uiText("Planner 规划控制"), role: 'user', included: true, reason: '首请求规划', reasonText: uiText("首请求规划"), estimatedTokens: estimateTokens(routingPrompt(fitted, fullPlanner)) });
   return { fitted, terminalName, tools, prompt };
 }
 
@@ -207,7 +209,7 @@ function writerStart(request: BaseAgentRequest, selected: TurnPlan | null, captu
     : 'Choose the appropriate output voice with select_output_voices before writing. Use the exact speaker IDs in the tool schema.';
   const behavior = request.promptSettings?.writerInstruction ?? 'Select voices once when needed, then write the assigned prose in this same session.';
   const writer = buildWriterContext({ ...fitRequest(request, behavior), speaker, pendingSpeaker: !selected, brief, outputIndex: 0, mode: 'writer-agent' });
-  writer.contextReport.items.splice(1, 0, { id: 'agent-behavior', source: 'system', title: 'Writer Agent 行为指令', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(behavior) });
+  writer.contextReport.items.splice(1, 0, { id: 'agent-behavior', source: 'system', title: 'Writer Agent 行为指令', titleText: uiText("Writer Agent 行为指令"), role: 'system', included: true, reason: '固定前缀', reasonText: uiText("固定前缀"), estimatedTokens: estimateTokens(behavior) });
   const tools = [...domainTools(request.source, request.toolOverrides), ...(!selected ? [selectionTool(request, capture)] : [])];
   return {
     writer,
@@ -332,7 +334,8 @@ export class PiAgentRuntime implements AgentRuntime {
     request.signal.throwIfAborted();
     if (!selected) {
       const message = agent.state.messages.findLast((item) => item.role === 'assistant') as AssistantMessage | undefined;
-      throw new Error(message?.errorMessage || toolStopError || activeToolError || `${terminalName} was not called with a valid plan.`);
+      const error = message?.errorMessage || toolStopError || activeToolError;
+      throw error ? new Error(error) : new AppError('{0} was not called with a valid plan.', terminalName);
     }
     return selected;
   }
@@ -370,11 +373,11 @@ export class PiAgentRuntime implements AgentRuntime {
             text += event.delta; options.onDelta(output.speaker, outputIndex, event.delta);
           }
           if (event.type === 'done') final = event.message;
-          if (event.type === 'error') throw new Error(event.error.errorMessage ?? 'Generation failed.');
+          if (event.type === 'error') throw event.error.errorMessage != null ? new Error(event.error.errorMessage) : new AppError('Generation failed.');
         }
         text = (text || visibleText(final)).trim();
         thinking = thinking || visibleThinking(final);
-        if (!text) throw new Error(`${thinking ? '模型仅返回了思考内容，没有返回正文' : '模型没有返回正文'}（结束原因：${final?.stopReason ?? '未知'}）。本次输出未保存，可重试。`);
+        if (!text) throw new AppError(thinking ? 'output.thinkingOnly' : 'output.empty', final?.stopReason ?? 'unknown');
         timing.completedAt = new Date().toISOString();
         const usage = usageOf(final);
         if (traceId) {
@@ -508,15 +511,15 @@ export class PiAgentRuntime implements AgentRuntime {
       options.onPhase?.(selected ? 'writing' : 'selection', selected ?? undefined);
       await agent.continue();
       request.signal.throwIfAborted();
-      if (!selected) throw new Error(writerError() || 'Writer Agent did not call select_output_voices with a valid selection.');
-      if (!results[0]) throw new Error(writerError() || 'Writer Agent returned no visible text.');
+      if (!selected) throw writerError() ? new Error(writerError()) : new AppError('Writer Agent did not call select_output_voices with a valid selection.');
+      if (!results[0]) throw writerError() ? new Error(writerError()) : new AppError('Writer Agent returned no visible text.');
       options.onOutputComplete?.(results[0], 0);
       if (selected.outputs.length > 1) {
         outputIndex = 1;
         options.onPhase?.('writing', selected.outputs[1]);
         await agent.prompt(`[Writer Control]\nWrite only the second selected voice now. Do not select another voice or explain the process.\n[Current Speaker]\n${selected.outputs[1]!.speaker.kind === 'narrator' ? request.narrator.name : request.characters.find((c) => c.id === (selected!.outputs[1]!.speaker as { characterId: string }).characterId)?.name ?? 'Character'}\n[Writer Brief]\n${selected.outputs[1]!.brief}`);
         request.signal.throwIfAborted();
-        if (!results[1]) throw new Error(writerError() || 'Writer Agent returned no visible text for the second voice.');
+        if (!results[1]) throw writerError() ? new Error(writerError()) : new AppError('Writer Agent returned no visible text for the second voice.');
         options.onOutputComplete?.(results[1], 1);
       }
     } catch (error) {
@@ -535,7 +538,7 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   async choices(input: BaseAgentRequest, count: number, instruction: string): Promise<string[]> {
-    if (!Number.isInteger(count) || count < 1 || count > 4) throw new Error('行动选项数量必须为 1–4。');
+    if (!Number.isInteger(count) || count < 1 || count > 4) throw new AppError("行动选项数量必须为 1–4。");
     const control = `Generate exactly ${count} distinct next actions or dialogue lines for User, the human user's character. These are unchosen possibilities, never established story facts. Return only a JSON array of ${count} nonempty strings. No markdown or explanation.`;
     const request = fitRequest({ ...input, promptMode: 'choices' as const, latestUserText: '',
       characters: input.characters.map(character => ({ ...character, exampleDialogue: '', systemPrompt: '', postHistoryInstructions: '' })),
@@ -543,10 +546,10 @@ export class PiAgentRuntime implements AgentRuntime {
       dynamicContext: input.dynamicContext.filter(item => item.source !== 'lore' || item.required),
       promptSettings: { ...(input.promptSettings ?? defaultPromptSettings), mainInstruction: instruction },
     }, control);
-    request.contextReport?.items.push({ id: 'choice-control', source: 'control', title: '行动选项数量与输出格式', role: 'user', included: true, reason: '最后的生成控制', estimatedTokens: estimateTokens(control) });
+    request.contextReport?.items.push({ id: 'choice-control', source: 'control', title: '行动选项数量与输出格式', titleText: uiText("行动选项数量与输出格式"), role: 'user', included: true, reason: '最后的生成控制', reasonText: uiText("最后的生成控制"), estimatedTokens: estimateTokens(control) });
     return this.completeJson(request, buildActionChoiceContext(request, control), 'choices', text => {
       const choices = actionChoiceListSchema.parse(JSON.parse(text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')));
-      if (choices.length !== count) throw new Error(`模型应返回 ${count} 个行动选项，实际返回 ${choices.length} 个。`);
+      if (choices.length !== count) throw new AppError("模型应返回 {0} 个行动选项，实际返回 {1} 个。", count, choices.length);
       return choices;
     });
   }
@@ -568,11 +571,11 @@ export class PiAgentRuntime implements AgentRuntime {
         if (event.type === 'thinking_delta') { if (request.streaming !== false && !timing.firstThinkingAt) timing.firstThinkingAt = new Date().toISOString(); thinking += event.delta; }
         if (event.type === 'text_delta' && request.streaming !== false && !timing.firstTextAt) timing.firstTextAt = new Date().toISOString();
         if (event.type === 'done') final = event.message;
-        if (event.type === 'error') throw new Error(event.error.errorMessage ?? 'Record generation failed.');
+        if (event.type === 'error') throw event.error.errorMessage != null ? new Error(event.error.errorMessage) : new AppError('Record generation failed.');
       }
       request.signal.throwIfAborted();
       const text = visibleText(final).trim();
-      if (!text) throw new Error(phase === 'choices' ? '行动选项返回空内容。' : 'Record generation returned no text.');
+      if (!text) throw new AppError(phase === 'choices' ? '行动选项返回空内容。' : 'Record generation returned no text.');
       const result = validate(text);
       timing.completedAt = new Date().toISOString();
       if (traceId) { if (thinking) request.trace?.thinking(traceId, thinking); request.trace?.timing(traceId, timing); request.trace?.finish(traceId, 'completed', usageOf(final)); }
@@ -592,9 +595,9 @@ export class PiAgentRuntime implements AgentRuntime {
     }, { signal, maxTokens: 32 });
     for await (const event of stream) {
       if (event.type === 'done') final = event.message;
-      if (event.type === 'error') throw new Error(event.error.errorMessage ?? 'Connection test failed.');
+      if (event.type === 'error') throw event.error.errorMessage != null ? new Error(event.error.errorMessage) : new AppError('Connection test failed.');
     }
-    if (!final) throw new Error('Connection test ended without a response.');
+    if (!final) throw new AppError("Connection test ended without a response.");
     let called = false;
     const probe = new Agent({
       initialState: { model: this.gateway.createModel(connection), systemPrompt: 'Call connection_probe with value OK. Do not answer in prose.', tools: [{
@@ -606,7 +609,7 @@ export class PiAgentRuntime implements AgentRuntime {
       shouldStopAfterTurn: () => true,
     });
     await probe.prompt('Call connection_probe now.');
-    if (!called) throw new Error('Text streaming succeeded, but tool calling was not confirmed.');
+    if (!called) throw new AppError("Text streaming succeeded, but tool calling was not confirmed.");
     return { text: visibleText(final), usage: usageOf(final) };
   }
 }

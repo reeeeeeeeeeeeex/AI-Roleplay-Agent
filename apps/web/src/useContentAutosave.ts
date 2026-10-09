@@ -1,8 +1,9 @@
+import { t } from './i18n.js';
 import { useEffect, useRef, useState } from 'react';
 
 const editors = new Set<() => Promise<boolean>>();
 export async function flushContentEdits() {
-  for (const flush of [...editors]) if (!await flush()) throw new Error('内容尚未保存，请先处理编辑区的提示。草稿已保留。');
+  for (const flush of [...editors]) if (!await flush()) throw new Error(t("内容尚未保存，请先处理编辑区的提示。草稿已保留。"));
 }
 
 const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -64,7 +65,7 @@ export function useContentAutosave<T>({ initial, draftKey, onSave, onError, enab
         if (mounted.current) setStatus('saved');
         return true;
       } catch (cause) {
-        const message = `${cause instanceof Error ? cause.message : '保存失败'} 草稿已保留，离开编辑区时会重试。`;
+        const message = t("{0} 草稿已保留，离开编辑区时会重试。", cause instanceof Error ? cause.message : t("保存失败"));
         if (mounted.current) { setStatus('error'); setError(message); }
         options.current.onError?.(message);
         return false;

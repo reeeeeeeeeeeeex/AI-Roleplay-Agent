@@ -1,3 +1,4 @@
+import { t, diagnosticText } from './i18n.js';
 import { useEffect, useState } from 'react';
 import type { StoryNavigation as Navigation } from '@new-ai-chat/contracts';
 import { api } from './api.js';
@@ -19,30 +20,30 @@ export default function StoryNavigation({ chatId, head, version, disabled, onJum
     try {
       await flushContentEdits();
       const response = await fetch(`/api/conversations/${chatId}/export?format=${format}`);
-      if (!response.ok) throw new Error((await response.json()).error ?? '导出失败');
+      if (!response.ok) { const body = await response.json(); throw new Error(diagnosticText(body.errorText, body.error ?? t("导出失败"))); }
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a'); link.href = url; link.download = `story-${chatId.slice(0, 8)}.${format === 'markdown' ? 'md' : 'airp.json'}`; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { onError((error as Error).message); }
   }
   return <details className="story-navigation">
-    <summary>场景与书签</summary>
-    <div><button disabled={disabled} onClick={() => void download('markdown')}>导出当前分支 Markdown</button><button disabled={disabled} onClick={() => void download('native')}>导出完整故事包</button></div>
+    <summary>{t("场景与书签")}</summary>
+    <div><button disabled={disabled} onClick={() => void download('markdown')}>{t("导出当前分支 Markdown")}</button><button disabled={disabled} onClick={() => void download('native')}>{t("导出完整故事包")}</button></div>
     {data && <>
-      <AutoSaveField draftKey={`${chatId}:scene`} initial={data.scene.scenario} label="当前场景" placeholder="场景未记录" disabled={disabled} onError={onError} onSave={async (scenario, previous) => {
+      <AutoSaveField draftKey={`${chatId}:scene`} initial={data.scene.scenario} label={t("当前场景")} placeholder={t("场景未记录")} disabled={disabled} onError={onError} onSave={async (scenario, previous) => {
         const current = await api(`/conversations/${chatId}`);
         await api(`/conversations/${chatId}`, 'PUT', { ...current, scenario, expectedScenario: previous, expectedUpdatedAt: current.updatedAt }, { keepalive: true }); onChanged();
       }} />
-      <div className="scene-fields">{(['time', 'location'] as const).map(field => <label key={field}>{field === 'time' ? '时间' : '地点'}<AutoSaveField key={`${head}:${field}`} draftKey={`${chatId}:${head}:scene-${field}`} initial={data.scene[field]} label={field === 'time' ? '当前时间' : '当前地点'} placeholder="未记录" singleLine disabled={disabled} onError={onError}
+      <div className="scene-fields">{(['time', 'location'] as const).map(field => <label key={field}>{field === 'time' ? t("时间") : t("地点")}<AutoSaveField key={`${head}:${field}`} draftKey={`${chatId}:${head}:scene-${field}`} initial={data.scene[field]} label={field === 'time' ? t("当前时间") : t("当前地点")} placeholder={t("未记录")} singleLine disabled={disabled} onError={onError}
         onSave={async (content, previous) => { await api(`/conversations/${chatId}/state/cell`, 'PATCH', { table: 'global_state', rowId: 1, column: field === 'time' ? 'current_time' : 'current_location', content, previous, head }, { keepalive: true }); onChanged(); }} /></label>)}</div>
-      <small>重要角色：{data.scene.importantCharacters.join('、') || '未记录'}</small>
+      <small>{t("重要角色：")}{data.scene.importantCharacters.join('、') || t("未记录")}</small>
       {data.bookmarks.map(bookmark => <div key={bookmark.id}>
-        <AutoSaveField draftKey={`${chatId}:bookmark:${bookmark.id}`} initial={bookmark.name} label="书签名称" singleLine disabled={disabled} onError={onError}
+        <AutoSaveField draftKey={`${chatId}:bookmark:${bookmark.id}`} initial={bookmark.name} label={t("书签名称")} singleLine disabled={disabled} onError={onError}
           onSave={async (name, previous) => { const saved = await api(`/conversations/${chatId}/bookmarks`, 'POST', { ...bookmark, name, previous }, { keepalive: true }); onChanged(); return saved.name; }} />
-        <button disabled={disabled} aria-label={`跳转到书签 ${bookmark.name}`} onClick={() => run(onJump(bookmark.messageId))}>跳转</button>
-        <button disabled={disabled} onClick={() => run(api(`/conversations/${chatId}/bookmarks/${bookmark.id}`, 'DELETE'))}>删除书签</button>
+        <button disabled={disabled} aria-label={t("跳转到书签 {0}", bookmark.name)} onClick={() => run(onJump(bookmark.messageId))}>{t("跳转")}</button>
+        <button disabled={disabled} onClick={() => run(api(`/conversations/${chatId}/bookmarks/${bookmark.id}`, 'DELETE'))}>{t("删除书签")}</button>
       </div>)}
-      {!data.bookmarks.length && <p className="muted">可从消息操作中添加书签。</p>}
+      {!data.bookmarks.length && <p className="muted">{t("可从消息操作中添加书签。")}</p>}
     </>}
   </details>;
 }

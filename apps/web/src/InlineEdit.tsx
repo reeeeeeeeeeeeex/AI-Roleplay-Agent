@@ -1,7 +1,8 @@
+import { t } from './i18n.js';
 import { useLayoutEffect, useRef, useState } from 'react';
 import './inline-edit.css';
 
-export default function InlineEdit({ initial, label, onSave, onCancel, disabled = false, singleLine = false, saveLabel = '保存' }: {
+export default function InlineEdit({ initial, label, onSave, onCancel, disabled = false, singleLine = false, saveLabel = t("保存") }: {
   initial: string; label: string; onSave: (text: string) => Promise<void>; onCancel: () => void;
   disabled?: boolean; singleLine?: boolean; saveLabel?: string;
 }) {
@@ -30,7 +31,7 @@ export default function InlineEdit({ initial, label, onSave, onCancel, disabled 
     if (disabled || pending.current || !value.trim()) return;
     pending.current = true; setBusy(true); setError('');
     try { await onSave(value); }
-    catch (error) { setError(error instanceof Error ? error.message : '保存失败，请重试。'); }
+    catch (error) { setError(error instanceof Error ? error.message : t("保存失败，请重试。")); }
     finally { pending.current = false; setBusy(false); }
   }
   return <div className={`inline-edit${singleLine ? ' inline-edit-short' : ''}`}>
@@ -42,9 +43,9 @@ export default function InlineEdit({ initial, label, onSave, onCancel, disabled 
         if (event.key === 'Enter' && (singleLine || event.ctrlKey || event.metaKey)) { event.preventDefault(); void save(); }
       }} />
     <div className="inline-edit-actions">
-      <button type="button" disabled={disabled || busy || !value.trim()} onClick={() => void save()}>{busy ? '保存中…' : saveLabel}</button>
-      <button type="button" disabled={busy} onClick={onCancel}>取消</button>
-      <small>{singleLine ? 'Enter' : 'Ctrl / ⌘ + Enter'} {saveLabel} · Esc 取消</small>
+      <button type="button" disabled={disabled || busy || !value.trim()} onClick={() => void save()}>{busy ? t("保存中…") : saveLabel}</button>
+      <button type="button" disabled={busy} onClick={onCancel}>{t("取消")}</button>
+      <small>{singleLine ? 'Enter' : 'Ctrl / ⌘ + Enter'} {saveLabel}  {t("· Esc 取消")}</small>
     </div>
     {error && <small className="error" role="alert">{error}</small>}
   </div>;

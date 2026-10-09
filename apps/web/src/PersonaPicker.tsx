@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, User, Plus, Check } from 'lucide-react';
 import type { Persona } from '@new-ai-chat/contracts';
@@ -55,7 +56,7 @@ export default function PersonaPicker({
   const displayName = selectedPersona
     ? selectedPersona.name
     : defaultPersonaId !== undefined
-    ? `${emptyLabel}${fallbackPersona ? ` (当前: ${fallbackPersona.name})` : ' (当前: 未设置)'}`
+    ? `${emptyLabel}${fallbackPersona ? t(" (当前: {0})", fallbackPersona.name) : t(" (当前: 未设置)")}`
     : emptyLabel;
 
   return (
@@ -102,7 +103,7 @@ export default function PersonaPicker({
                   <User size={26} />
                 </div>
                 {!value && (
-                  <div className="persona-picker-card-badge" title="当前选中">
+                  <div className="persona-picker-card-badge" title={t("当前选中")}>
                     <Check size={12} />
                   </div>
                 )}
@@ -113,7 +114,7 @@ export default function PersonaPicker({
                 </div>
                 {defaultPersonaId !== undefined && (
                   <div className="persona-picker-card-desc">
-                    {fallbackPersona ? `跟随: ${fallbackPersona.name}` : '跟随: 未设置'}
+                    {fallbackPersona ? t("跟随: {0}", fallbackPersona.name) : t("跟随: 未设置")}
                   </div>
                 )}
               </div>
@@ -142,10 +143,10 @@ export default function PersonaPicker({
                         <img className="character-card-img" src={p.avatarPath} alt={p.name} loading="lazy" />
                       </>
                     ) : (
-                      <div className="character-card-placeholder">{p.name.slice(0, 1) || '主'}</div>
+                      <div className="character-card-placeholder">{p.name.slice(0, 1) || t("主")}</div>
                     )}
                     {isSelected && (
-                      <div className="persona-picker-card-badge" title="当前选中">
+                      <div className="persona-picker-card-badge" title={t("当前选中")}>
                         <Check size={12} />
                       </div>
                     )}
@@ -174,7 +175,7 @@ export default function PersonaPicker({
                   <Plus size={26} />
                 </div>
                 <div className="persona-picker-card-info">
-                  <div className="persona-picker-card-name">新建主角</div>
+                  <div className="persona-picker-card-name">{t("新建主角")}</div>
                 </div>
               </div>
             )}

@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import type { Context } from '@earendil-works/pi-ai';
 import type { RuntimeConnection } from './types.js';
 
@@ -8,7 +9,7 @@ export function prepareAuthorNotes(context: Context, connection: RuntimeConnecti
   const notes: string[] = [];
   const messages = context.messages.flatMap(message => {
     if (message.role !== 'user' || !('authorNote' in message) || message.authorNote !== true) return [message];
-    if (typeof message.content !== 'string') throw new Error('Author note must be text.');
+    if (typeof message.content !== 'string') throw new AppError("Author note must be text.");
     notes.push(message.content);
     return [];
   });
@@ -22,7 +23,7 @@ export function prepareAuthorNotes(context: Context, connection: RuntimeConnecti
       }
       const field = protocol === 'openai-responses' ? 'input' : 'messages';
       const input = payload[field];
-      if (!Array.isArray(input)) throw new Error('Unable to place System author note in model request.');
+      if (!Array.isArray(input)) throw new AppError("Unable to place System author note in model request.");
       const output = [...input], first = output[0], note = notes.join('\n\n');
       if (first?.role === 'system' || first?.role === 'developer') {
         const content = typeof first.content === 'string'

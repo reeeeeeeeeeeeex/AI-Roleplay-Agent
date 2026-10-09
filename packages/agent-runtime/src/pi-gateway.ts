@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import type {
   Api,
   AssistantMessageEventStream,
@@ -194,11 +195,11 @@ export class PiModelGateway {
     let body: string | null = null;
     const captureFetch: typeof fetch = async (_input, init) => {
       body = String(init?.body ?? '');
-      throw new Error('Request preview captured.');
+      throw new AppError("Request preview captured.");
     };
     const stream = this.openStream(connection, context, options, captureFetch, false);
     for await (const _event of stream) { /* consume the expected capture error */ }
-    if (body === null) throw new Error('Unable to capture the model request body.');
+    if (body === null) throw new AppError("Unable to capture the model request body.");
     return body;
   }
 
@@ -208,7 +209,7 @@ export class PiModelGateway {
     const inputTokens = estimateContextTokens(context, replayReasoning);
     const maxOutput = options.maxTokens ?? connection.maxTokens;
     const window = connection.contextWindow ?? 128_000;
-    if (inputTokens + maxOutput > window) throw new Error(`上下文预算不足：输入估算 ${inputTokens} + 最大输出 ${maxOutput} > 配置窗口 ${window} token。请减少历史／工具返回内容，调低最大输出，或按模型实际支持的大小设置上下文窗口。输入为本地估算，不是供应商用量。`);
+    if (inputTokens + maxOutput > window) throw new AppError("上下文预算不足：输入估算 {0} + 最大输出 {1} > 配置窗口 {2} token。请减少历史／工具返回内容，调低最大输出，或按模型实际支持的大小设置上下文窗口。输入为本地估算，不是供应商用量。", inputTokens, maxOutput, window);
     const model = this.createModel(connection);
     const api = connection.protocol === 'openai-chat-completions'
       ? openAICompletionsApi()

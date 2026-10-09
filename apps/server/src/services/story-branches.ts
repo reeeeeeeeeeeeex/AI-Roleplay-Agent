@@ -1,3 +1,4 @@
+import { AppError } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { historyStartIndex } from '@new-ai-chat/contracts';
@@ -38,10 +39,10 @@ function recordsAt(repo: Repository, chatId: string, retained: Set<string>) {
 
 function sourceMessage(repo: Repository, chatId: string, messageId: string, head: string | null) {
   const chat = repo.getConversation(chatId);
-  if (!chat) throw new Error('故事不存在。');
-  if (chat.headMessageId !== head) throw new Error('故事已变化，请刷新后重试。');
+  if (!chat) throw new AppError("故事不存在。");
+  if (chat.headMessageId !== head) throw new AppError("故事已变化，请刷新后重试。");
   const message = repo.getMessage(messageId);
-  if (!message || message.conversationId !== chatId) throw new Error('消息不属于当前故事。');
+  if (!message || message.conversationId !== chatId) throw new AppError("消息不属于当前故事。");
   return { chat, message };
 }
 
@@ -92,7 +93,7 @@ export function deleteStoryFrom(repo: Repository, chatId: string, messageId: str
   return repo.database.sqlite.transaction(() => {
     const { chat, message } = sourceMessage(repo, chatId, messageId, head);
     const position = repo.getActiveBranch(chatId).findIndex(row => row.id === messageId);
-    if (position < 0) throw new Error('只能删除当前历史中的消息。');
+    if (position < 0) throw new AppError("只能删除当前历史中的消息。");
     const all = repo.listMessages(chatId);
     const children = new Map<string | null, string[]>();
     for (const row of all) children.set(row.parentId, [...(children.get(row.parentId) ?? []), row.id]);

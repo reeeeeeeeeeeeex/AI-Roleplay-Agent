@@ -33,6 +33,8 @@ flowchart LR
   API -->|SSE| UI
 ```
 
+界面语言由轻量 React 上下文与本地词典提供，保存在浏览器的 `interface-language` 中。应用诊断可携带 `UiText`（文案键与参数），前端按语言显示，原文本保留供兼容和诊断。语言不进入模型请求；状态显示标签与模型字段说明分离。
+
 ### 2. 从输入到完整回合
 
 `TurnService` 负责回合生命周期，`StoryContext` 负责读取当前故事位置可见的资料。
@@ -140,6 +142,8 @@ pnpm exec vitest run packages/agent-runtime/src/gateway.test.ts -t "sends real s
 Pi dependencies are contained in `agent-runtime`. The browser talks to the local server rather than sending provider keys directly to a model endpoint. SQLite holds durable data; browser storage holds UI preferences and unsent drafts.
 
 The request path is **WebUI → Fastify → story context → AgentRuntime → ModelGateway / Pi → configured provider**, with SQLite persistence and SSE updates back to the UI.
+
+A lightweight React context and local dictionaries provide the UI language, stored in the browser as `interface-language`. Application diagnostics may carry `UiText` keys and parameters alongside their original text. Language never enters model requests; state display labels are separate from model-facing field descriptions.
 
 ### 2. From input to a completed turn
 

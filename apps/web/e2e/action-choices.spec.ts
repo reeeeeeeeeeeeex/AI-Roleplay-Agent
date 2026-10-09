@@ -33,8 +33,8 @@ test('action bubbles reuse saved groups, edit on blur, and send without replacin
   await toggle.click(); await toggle.click();
   expect(generations).toBe(1);
 
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置' });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings' });
   await settings.getByRole('button', { name: '行动选项', exact: true }).click();
   await expect(settings.getByLabel('选项数量').locator('option')).toHaveText(['1 个', '2 个', '3 个', '4 个']);
   await settings.getByLabel('选项数量').selectOption('4');

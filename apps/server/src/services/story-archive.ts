@@ -1,3 +1,4 @@
+import { AppError, appendWarning, uiText, type UiText } from '@new-ai-chat/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,22 +50,22 @@ const archiveSchema = z.object({
   assets: z.record(z.string().regex(assetUrl), z.string().max(25_000_000).regex(/^[A-Za-z0-9+/]*={0,2}$/u)),
   warnings: z.array(text).default([]),
 });
-type StoryArchive = z.infer<typeof archiveSchema>;
+type StoryArchive = z.infer<typeof archiveSchema> & { warningTexts?: Array<UiText | null> };
 
 export function readStoryArchive(value: unknown): StoryArchive {
-  const archive = archiveSchema.parse(value);
+  const archive: StoryArchive = archiveSchema.parse(value);
   archive.proposals = archive.proposals.map(proposal => normalizeLegacyStateProposal(retireProposalOptions(proposal)));
-  const unique = (rows: Array<{ id: string | number }>) => { const ids = new Set(rows.map(row => row.id)); if (ids.size !== rows.length) throw new Error('故事包存在重复 ID。'); return ids; };
+  const unique = (rows: Array<{ id: string | number }>) => { const ids = new Set(rows.map(row => row.id)); if (ids.size !== rows.length) throw new AppError("故事包存在重复 ID。"); return ids; };
   const nodeIds = unique(archive.messages), characterIds = unique(archive.characters), personaIds = unique(archive.personas), loreIds = unique(archive.lorebooks);
   const recordIds = new Set([...unique(archive.memories), ...unique(archive.states)]), proposalIds = unique(archive.proposals);
   const eventIds = unique(archive.events);
-  const requireRef = (ids: Set<string | number>, id: string | number | null | undefined) => { if (id != null && !ids.has(id)) throw new Error(`故事包缺少引用：${id}`); };
+  const requireRef = (ids: Set<string | number>, id: string | number | null | undefined) => { if (id != null && !ids.has(id)) throw new AppError("故事包缺少引用：{0}", id); };
   const requireSpeaker = (speaker: { kind: string; characterId?: string } | null) => { if (speaker?.kind === 'character') requireRef(characterIds, speaker.characterId); };
   requireRef(nodeIds, archive.conversation.headMessageId);
   requireRef(nodeIds, archive.conversation.historyStartMessageId);
   requireRef(characterIds, archive.conversation.characterId); requireRef(personaIds, archive.conversation.personaId);
   for (const id of archive.conversation.lorebookIds) requireRef(loreIds, id);
-  if (archive.conversation.groupId !== (archive.group?.id ?? null)) throw new Error('故事包群组引用不一致。');
+  if (archive.conversation.groupId !== (archive.group?.id ?? null)) throw new AppError("故事包群组引用不一致。");
   for (const id of archive.group?.memberIds ?? []) requireRef(characterIds, id);
   const nodes = new Map(archive.messages.map(message => [message.id, message]));
   const checked = new Set<string>();
@@ -72,7 +73,7 @@ export function readStoryArchive(value: unknown): StoryArchive {
     requireRef(nodeIds, message.parentId); requireSpeaker(message.speaker);
     const path = new Set<string>(); let current: string | null = message.id;
     while (current && !checked.has(current)) {
-      if (path.has(current)) throw new Error('故事包消息分支存在循环。');
+      if (path.has(current)) throw new AppError("故事包消息分支存在循环。");
       path.add(current); current = nodes.get(current)?.parentId ?? null;
     }
     for (const id of path) checked.add(id);
@@ -92,17 +93,18 @@ export function readStoryArchive(value: unknown): StoryArchive {
     for (const output of p.plan?.outputs ?? []) requireSpeaker(output.speaker);
   }
   const avatarPaths = [...archive.characters, ...archive.personas, ...(archive.group?.avatarPath ? [{ avatarPath: archive.group.avatarPath }] : [])].map(item => item.avatarPath).filter((path): path is string => Boolean(path));
-  for (const path of avatarPaths) if (path.startsWith('/api/assets/') && !archive.assets[path]) archive.warnings.push(`本地图片未打包，导入后留空：${path}`);
+  for (const path of avatarPaths) if (path.startsWith('/api/assets/') && !archive.assets[path]) appendWarning(archive, '本地图片未打包，导入后留空：{0}', path);
   return archive;
 }
 
 export function previewStoryArchive(value: unknown) {
   const archive = readStoryArchive(value);
-  return { title: archive.conversation.title, counts: { messages: archive.messages.length, memories: archive.memories.length, states: archive.states.length, characters: archive.characters.length, images: Object.keys(archive.assets).length }, warnings: [...new Set(archive.warnings)], note: '导入为新故事，不覆盖现有内容；绑定导出时的主角，不修改全局设置。' };
+  const warnings = [...new Set(archive.warnings)];
+  return { title: archive.conversation.title, counts: { messages: archive.messages.length, memories: archive.memories.length, states: archive.states.length, characters: archive.characters.length, images: Object.keys(archive.assets).length }, warnings, warningTexts: warnings.map(warning => archive.warningTexts?.[archive.warnings.indexOf(warning)] ?? null), noteText: uiText('导入为新故事，不覆盖现有内容；绑定导出时的主角，不修改全局设置。'), note: '导入为新故事，不覆盖现有内容；绑定导出时的主角，不修改全局设置。' };
 }
 
 export function exportStory(repo: Repository, conversationId: string, assetDir: string, format: 'markdown' | 'native') {
-  const chat = repo.getConversation(conversationId); if (!chat) throw new Error('Conversation not found.');
+  const chat = repo.getConversation(conversationId); if (!chat) throw new AppError("Conversation not found.");
   const persona = repo.resolvePersona(chat.personaId);
   if (format === 'markdown') {
     return `# ${chat.title}\n\n` + repo.getActiveBranch(chat.id).map(message => {
@@ -132,6 +134,7 @@ export function exportStory(repo: Repository, conversationId: string, assetDir: 
     proposals: repo.listProposals(chat.id), events, assets, warnings });
   // Stored legacy fields and opaque provider state are not portable story data.
   for (const book of archive.lorebooks) for (const entry of book.entries) entry.legacyPayload = null;
+  delete archive.warningTexts;
   return archive;
 }
 

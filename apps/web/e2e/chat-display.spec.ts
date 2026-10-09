@@ -47,8 +47,8 @@ test('chat avatar keeps square framing despite legacy cropping and opens the ori
   await avatar.click();
   await expect(page.getByAltText('角色大图立绘')).toHaveAttribute('src', '/square-avatar.svg');
   await page.locator('.lightbox-modal').click();
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置' });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings' });
   await settings.getByRole('button', { name: '外观', exact: true }).click();
   await expect(settings.getByLabel('图片裁剪方式')).toHaveCount(0);
   await expect(settings.getByLabel('头像尺寸')).toHaveValue('large');
@@ -179,8 +179,8 @@ test('chat window prepends without moving text and horizontal bars jump to older
 
 test('appearance saves the display limit and plain thinking default across reloads', async ({ page, request }) => {
   await openHistory(page, request);
-  await page.getByRole('button', { name: '通用设置', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: '通用设置' });
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置 / Settings' });
   await settings.getByRole('button', { name: '外观', exact: true }).click();
   await expect(settings.getByLabel('聊天显示条数')).toHaveValue('100');
   await settings.getByLabel('聊天显示条数').fill('12');

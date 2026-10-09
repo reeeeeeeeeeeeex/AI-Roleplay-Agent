@@ -1,3 +1,5 @@
+import { uiText } from '@new-ai-chat/contracts';
+import { AppError } from '@new-ai-chat/contracts';
 import type { Message } from '@earendil-works/pi-ai';
 import type { MessageNode, SpeakerRef, ContextReport, ContextReportItem } from '@new-ai-chat/contracts';
 import { defaultAgencyPrompts, defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
@@ -6,6 +8,19 @@ import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterReques
 function section(title: string, body: string | undefined): string {
   const clean = body?.trim();
   return clean ? `[${title}]\n${clean}` : '';
+}
+
+// Display metadata only: leave the titles serialized into model context unchanged.
+function reportTitle(item: RetrievedContext) {
+  if (item.source === 'state') return uiText('Current state');
+  if (item.source === 'memory') {
+    if (item.required) return uiText('Pinned Fact');
+    const stage = /^Stage (\d+)$/.exec(item.title);
+    if (stage) return uiText('Stage {0}', Number(stage[1]));
+  }
+  if (item.sourceId === 'chat-scenario') return uiText(item.title === 'Group Scenario' ? 'Group Scenario' : 'Scenario');
+  if (!item.sourceId && item.title === 'Applied world facts') return uiText('Applied world facts');
+  return undefined;
 }
 
 function speakerName(speaker: SpeakerRef | null, characters: RuntimeCharacter[], narratorName: string): string {
@@ -171,7 +186,7 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
   const pinned = request.dynamicContext.filter(item => item.required);
   const authorNote = buildAuthorNoteMessages(request)[0];
   const mandatory = estimateTokens(buildStableSystemPrompt(request, request.promptMode ?? 'writer')) + (authorNote ? estimateTokens(String(authorNote.content)) + 32 : 0) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(latestUserAnchor(request)) + estimateTokens(reservedText) + pinned.reduce((sum, item) => sum + estimateTokens(dynamicSection(item, request)), 0);
-  if (limit < 1024 || mandatory > limit) throw new Error('Stable prompt or latest input exceeds the context budget. Increase context window or shorten the cards/lore/input.');
+  if (limit < 1024 || mandatory > limit) throw new AppError("Stable prompt or latest input exceeds the context budget. Increase context window or shorten the cards/lore/input.");
   let remaining = limit - mandatory;
   const contextBudget = remaining * 0.4;
   const ceiling = request.fixedHistory ? 0 : request.connection.historyMessageLimit ?? 0;
@@ -184,7 +199,7 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
     if (dynamicUsed + cost > contextBudget) {
       if (item.source === 'memory') {
         const inputEstimate = mandatory + optional.reduce((sum, entry) => sum + estimateTokens(dynamicSection(entry, request)), 0) + candidates.reduce((sum, node) => sum + estimateTokens(node.content) + 32, 0);
-        throw new Error(`Memory 上下文预算不足，无法完整发送已选记忆：资料预算估算 ${Math.floor(contextBudget)} token；输入估算 ${inputEstimate}、最大输出 ${request.connection.maxTokens}、配置窗口 ${request.connection.contextWindow ?? 128_000} token。请增大上下文窗口、调低最大输出，或关闭 Memory 发送后重试。`);
+        throw new AppError("Memory 上下文预算不足，无法完整发送已选记忆：资料预算估算 {0} token；输入估算 {1}、最大输出 {2}、配置窗口 {3} token。请增大上下文窗口、调低最大输出，或关闭 Memory 发送后重试。", Math.floor(contextBudget), inputEstimate, request.connection.maxTokens, request.connection.contextWindow ?? 128_000);
       }
       return false;
     }
@@ -195,19 +210,19 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
   for (const node of [...candidates].reverse()) {
     const cost = estimateTokens(node.content) + 32;
     if (cost > remaining) {
-      if (request.fixedHistory) throw new Error('固定发送范围超过上下文预算，请向后调整发送起点、减少资料或增大上下文窗口。为保留固定前缀，未自动裁剪历史。');
+      if (request.fixedHistory) throw new AppError("固定发送范围超过上下文预算，请向后调整发送起点、减少资料或增大上下文窗口。为保留固定前缀，未自动裁剪历史。");
       break;
     }
     history.unshift(node); remaining -= cost;
   }
   const items: ContextReportItem[] = [
-    { id: 'system', source: 'system', title: request.promptMode === 'choices' ? '行动选项指令与身份' : '固定指令、身份与主角权限', role: 'system', included: true, reason: '固定前缀', estimatedTokens: estimateTokens(buildStableSystemPrompt({ ...request, stableLore: [] }, request.promptMode ?? 'writer')) },
-    ...request.stableLore.map(item => ({ id: item.sourceId ?? item.title, source: 'lore' as const, title: item.title, role: 'system' as const, included: true, reason: '常驻资料', estimatedTokens: estimateTokens(item.content) })),
-    ...real.map(node => ({ id: node.id, source: 'history' as const, title: `${node.role} · ${node.id.slice(0, 8)}`, role: node.role, included: history.includes(node), reason: history.includes(node) ? '当前分支' : candidates.includes(node) ? '上下文预算' : '历史消息上限', estimatedTokens: estimateTokens(node.content) + 32, messageIds: [node.id] })),
-    ...orderedDynamicContext(request.dynamicContext).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),
+    { id: 'system', source: 'system', title: request.promptMode === 'choices' ? '行动选项指令与身份' : '固定指令、身份与主角权限', titleText: (request.promptMode === 'choices' ? uiText("行动选项指令与身份") : uiText("固定指令、身份与主角权限")), role: 'system', included: true, reason: '固定前缀', reasonText: uiText("固定前缀"), estimatedTokens: estimateTokens(buildStableSystemPrompt({ ...request, stableLore: [] }, request.promptMode ?? 'writer')) },
+    ...request.stableLore.map(item => ({ id: item.sourceId ?? item.title, source: 'lore' as const, title: item.title, titleText: reportTitle(item), role: 'system' as const, included: true, reason: '常驻资料', reasonText: uiText("常驻资料"), estimatedTokens: estimateTokens(item.content) })),
+    ...real.map(node => ({ id: node.id, source: 'history' as const, title: `${node.role} · ${node.id.slice(0, 8)}`, role: node.role, included: history.includes(node), reason: history.includes(node) ? '当前分支' : candidates.includes(node) ? '上下文预算' : '历史消息上限', reasonText: (history.includes(node) ? uiText("当前分支") : (candidates.includes(node) ? uiText("上下文预算") : uiText("历史消息上限"))), estimatedTokens: estimateTokens(node.content) + 32, messageIds: [node.id] })),
+    ...orderedDynamicContext(request.dynamicContext).map(item => ({ id: item.sourceId ?? item.title, source: item.source, title: item.title, titleText: reportTitle(item), role: 'assistant' as const, included: dynamicContext.includes(item), reason: !dynamicContext.includes(item) ? '上下文预算' : item.required ? '用户固定事实' : '动态资料', reasonText: (!dynamicContext.includes(item) ? uiText("上下文预算") : (item.required ? uiText("用户固定事实") : uiText("动态资料"))), estimatedTokens: estimateTokens(dynamicSection(item, request)), messageIds: item.messageIds ?? [] })),
   ];
   const keys = new Set(items.map(item => `${item.source}:${item.id}`));
-  if (authorNote) items.push({ id: 'author-note', source: 'control', title: '作者注释', role: 'system', included: true, reason: '聊天独有 · 前置 System；修改注释会影响后续前缀缓存', estimatedTokens: estimateTokens(String(authorNote.content)) + 32 });
+  if (authorNote) items.push({ id: 'author-note', source: 'control', title: '作者注释', titleText: uiText("作者注释"), role: 'system', included: true, reason: '聊天独有 · 前置 System；修改注释会影响后续前缀缓存', reasonText: uiText("聊天独有 · 前置 System；修改注释会影响后续前缀缓存"), estimatedTokens: estimateTokens(String(authorNote.content)) + 32 });
   items.push(...(request.contextReport?.items ?? []).filter(item => !item.included && !keys.has(`${item.source}:${item.id}`)));
   return { ...request, history, dynamicContext, contextReport: { items } };
 }
@@ -243,6 +258,6 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
     content: content || (request.latestUserText?.trim() ? request.latestUserText.trim() : '请继续推进剧情。'),
     timestamp: Date.now(),
   });
-  const contextReport: ContextReport = { items: [...request.contextReport!.items, { id: 'writer-control', source: 'control', title: '后置指令、最新用户输入与 Current Speaker', role: 'user', included: true, reason: '最后的写作控制', estimatedTokens: estimateTokens(content) }] };
+  const contextReport: ContextReport = { items: [...request.contextReport!.items, { id: 'writer-control', source: 'control', title: '后置指令、最新用户输入与 Current Speaker', titleText: uiText("后置指令、最新用户输入与 Current Speaker"), role: 'user', included: true, reason: '最后的写作控制', reasonText: uiText("最后的写作控制"), estimatedTokens: estimateTokens(content) }] };
   return { systemPrompt: buildStableSystemPrompt(request), messages, contextReport };
 }

@@ -1,13 +1,14 @@
+import { t, formatDate, formatNumber } from './i18n.js';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { TraceSummary, TurnTrace } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import ContextReport from './ContextReport.js';
 import './trace.css';
 
-const phases = { selection: '选择发言者', planning: 'Planner', writing: 'Writer', records: '记录更新', plain: '普通写作', choices: '行动选项' };
-const statuses = { running: '运行中', completed: '完成', failed: '失败', cancelled: '已取消' };
+const phases = { get selection() { return t("选择发言者"); }, planning: 'Planner', writing: 'Writer', get records() { return t("记录更新"); }, get plain() { return t("普通写作"); }, get choices() { return t("行动选项"); } };
+const statuses = { get running() { return t("运行中"); }, get completed() { return t("完成"); }, get failed() { return t("失败"); }, get cancelled() { return t("已取消"); } };
 const format = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-const duration = (from?: string | null, to?: string | null) => from && to ? `${((Date.parse(to) - Date.parse(from)) / 1000).toFixed(2)} s` : '—';
+const duration = (from?: string | null, to?: string | null) => from && to ? `${formatNumber((Date.parse(to) - Date.parse(from)) / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} s` : '—';
 
 function RawBlock({ title, value, onError }: { title: string; value: unknown; onError: (message: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -16,8 +17,8 @@ function RawBlock({ title, value, onError }: { title: string; value: unknown; on
   return <details className="trace-raw" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>{title}</summary>
     {open && <>
-      <button disabled={value == null} onClick={() => void navigator.clipboard.writeText(format(value) ?? '').then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? '已复制' : '复制原文'}</button>
-      <pre>{value == null ? '尚未捕获；旧 Trace 可能没有记录此项。' : format(value)}</pre>
+      <button disabled={value == null} onClick={() => void navigator.clipboard.writeText(format(value) ?? '').then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? t("已复制") : t("复制原文")}</button>
+      <pre>{value == null ? t("尚未捕获；旧 Trace 可能没有记录此项。") : format(value)}</pre>
     </>}
   </details>;
 }
@@ -69,45 +70,45 @@ function RequestTrace({ trace, onError }: { trace: TurnTrace; onError: (message:
   const http = trace.events?.find(event => event.type === 'http.response')?.data as any;
   return <article className="trace-request">
     <header>
-      <strong>{phases[trace.phase]} · 请求 {trace.requestIndex + 1}</strong>
+      <strong>{phases[trace.phase]}  {t("· 请求")} {trace.requestIndex + 1}</strong>
       <span className={`trace-status ${trace.status}`}>{statuses[trace.status]}</span>
     </header>
-    <div className="trace-model">{trace.model}{message?.stopReason && <code>stop: {message.stopReason}</code>}{http && <code>HTTP {http.status}</code>}</div>
+    <div className="trace-model">{trace.model}{message?.stopReason && <code>{t('停止原因：')} {message.stopReason}</code>}{http && <code>HTTP {http.status}</code>}</div>
     <dl className="trace-metrics">
-      <div><dt>总输入</dt><dd>{input ?? '未返回'}</dd></div>
-      <div><dt>输出</dt><dd>{usage?.output ?? '未返回'}</dd></div>
-      <div><dt>缓存读取</dt><dd>{usage?.cacheRead ?? '未返回'}{input ? ` · ${Math.round((usage?.cacheRead ?? 0) / input * 100)}%` : ''}</dd></div>
-      <div><dt>缓存写入</dt><dd>{usage?.cacheWrite ?? '未返回'}</dd></div>
-      <div><dt>思考 token</dt><dd>{usage?.reasoning ?? '未返回'}</dd></div>
-      <div><dt>总耗时</dt><dd>{duration(timing?.sentAt, timing?.completedAt ?? trace.completedAt)}</dd></div>
-      <div><dt>响应头</dt><dd>{duration(timing?.sentAt, timing?.headersAt)}</dd></div>
-      <div><dt>首个思考</dt><dd>{duration(timing?.sentAt, timing?.firstThinkingAt)}</dd></div>
-      <div><dt>首个正文</dt><dd>{duration(timing?.sentAt, timing?.firstTextAt)}</dd></div>
+      <div><dt>{t("总输入")}</dt><dd>{input == null ? t("未返回") : formatNumber(input)}</dd></div>
+      <div><dt>{t("输出")}</dt><dd>{usage?.output == null ? t("未返回") : formatNumber(usage?.output)}</dd></div>
+      <div><dt>{t("缓存读取")}</dt><dd>{usage?.cacheRead == null ? t("未返回") : formatNumber(usage?.cacheRead)}{input ? ` · ${Math.round((usage?.cacheRead ?? 0) / input * 100)}%` : ''}</dd></div>
+      <div><dt>{t("缓存写入")}</dt><dd>{usage?.cacheWrite == null ? t("未返回") : formatNumber(usage?.cacheWrite)}</dd></div>
+      <div><dt>{t("思考 token")}</dt><dd>{usage?.reasoning == null ? t("未返回") : formatNumber(usage?.reasoning)}</dd></div>
+      <div><dt>{t("总耗时")}</dt><dd>{duration(timing?.sentAt, timing?.completedAt ?? trace.completedAt)}</dd></div>
+      <div><dt>{t("响应头")}</dt><dd>{duration(timing?.sentAt, timing?.headersAt)}</dd></div>
+      <div><dt>{t("首个思考")}</dt><dd>{duration(timing?.sentAt, timing?.firstThinkingAt)}</dd></div>
+      <div><dt>{t("首个正文")}</dt><dd>{duration(timing?.sentAt, timing?.firstTextAt)}</dd></div>
     </dl>
     {trace.error && <pre className="trace-error">{trace.error}</pre>}
     <div className="trace-transcript">
       {blocks.map((block, index) => {
         if (!block) return null;
-        if (block.type === 'thinking') return <details className="trace-block trace-thinking" open key={index}><summary>模型思考</summary><pre>{block.thinking}</pre></details>;
-        if (block.type === 'text') return <section className="trace-block trace-text" key={index}><h4>{blocks.some(part => part?.type === 'toolCall') ? '模型文本 · 工具调用前' : '模型文本'}</h4><pre>{block.text}</pre></section>;
+        if (block.type === 'thinking') return <details className="trace-block trace-thinking" open key={index}><summary>{t("模型思考")}</summary><pre>{block.thinking}</pre></details>;
+        if (block.type === 'text') return <section className="trace-block trace-text" key={index}><h4>{blocks.some(part => part?.type === 'toolCall') ? t("模型文本 · 工具调用前") : t("模型文本")}</h4><pre>{block.text}</pre></section>;
         if (block.type === 'toolCall') {
           const tool = tools.get(block.id ?? '');
           return <section className={`trace-block trace-tool ${tool?.status ?? ''}`} key={index}>
-            <h4><code>{block.name ?? '工具参数接收中'}</code><span>{tool ? statuses[tool.status as keyof typeof statuses] : trace.status === 'running' ? '接收调用' : '未执行'} {duration(tool?.startedAt, tool?.endedAt)}</span></h4>
+            <h4><code>{block.name ?? t("工具参数接收中")}</code><span>{tool ? statuses[tool.status as keyof typeof statuses] : trace.status === 'running' ? t("接收调用") : t("未执行")} {duration(tool?.startedAt, tool?.endedAt)}</span></h4>
             {block.id && <small className="muted">{block.id}</small>}
-            <h5>参数</h5><pre>{format(block.arguments ?? tool?.arguments)}</pre>
-            {tool?.result !== undefined && <><h5>结果</h5><pre>{format(tool.result)}</pre></>}
+            <h5>{t("参数")}</h5><pre>{format(block.arguments ?? tool?.arguments)}</pre>
+            {tool?.result !== undefined && <><h5>{t("结果")}</h5><pre>{format(tool.result)}</pre></>}
           </section>;
         }
         return <RawBlock key={index} title={block.type} value={block} onError={onError} />;
       })}
-      {!blocks.length && <p className="muted">{trace.status === 'running' ? '等待模型事件…' : '此请求没有已记录的模型文本。'}</p>}
+      {!blocks.length && <p className="muted">{trace.status === 'running' ? t("等待模型事件…") : t("此请求没有已记录的模型文本。")}</p>}
     </div>
     <ContextReport report={trace.contextReport ?? null} />
-    <RawBlock title="Raw input · 实际请求 Body" value={trace.request} onError={onError} />
-    <RawBlock title="Raw output · 原始响应 / SSE 流" value={trace.response} onError={onError} />
-    <RawBlock title={`Pi 事件 · ${trace.events?.length ?? 0} 条（含增量）`} value={trace.events} onError={onError} />
-    <RawBlock title="请求元数据 / 用量 / 时间戳" value={{ id: trace.id, turnId: trace.turnId, speaker: trace.speaker, model: trace.model, phase: trace.phase, status: trace.status, stopReason: message?.stopReason, usage, timing, http, createdAt: trace.createdAt, completedAt: trace.completedAt }} onError={onError} />
+    <RawBlock title={t("Raw input · 实际请求 Body")} value={trace.request} onError={onError} />
+    <RawBlock title={t("Raw output · 原始响应 / SSE 流")} value={trace.response} onError={onError} />
+    <RawBlock title={t("Pi 事件 · {0} 条（含增量）", trace.events?.length ?? 0)} value={trace.events} onError={onError} />
+    <RawBlock title={t("请求元数据 / 用量 / 时间戳")} value={{ id: trace.id, turnId: trace.turnId, speaker: trace.speaker, model: trace.model, phase: trace.phase, status: trace.status, stopReason: message?.stopReason, usage, timing, http, createdAt: trace.createdAt, completedAt: trace.completedAt }} onError={onError} />
   </article>;
 }
 
@@ -159,22 +160,22 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError, exp
       <header className="trace-toolbar">
         <strong>Agent Trace</strong>
         <div>
-          <button className={follow ? 'active' : ''} onClick={() => { setSelected(selectedId ?? null); setFollow(!follow); }}>跟随最新{follow ? ' ✓' : ''}</button>
-          <button disabled={!selectedId} onClick={() => void api(`/traces/${selectedId}`).then(value => navigator.clipboard.writeText(JSON.stringify(value, null, 2))).then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? '已复制' : '复制 Trace'}</button>
+          <button className={follow ? 'active' : ''} onClick={() => { setSelected(selectedId ?? null); setFollow(!follow); }}>{t("跟随最新")}{follow ? ' ✓' : ''}</button>
+          <button disabled={!selectedId} onClick={() => void api(`/traces/${selectedId}`).then(value => navigator.clipboard.writeText(JSON.stringify(value, null, 2))).then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? t("已复制") : t("复制 Trace")}</button>
         </div>
       </header>
       <div className="trace-layout">
-        <nav className="trace-requests" aria-label="模型请求列表">
+        <nav className="trace-requests" aria-label={t("模型请求列表")}>
           {[...new Set(summaries.map(item => item.turnId))].map(turnId => <div key={turnId}>
-            <h4>回合 {turnId.slice(0, 8)}</h4>
+            <h4>{t("回合")} {turnId.slice(0, 8)}</h4>
             {summaries.filter(item => item.turnId === turnId).sort((a, b) => a.requestIndex - b.requestIndex).map(item => <button className={item.id === selectedId ? 'selected' : ''} key={item.id} onClick={() => { setFollow(false); setSelected(item.id); }}>
               <strong>{item.requestIndex + 1}. {phases[item.phase]} <span className={`trace-status ${item.status}`}>{statuses[item.status]}</span></strong>
-              <small>{new Date(item.createdAt).toLocaleString()} · {item.model}</small>
+              <small>{formatDate(item.createdAt)} · {item.model}</small>
             </button>)}
           </div>)}
-          {!summaries.length && <p className="muted">尚无模型请求记录。</p>}
+          {!summaries.length && <p className="muted">{t("尚无模型请求记录。")}</p>}
         </nav>
-        <div className="trace-detail">{children}{trace && trace.id === selectedId ? <RequestTrace key={trace.id} trace={trace} onError={onError} /> : selectedId ? <p className="muted">正在读取 Trace…</p> : null}</div>
+        <div className="trace-detail">{children}{trace && trace.id === selectedId ? <RequestTrace key={trace.id} trace={trace} onError={onError} /> : selectedId ? <p className="muted">{t("正在读取 Trace…")}</p> : null}</div>
       </div>
     </section>;
 }

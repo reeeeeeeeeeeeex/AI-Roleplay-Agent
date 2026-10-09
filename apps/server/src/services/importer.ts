@@ -1,3 +1,4 @@
+import { AppError, appendWarning } from '@new-ai-chat/contracts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -18,7 +19,7 @@ function loreInput(name: string, source: any) {
 }
 export async function executeImport(repository: Repository, sourcePath: string, expectedHash: string, assetDir: string) {
   const bundle = await scanImport(sourcePath);
-  if (bundle.preview.sourceHash !== expectedHash) throw new Error('Source changed after preview. Scan it again.');
+  if (bundle.preview.sourceHash !== expectedHash) throw new AppError("Source changed after preview. Scan it again.");
   if (repository.hasImport(expectedHash)) return { ...bundle.preview, alreadyImported: true };
   const assets = new Map<string, string>();
   await mkdir(assetDir, { recursive: true });
@@ -68,7 +69,7 @@ export async function executeImport(repository: Repository, sourcePath: string, 
     const resolveCharacter = (name: string) => {
       const known = chars.get(name) ?? chars.get(importName(name)); if (known) return known;
       const character = repository.createCharacter(characterInputSchema.parse({ name: name || 'Imported character' }));
-      chars.set(name, character.id); bundle.preview.warnings.push(`Created placeholder for missing character: ${name}`); return character.id;
+      chars.set(name, character.id); appendWarning(bundle.preview, 'Created placeholder for missing character: {0}', name); return character.id;
     };
     for (const file of bundle.files.filter((f) => f.kind === 'group')) {
       const known = repository.importedEntity('group', file.hash);
@@ -111,7 +112,7 @@ export async function executeImport(repository: Repository, sourcePath: string, 
           if (typeof extra.memory === 'string') repository.createMemory({ conversationId: chat.id, stage: repository.listMemories(chat.id, 1)[0]?.stage ? repository.listMemories(chat.id, 1)[0]!.stage + 1 : 1, storyTurnId: userSeen ? turnId : null, content: extra.memory, source: 'imported' });
           if (extra.protagonist_state?.tables) {
             try { repository.createState(chat.id, userSeen ? turnId : null, normalizeState(extra.protagonist_state.tables)); }
-            catch { bundle.preview.warnings.push(`State preserved as legacy data; needs repair: ${file.path}`); }
+            catch { appendWarning(bundle.preview, 'State preserved as legacy data; needs repair: {0}', file.path); }
           }
           if (extra.narrative_agent) repository.addEvent(chat.id, null, 'planner.imported', { messageId: message.id, record: extra.narrative_agent, history: extra.narrative_agent_history ?? [] });
           if (index === selected) selectedId = message.id;

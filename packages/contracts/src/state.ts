@@ -1,3 +1,4 @@
+import { AppError } from './diagnostics.js';
 import { z } from 'zod';
 import type { Persona, ProtagonistTables, StateRow, StateTableName } from './index.js';
 const stateTableNames = ['global_state', 'protagonist_info', 'important_characters', 'protagonist_skills', 'inventory', 'quests_events'] as const;
@@ -63,17 +64,17 @@ export function normalizeState(input: unknown): ProtagonistTables {
     input = tables;
   }
   const raw = z.record(z.string(), z.array(z.record(z.string(), cellSchema))).parse(input);
-  if (Object.keys(raw).some((table) => !stateTableNames.includes(table as StateTableName))) throw new Error('Unknown state table.');
+  if (Object.keys(raw).some((table) => !stateTableNames.includes(table as StateTableName))) throw new AppError("Unknown state table.");
   const result = blankState();
   for (const table of stateTableNames) {
     if (!(table in raw)) continue;
     const source = raw[table]!.map(row => normalizeLegacyStateCells(table, row));
-    if (singletons.has(table) && source.length > 1) throw new Error('Singleton table cannot contain multiple rows.');
+    if (singletons.has(table) && source.length > 1) throw new AppError("Singleton table cannot contain multiple rows.");
     const used = new Set<number>();
     // Reserve valid IDs first so repairing an early invalid ID cannot steal a later valid one.
     const reserved = new Set(source.map((r) => Number(r.row_id)).filter((id) => Number.isSafeInteger(id) && id > 0));
     result[table] = source.map((row) => {
-      if (Object.keys(row).some((c) => c !== 'row_id' && !stateColumns[table].includes(c))) throw new Error(`Unknown column in ${table}.`);
+      if (Object.keys(row).some((c) => c !== 'row_id' && !stateColumns[table].includes(c))) throw new AppError("Unknown column in {0}.", table);
       let rowId = Number(row.row_id);
       if (!Number.isSafeInteger(rowId) || rowId <= 0 || used.has(rowId)) { rowId = 1; while (reserved.has(rowId) || used.has(rowId)) rowId++; }
       used.add(rowId); return { ...Object.fromEntries(stateColumns[table].map((c) => [c, row[c] ?? ''])), row_id: rowId } as StateRow;
@@ -87,28 +88,28 @@ export function applyStateOperations(input: ProtagonistTables, operations: unkno
   const parsed = z.array(stateOperationSchema).max(100).parse(operations);
   const tables = structuredClone(input);
   for (const { table, op, rowId, cells } of parsed) {
-    if (singletons.has(table) && op !== 'updateRow') throw new Error('Singleton tables are update-only.');
-    if (table === 'important_characters' && op === 'deleteRow' && !options.allowImportantCharacterDeletion) throw new Error('Important characters cannot be deleted by the model.');
-    if (op !== 'insertRow' && rowId === undefined) throw new Error('A row ID is required.');
-    if (op === 'insertRow' && rowId !== undefined) throw new Error('Inserted row IDs are assigned locally.');
-    if (op === 'deleteRow' && cells !== undefined) throw new Error('Delete operations cannot supply cells.');
-    if (op !== 'deleteRow' && !cells) throw new Error('Cells are required.');
+    if (singletons.has(table) && op !== 'updateRow') throw new AppError("Singleton tables are update-only.");
+    if (table === 'important_characters' && op === 'deleteRow' && !options.allowImportantCharacterDeletion) throw new AppError("Important characters cannot be deleted by the model.");
+    if (op !== 'insertRow' && rowId === undefined) throw new AppError("A row ID is required.");
+    if (op === 'insertRow' && rowId !== undefined) throw new AppError("Inserted row IDs are assigned locally.");
+    if (op === 'deleteRow' && cells !== undefined) throw new AppError("Delete operations cannot supply cells.");
+    if (op !== 'deleteRow' && !cells) throw new AppError("Cells are required.");
     for (const column of Object.keys(cells ?? {})) {
-      if (!stateColumns[table].includes(column)) throw new Error(`Unknown or immutable column: ${column}`);
-      if (table === 'protagonist_info' && column === 'past_experience_before_story' && !options.allowUserAuthoredBackground) throw new Error('Past Experience Before Story can only be edited by the user.');
+      if (!stateColumns[table].includes(column)) throw new AppError("Unknown or immutable column: {0}", column);
+      if (table === 'protagonist_info' && column === 'past_experience_before_story' && !options.allowUserAuthoredBackground) throw new AppError("Past Experience Before Story can only be edited by the user.");
     }
     const index = tables[table].findIndex((row) => row.row_id === rowId);
-    if (op !== 'insertRow' && index < 0) throw new Error('Unknown row.');
+    if (op !== 'insertRow' && index < 0) throw new AppError("Unknown row.");
     if (op === 'deleteRow') { tables[table].splice(index, 1); continue; }
     const original = op === 'insertRow' ? null : tables[table][index]!;
     const next: StateRow = original ? { ...original, ...cells } : { row_id: Math.max(0, ...tables[table].map((r) => r.row_id)) + 1, ...Object.fromEntries(stateColumns[table].map((c) => [c, ''])), ...(table === 'inventory' ? { quantity: '1' } : {}), ...cells };
-    for (const column of identities[table] ?? []) if ((!original || column in cells!) && !key(next[column])) throw new Error(`Missing identity field: ${column}`);
+    for (const column of identities[table] ?? []) if ((!original || column in cells!) && !key(next[column])) throw new AppError("Missing identity field: {0}", column);
     if (table === 'inventory' && (!original || 'quantity' in cells!)) {
-      const quantity = Number(next.quantity); if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('Quantity must be a positive integer.');
+      const quantity = Number(next.quantity); if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new AppError("Quantity must be a positive integer.");
     }
-    if (table === 'important_characters' && (!original || 'is_dead' in cells!) && !['是', '否', ''].includes(String(next.is_dead))) throw new Error('is_dead must be 是, 否, or empty (unknown).');
+    if (table === 'important_characters' && (!original || 'is_dead' in cells!) && !['是', '否', ''].includes(String(next.is_dead))) throw new AppError("is_dead must be 是, 否, or empty (unknown).");
     const uniqueColumn = identities[table]?.[0];
-    if (uniqueColumn && (!original || key(next[uniqueColumn]) !== key(original[uniqueColumn])) && tables[table].some((row) => row !== original && key(row[uniqueColumn]) === key(next[uniqueColumn]))) throw new Error('Duplicate identity.');
+    if (uniqueColumn && (!original || key(next[uniqueColumn]) !== key(original[uniqueColumn])) && tables[table].some((row) => row !== original && key(row[uniqueColumn]) === key(next[uniqueColumn]))) throw new AppError("Duplicate identity.");
     if (original) tables[table][index] = next; else tables[table].push(next);
   }
   return { tables, changed: JSON.stringify(tables) !== JSON.stringify(input) };

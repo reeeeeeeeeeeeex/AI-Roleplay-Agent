@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Pencil, Square } from 'lucide-react';
 import type { ActionChoiceCache } from '@new-ai-chat/contracts';
@@ -40,7 +41,7 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
         if (mounted.current) setCache(next);
         updateEdit(null); return true;
       } catch (cause) {
-        if (mounted.current) setError(`${(cause as Error).message} 草稿已保留，离开编辑框可重试。`);
+        if (mounted.current) setError(t("{0} 草稿已保留，离开编辑框可重试。", (cause as Error).message));
         return false;
       } finally { savingRef.current = null; if (mounted.current) setSaving(false); }
     })();
@@ -66,7 +67,7 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
       const next = await api<ActionChoiceCache>(endpoint, 'POST', { head }, { signal: abort.signal });
       if (mounted.current && !abort.signal.aborted) setCache(next);
     } catch (cause) {
-      if (mounted.current) setError(abort.signal.aborted ? '生成已取消，已有选项保留。' : (cause as Error).message);
+      if (mounted.current) setError(abort.signal.aborted ? t("生成已取消，已有选项保留。") : (cause as Error).message);
     } finally {
       if (controller.current === abort) controller.current = null;
       if (mounted.current) { setBusy(false); callbacks.current.onBusy(false); callbacks.current.onChanged(); }
@@ -99,28 +100,28 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
       if (next) setCache(await api<ActionChoiceCache>(`${endpoint}/selection`, 'PUT', { head, groupId: next.id }));
     });
   }
-  return <section className="action-choices" aria-label="行动选项">
+  return <section className="action-choices" aria-label={t("行动选项")}>
     <div className="action-choice-toolbar">
-      <button type="button" disabled={disabled} aria-expanded={open} onClick={() => void toggle()}>行动选项 {open ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button>
+      <button type="button" disabled={disabled} aria-expanded={open} onClick={() => void toggle()}>{t("行动选项")} {open ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button>
       {open && <div className="action-choice-navigation">
-        <button type="button" aria-label="上一组选项" disabled={disabled || busy || selectedIndex === 0} onClick={() => void navigate(-1)}><ChevronLeft size={16} /></button>
-        <small>{cache.groups.length ? `${selectedIndex + 1} / ${cache.groups.length}` : '尚无选项'}</small>
-        <button type="button" aria-label={selectedIndex < cache.groups.length - 1 ? '下一组选项' : '生成新一组选项'} disabled={disabled || busy} onClick={() => void navigate(1)}><ChevronRight size={16} /></button>
-        {busy && <button type="button" aria-label="停止生成行动选项" onClick={() => controller.current?.abort()}><Square size={13} /></button>}
+        <button type="button" aria-label={t("上一组选项")} disabled={disabled || busy || selectedIndex === 0} onClick={() => void navigate(-1)}><ChevronLeft size={16} /></button>
+        <small>{cache.groups.length ? `${selectedIndex + 1} / ${cache.groups.length}` : t("尚无选项")}</small>
+        <button type="button" aria-label={selectedIndex < cache.groups.length - 1 ? t("下一组选项") : t("生成新一组选项")} disabled={disabled || busy} onClick={() => void navigate(1)}><ChevronRight size={16} /></button>
+        {busy && <button type="button" aria-label={t("停止生成行动选项")} onClick={() => controller.current?.abort()}><Square size={13} /></button>}
       </div>}
       {toolbarEnd}
     </div>
     {open && <>
-      {busy && <small role="status">正在生成行动选项…</small>}
-      {saving && <small role="status">保存中…</small>}
+      {busy && <small role="status">{t("正在生成行动选项…")}</small>}
+      {saving && <small role="status">{t("保存中…")}</small>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="action-choice-grid">
         {group?.choices.map((text, index) => <div className="action-choice-bubble" key={`${group.id}:${index}`}>
           {edit?.groupId === group.id && edit.index === index
-            ? <textarea autoFocus aria-label={`编辑选项 ${index + 1}`} maxLength={4000} rows={3} value={edit.value} readOnly={saving || disabled}
+            ? <textarea autoFocus aria-label={t("编辑选项 {0}", index + 1)} maxLength={4000} rows={3} value={edit.value} readOnly={saving || disabled}
                 onChange={event => updateEdit({ ...edit, value: event.target.value })} onBlur={() => void flushEdit()} />
             : <><button type="button" className="action-choice-text" disabled={disabled || busy} onClick={() => void action(() => onSend(text))}>{text}</button>
-                <button type="button" className="action-choice-edit" aria-label={`编辑选项 ${index + 1}`} disabled={disabled || busy} onClick={() => void action(async () => updateEdit({ groupId: group.id, index, value: text, previous: text }))}><Pencil size={13} /></button></>}
+                <button type="button" className="action-choice-edit" aria-label={t("编辑选项 {0}", index + 1)} disabled={disabled || busy} onClick={() => void action(async () => updateEdit({ groupId: group.id, index, value: text, previous: text }))}><Pencil size={13} /></button></>}
         </div>)}
       </div>
     </>}

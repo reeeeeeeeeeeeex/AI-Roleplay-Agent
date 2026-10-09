@@ -1,3 +1,6 @@
+import { countLabel, generationLabel, phaseLabel } from './ui-labels.js';
+import { t, formatDate, formatNumber, diagnosticText, type MessageKey } from './i18n.js';
+import { useLanguage } from './LanguageProvider.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine } from 'lucide-react';
 import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
@@ -27,13 +30,14 @@ function formatTime(isoString?: string) {
   try {
     const d = new Date(isoString);
     if (isNaN(d.getTime())) return isoString;
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return formatDate(isoString);
   } catch {
     return isoString;
   }
 }
 
 export default function App() {
+  useLanguage(); // Re-render labels without replacing the story/editor component tree.
   const [data, setData] = useState<Record<string, any[]>>({});
   const [chatId, setChatId] = useState<string | null>(() => localStorage.getItem('selected-chat'));
   const chatRef = useRef(chatId);
@@ -70,7 +74,7 @@ export default function App() {
   const [lastTurn, setLastTurn] = useState<TurnRecord | null>(null);
   const draftFrame = useRef<number | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
-  const [phase, setPhase] = useState('');
+  const [phase, setPhase] = useState<{ key: MessageKey; values?: unknown[] } | null>(null);
   const [recordsVersion, setRecordsVersion] = useState(0);
   const [session, setSession] = useState<any>(null);
   const [paired, setPaired] = useState(true);
@@ -144,8 +148,8 @@ export default function App() {
 
   const speakerName = (speaker: SpeakerRef | null) =>
     speaker?.kind === 'narrator'
-      ? generalSettings.narrator.name ?? '旁白'
-      : (data.characters ?? []).find((c) => c.id === (speaker?.kind === 'character' ? speaker.characterId : ''))?.name ?? '角色';
+      ? generalSettings.narrator.name ?? t("旁白")
+      : (data.characters ?? []).find((c) => c.id === (speaker?.kind === 'character' ? speaker.characterId : ''))?.name ?? t("角色");
 
   const act = (promise: Promise<unknown>) => {
     setError('');
@@ -201,7 +205,7 @@ export default function App() {
       .catch((err) => {
         setPaired(!(err instanceof ApiError && err.status === 401));
         setError(err instanceof ApiError && err.status === 404
-          ? '页面与服务版本不一致，请按 Ctrl+F5 刷新；若仍失败，请更新后重启。'
+          ? t("页面与服务版本不一致，请按 Ctrl+F5 刷新；若仍失败，请更新后重启。")
           : err.message);
       });
     return () => { streamAbort.current?.abort(); if (draftFrame.current !== null) cancelAnimationFrame(draftFrame.current); };
@@ -221,7 +225,7 @@ export default function App() {
 
   useEffect(() => {
     try { localStorage.setItem('story-drafts', JSON.stringify(inputDrafts)); }
-    catch { setNotice('浏览器无法保存草稿，请在关闭页面前复制输入。'); }
+    catch { setNotice(t("浏览器无法保存草稿，请在关闭页面前复制输入。")); }
   }, [inputDrafts]);
 
   async function selectChat(id: string, flush = true) {
@@ -249,11 +253,11 @@ export default function App() {
         if (chatRef.current !== currentChat) return;
         const p = event.payload;
         if (!['writer.delta', 'thinking.delta', 'writer.snapshot'].includes(event.type)) setActivity((old) => [...old.slice(-79), event]);
-        if (event.type === 'turn.started') { setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 准备上下文' : generalSettings.generationMode === 'planner' ? 'Planner · 规划' : 'Writer Agent · 选择发言者'); }
-        if (event.type === 'agent.phase') setPhase(p.phase === 'selection' ? 'Writer Agent · 选择发言者' : 'Writer Agent · 写作');
-        if (event.type === 'agent.thinking') setPhase('Writer Agent · 思考');
+        if (event.type === 'turn.started') { setPhase(generalSettings.generationMode === 'plain' ? { key: "普通写作 · 准备上下文" } : generalSettings.generationMode === 'planner' ? { key: "Planner · 规划" } : { key: "Writer Agent · 选择发言者" }); }
+        if (event.type === 'agent.phase') setPhase(p.phase === 'selection' ? { key: "Writer Agent · 选择发言者" } : { key: "Writer Agent · 写作" });
+        if (event.type === 'agent.thinking') setPhase({ key: "Writer Agent · 思考" });
         if (event.type === 'writer.started') {
-          setPhase(`Writer · ${p.outputIndex + 1}`);
+          setPhase({ key: "Writer · {0}", values: [p.outputIndex + 1] });
           queueDraft(old => ({ ...old, [p.outputIndex]: { speaker: p.speaker, outputIndex: p.outputIndex, text: '', thinking: '' } }));
         }
         if (event.type === 'writer.delta') {
@@ -261,7 +265,7 @@ export default function App() {
         }
         if (event.type === 'thinking.delta') {
           if (generalSettings.generationMode === 'plain') queueDraft(old => old[p.outputIndex] ? { ...old, [p.outputIndex]: { ...old[p.outputIndex]!, thinking: old[p.outputIndex]!.thinking + p.delta } } : old);
-          setPhase(generalSettings.generationMode === 'plain' ? '普通写作 · 思考' : 'Writer Agent · 思考');
+          setPhase(generalSettings.generationMode === 'plain' ? { key: "普通写作 · 思考" } : { key: "Writer Agent · 思考" });
         }
         if (event.type === 'writer.snapshot') {
           queueDraft(Object.fromEntries((p.outputs ?? []).map((output: LiveDraft) => [output.outputIndex, output])));
@@ -272,9 +276,9 @@ export default function App() {
           setBranch(old => old.some(node => node.id === message.id) ? old : [...old.slice(0, old.findIndex(node => node.id === message.parentId) + 1), message]);
           setNodes(old => old.some(node => node.id === message.id) ? old : [...old, message]);
         }
-        if (event.type === 'records.started') setPhase('正文已完成 · 更新记录');
+        if (event.type === 'records.started') setPhase({ key: "正文已完成 · 更新记录" });
         if (event.type === 'turn.failed' || event.type === 'turn.partial' || event.type === 'records.failed') {
-          setError(p.error ?? '生成失败');
+          setError(diagnosticText(p.errorText, p.error ?? t("生成失败")));
         }
       }, controller.signal);
       finished = true;
@@ -285,7 +289,7 @@ export default function App() {
       if (streamAbort.current === controller) {
         setTurn(null);
         queueDraft({});
-        setPhase('');
+        setPhase(null);
         if (finished || controller.signal.aborted) localStorage.removeItem('active-turn');
       }
     }
@@ -350,7 +354,7 @@ export default function App() {
       setSending(true);
       if (manual) {
         if (chatRef.current !== chat.id) return;
-        if (manualAssistant && replyTarget === 'auto') throw new Error('请先选择录入回复的角色。');
+        if (manualAssistant && replyTarget === 'auto') throw new Error(t("请先选择录入回复的角色。"));
         const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', {
           head: savedMessageId(chat.headMessageId ?? undefined) ?? null,
           ...(manualAssistant ? { role: 'assistant', text: manualText,
@@ -445,11 +449,11 @@ export default function App() {
     await flushContentEdits();
     const savedId = savedMessageId(messageId)!;
     if (branch.some(message => message.id === savedId)) { scrollToMessage(savedId); return; }
-    if (window.confirm('这个书签位于其他历史走向，是否从该消息创建独立分支并打开？')) await forkFrom(savedId);
+    if (window.confirm(t("这个书签位于其他历史走向，是否从该消息创建独立分支并打开？"))) await forkFrom(savedId);
   }
   async function deleteFrom(messageId: string) {
     if (!chat || turn || sendPending.current) return;
-    if (!window.confirm('永久删除当前聊天从这个位置起的全部消息，包括旧走向中这个位置及之后的版本？Memory 和主角状态将恢复到保留消息对应的记录；其他独立聊天不受影响。删除后无法恢复。')) return;
+    if (!window.confirm(t("永久删除当前聊天从这个位置起的全部消息，包括旧走向中这个位置及之后的版本？Memory 和主角状态将恢复到保留消息对应的记录；其他独立聊天不受影响。删除后无法恢复。"))) return;
     sendPending.current = true; setSending(true); setError('');
     try {
       await flushContentEdits();
@@ -476,7 +480,7 @@ export default function App() {
       const preview = await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload);
       if (chatRef.current === chat.id) setPromptPreview({ ...preview, conversationId: chat.id, input: payload.input, draftText: text, existingUserInput: Boolean(payload.targetMessageId) });
     }
-    catch (err: any) { setError(err.message || '预览失败'); }
+    catch (err: any) { setError(err.message || t("预览失败")); }
   }
 
   async function copyWebPrompt() {
@@ -486,7 +490,7 @@ export default function App() {
     let copied = false;
     try {
       await flushContentEdits();
-      if (chatRef.current !== preview.conversationId) throw new Error('聊天已切换，请重新预览。');
+      if (chatRef.current !== preview.conversationId) throw new Error(t("聊天已切换，请重新预览。"));
       await navigator.clipboard.writeText(preview.webPrompt);
       copied = true;
       if (preview.input) {
@@ -500,15 +504,15 @@ export default function App() {
         setRecordsVersion(version => version + 1);
       } else {
         const current = await api<Conversation>(`/conversations/${chat.id}`);
-        if (current.headMessageId !== preview.headMessageId) throw new Error('消息位置已变化，请重新预览。');
+        if (current.headMessageId !== preview.headMessageId) throw new Error(t("消息位置已变化，请重新预览。"));
       }
       if (chatRef.current !== chat.id) return;
       setReplyTarget(preview.webSpeaker.kind === 'narrator' ? 'narrator' : preview.webSpeaker.characterId);
       setVoice('assistant'); setPromptPreview(null);
-      setNotice('网页提示词已复制。粘贴到 AI 网页后，把回复填入“角色”模式保存。');
+      setNotice(t("网页提示词已复制。粘贴到 AI 网页后，把回复填入“角色”模式保存。"));
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : '复制失败';
-      setPromptPreview((old: any) => old ? { ...old, copyError: `${copied ? '提示词已复制，但本地保存或位置校验未完成。' : ''}${message} 草稿已保留。` } : old);
+      const message = cause instanceof Error ? cause.message : t("复制失败");
+      setPromptPreview((old: any) => old ? { ...old, copyError: t("{0}{1} 草稿已保留。", copied ? t("提示词已复制，但本地保存或位置校验未完成。") : '', message) } : old);
     } finally { sendPending.current = false; setSending(false); }
   }
 
@@ -536,7 +540,7 @@ export default function App() {
   }
 
   async function remove(kind: Collection, value: any) {
-    if (!window.confirm(`删除「${value.name ?? value.title}」？`)) return;
+    if (!window.confirm(t("删除「{0}」？", value.name ?? value.title))) return;
     await api(`/${kind}/${value.id}`, 'DELETE');
     await refresh();
     if (chatId === value.id) setChatId(null);
@@ -547,7 +551,7 @@ export default function App() {
     try {
       if (execute && preview) {
         const report = await api('/imports/execute', 'POST', { sourcePath: preview.sourcePath, sourceHash: preview.sourceHash });
-        setNotice(report.alreadyImported ? '这批文件已导入，没有重复创建。' : '导入完成。所有聊天统一使用通用设置中的模型。');
+        setNotice(report.alreadyImported ? t("这批文件已导入，没有重复创建。") : t("导入完成。所有聊天统一使用通用设置中的模型。"));
         await refresh();
         setPreview(report);
       } else {
@@ -567,8 +571,8 @@ export default function App() {
   if (!paired) {
     return (
       <div className="pair-screen">
-        <h1>连接空间</h1>
-        <p>请输入后端配置的配对令牌。</p>
+        <h1>{t("连接空间")}</h1>
+        <p>{t("请输入后端配置的配对令牌。")}</p>
         <form onSubmit={(e) => {
           e.preventDefault();
           act(api('/pair', 'POST', { token }).then(async () => {
@@ -577,8 +581,8 @@ export default function App() {
             setError('');
           }));
         }}>
-          <input aria-label="配对令牌" type="password" value={token} onChange={(e) => setToken(e.target.value)} />
-          <button className="primary">配对</button>
+          <input aria-label={t("配对令牌")} type="password" value={token} onChange={(e) => setToken(e.target.value)} />
+          <button className="primary">{t("配对")}</button>
         </form>
         {error && <p className="error">{error}</p>}
       </div>
@@ -592,23 +596,22 @@ export default function App() {
           <div className="brand-title">
             <span>AI Roleplay Agent</span>
           </div>
-          <button className="sidebar-toggle-btn" title="收起侧栏" aria-label="收起侧栏" onClick={() => setSidebarOpen(false)}>
+          <button className="sidebar-toggle-btn" title={t("收起侧栏")} aria-label={t("收起侧栏")} onClick={() => setSidebarOpen(false)}>
             <PanelLeftClose size={15} />
           </button>
-          <button className="mobile-only" onClick={() => setMobileNav(false)}>✕</button>
+          <button className="mobile-only" aria-label={t('关闭导航')} onClick={() => setMobileNav(false)}>✕</button>
         </div>
 
         <button className="new-story primary" onClick={newChat}>
-          <Plus size={15} />开启新故事
-        </button>
+          <Plus size={15} />{t("开启新故事")}</button>
 
         <button
           type="button"
           className={`nav-label-btn ${page === 'conversations' ? 'selected' : ''}`}
           onClick={() => { setPage('conversations'); setMobileNav(false); }}
-          title="查看全部故事卡片"
+          title={t("查看全部故事卡片")}
         >
-          <span className="nav-label-title"><MessageSquare size={13} /> 故事列表</span>
+          <span className="nav-label-title"><MessageSquare size={13} />  {t("故事列表")}</span>
           <span className="nav-label-count">{data.conversations?.length ?? 0}</span>
         </button>
         <nav className="story-list">
@@ -617,15 +620,15 @@ export default function App() {
               <MessageSquare size={14} />
               <span>
                 {c.title}
-                <small>{c.kind === 'group' ? '群聊' : '单聊'} · {{ plain: '普通写作', 'writer-agent': 'Writer Agent', planner: 'Planner＋Writer' }[generalSettings.generationMode]}</small>
+                <small>{c.kind === 'group' ? t("群聊") : t("单聊")} · {{ plain: t("普通写作"), 'writer-agent': 'Writer Agent', planner: 'Planner＋Writer' }[generalSettings.generationMode]}</small>
               </span>
             </button>
           ))}
-          {!data.conversations?.length && <p className="muted" style={{ padding: '4px 8px' }}>暂无故事</p>}
+          {!data.conversations?.length && <p className="muted" style={{ padding: '4px 8px' }}>{t("暂无故事")}</p>}
         </nav>
 
         <div className="nav-label">
-          <span>资源管理</span>
+          <span>{t("资源管理")}</span>
         </div>
         <nav className="studio-nav">
           {studioCollections.map((kind) => (
@@ -635,18 +638,16 @@ export default function App() {
             </button>
           ))}
           <button onClick={() => { setShowSettings(true); setMobileNav(false); }}>
-            <Settings2 size={14} />通用设置
-          </button>
+            <Settings2 size={14} />设置 / Settings</button>
           <button onClick={() => { setShowPersona(true); setMobileNav(false); }}>
-            <Users size={14} />主角：{activePersona?.name ?? '未选择'}
+            <Users size={14} />{t("主角：")}{activePersona?.name ?? t("未选择")}
           </button>
           <button className={page === 'import' ? 'selected' : ''} onClick={() => { setPage('import'); setMobileNav(false); }}>
-            <Upload size={14} />导入故事
-          </button>
+            <Upload size={14} />{t("导入故事")}</button>
         </nav>
 
         <div className="local-status">
-          <i /> 本地 {session?.fakeModel ? '离线演示' : 'v0.2'}
+          <i />  {t("本地")} {session?.fakeModel ? t("离线演示") : 'v0.2'}
         </div>
       </aside>
 
@@ -654,58 +655,58 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             {!sidebarOpen && (
-              <button className="sidebar-toggle-btn" title="展开侧栏" aria-label="展开侧栏" onClick={() => setSidebarOpen(true)}>
+              <button className="sidebar-toggle-btn" title={t("展开侧栏")} aria-label={t("展开侧栏")} onClick={() => setSidebarOpen(true)}>
                 <PanelLeft size={16} />
               </button>
             )}
-            <button className="mobile-only" aria-label="打开导航" onClick={() => setMobileNav(true)}>☰</button>
-            <h1>{page === 'chat' ? chat?.title ?? '新故事' : page === 'import' ? '导入故事' : page === 'conversations' ? '故事列表' : titles[page]}</h1>
+            <button className="mobile-only" aria-label={t("打开导航")} onClick={() => setMobileNav(true)}>☰</button>
+            <h1>{page === 'chat' ? chat?.title ?? t("新故事") : page === 'import' ? t("导入故事") : page === 'conversations' ? t("故事列表") : titles[page]}</h1>
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
               <>
-                <button title="作者注释" aria-label="作者注释" onClick={() => setShowAuthorNote(true)}>
+                <button title={t("作者注释")} aria-label={t("作者注释")} onClick={() => setShowAuthorNote(true)}>
                   <FilePenLine size={14} />
-                  <span>作者注释</span>
+                  <span>{t("作者注释")}</span>
                 </button>
                 {chat.kind === 'group' ? (
                   <button
-                    title="编辑当前群聊"
-                    aria-label="编辑当前群聊"
+                    title={t("编辑当前群聊")}
+                    aria-label={t("编辑当前群聊")}
                     onClick={() => {
                       const grp = data.groups?.find((g) => g.id === chat.groupId);
                       if (grp) edit('groups', grp);
                     }}
                   >
                     <Users size={14} />
-                    <span>群聊资料</span>
+                    <span>{t("群聊资料")}</span>
                   </button>
                 ) : (
                   <button
-                    title="编辑当前角色"
-                    aria-label="编辑当前角色"
+                    title={t("编辑当前角色")}
+                    aria-label={t("编辑当前角色")}
                     onClick={() => {
                       const char = data.characters?.find((c) => c.id === chat.characterId);
                       if (char) edit('characters', char);
                     }}
                   >
                     <UserCog size={14} />
-                    <span>角色资料</span>
+                    <span>{t("角色资料")}</span>
                   </button>
                 )}
-                <button title="故事分支" aria-label="故事分支" onClick={() => setShowBranches(true)}>
+                <button title={t("故事分支")} aria-label={t("故事分支")} onClick={() => setShowBranches(true)}>
                   <GitFork size={14} />
-                  <span>故事分支</span>
+                  <span>{t("故事分支")}</span>
                 </button>
-                <button title="故事资料" aria-label="故事资料" onClick={() => edit('conversations', chat)}>
+                <button title={t("故事资料")} aria-label={t("故事资料")} onClick={() => edit('conversations', chat)}>
                   <BookOpen size={14} />
-                  <span>故事资料</span>
+                  <span>{t("故事资料")}</span>
                 </button>
-                <button title="记录面板" aria-label="记录面板" onClick={() => setPanel(!panel)}>
+                <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => setPanel(!panel)}>
                   {panel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
-                  <span>记录</span>
+                  <span>{t("记录")}</span>
                 </button>
-                <button title="发送前预览提示词" aria-label="发送前预览提示词" onClick={() => act(showPromptPreview())}>预览</button>
+                <button title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
               </>
             )}
           </div>
@@ -714,26 +715,24 @@ export default function App() {
         {error && (
           <div className="banner error" role="alert">
             <span>{error}</span>
-            <button onClick={() => setError('')}>✕</button>
+            <button aria-label={t('关闭提示')} onClick={() => setError('')}>✕</button>
           </div>
         )}
         {notice && (
           <div className="banner">
             <span>{notice}</span>
-            <button onClick={() => setNotice('')}>✕</button>
+            <button aria-label={t('关闭提示')} onClick={() => setNotice('')}>✕</button>
           </div>
         )}
 
         {page === 'chat' && !chat && (
           <section className="welcome">
-            <h2>开启一段新故事</h2>
+            <h2>{t("开启一段新故事")}</h2>
             <div className="welcome-actions">
               <button className="primary" onClick={newChat}>
-                <Plus size={15} /> 开启新故事
-              </button>
+                <Plus size={15} />  {t("开启新故事")}</button>
               <button onClick={() => setPage('import')}>
-                <Upload size={15} /> 导入旧故事
-              </button>
+                <Upload size={15} />  {t("导入旧故事")}</button>
             </div>
           </section>
         )}
@@ -745,22 +744,22 @@ export default function App() {
               {cast.map((id: string) => (
                 <button className="content-link" key={id} onClick={() => edit('characters', data.characters?.find(c => c.id === id))}><i className="dot" />{data.characters?.find((c) => c.id === id)?.name}</button>
               ))}
-              <small>{{ protected: '主角保护', coauthor: '共同创作', none: '主角控制：无' }[generalSettings.agencyMode]}</small>
+              <small>{{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}</small>
             </div>
 
             <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">
-              <span>{historyStartPosition < 0 ? '固定发送起点不在当前分支，请重新选择或取消。' : `已固定发送起点 · 从此处起 ${branch.slice(historyStartPosition).filter(message => message.role !== 'system').length} 条消息，后续持续追加`}</span>
-              {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>查看起点</button>}
-              <button disabled={!!turn || sending} onClick={() => act(setHistoryStart(null))}>取消固定起点</button>
+              <span>{historyStartPosition < 0 ? t("固定发送起点不在当前分支，请重新选择或取消。") : t("已固定发送起点 · 从此处起 {0} 条消息，后续持续追加", branch.slice(historyStartPosition).filter(message => message.role !== 'system').length)}</span>
+              {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>{t("查看起点")}</button>}
+              <button disabled={!!turn || sending} onClick={() => act(setHistoryStart(null))}>{t("取消固定起点")}</button>
             </div>}
             <div className="messages-wrap">
-            <section ref={messageContainer} className={`messages avatar-${avatarMode}`} aria-label="聊天记录"
+            <section ref={messageContainer} className={`messages avatar-${avatarMode}`} aria-label={t("聊天记录")}
               onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && event.currentTarget.scrollTop < 100) loadOlder(); }}>
-              {olderCount > 0 && <button className="messages-older" onClick={loadOlder}>显示更早的消息（还有 {olderCount} 条）</button>}
+              {olderCount > 0 && <button className="messages-older" onClick={loadOlder}>{t("显示更早的消息（还有")} {olderCount}  {t("条）")}</button>}
               {!branch.length && (
                 <div className="scene-start">
-                  <p>输入第一条消息开始对话。</p>
+                  <p>{t("输入第一条消息开始对话。")}</p>
                 </div>
               )}
               {visibleMessages.map((m) => {
@@ -771,10 +770,10 @@ export default function App() {
                 const info = m.generationInfo;
                 const editing = messageEdit?.id === m.id ? messageEdit : null;
                 const inlineEditor = editing && (editing.action === 'rewrite'
-                  ? <InlineEdit key={`${m.id}:rewrite`} initial={editing.initial} label="改写要求" disabled={!!turn || sending} saveLabel="开始改写"
+                  ? <InlineEdit key={`${m.id}:rewrite`} initial={editing.initial} label={t("改写要求")} disabled={!!turn || sending} saveLabel={t("开始改写")}
                       onCancel={() => setMessageEdit(null)} onSave={value => saveMessageEdit(m, 'rewrite', value)} />
-                  : <><AutoSaveField key={`${m.id}:${editing.action}`} draftKey={`${m.id}:new-${editing.action}`} initial="" label={editing.action === 'bookmark' ? '书签名称' : '摘录固定事实'} singleLine={editing.action === 'bookmark'} autoFocus disabled={!!turn || sending} lockWhileSaving
-                      onError={setError} onSave={value => saveMessageEdit(m, editing.action, value)} /><button onClick={() => setMessageEdit(null)}>关闭</button></>);
+                  : <><AutoSaveField key={`${m.id}:${editing.action}`} draftKey={`${m.id}:new-${editing.action}`} initial="" label={editing.action === 'bookmark' ? t("书签名称") : t("摘录固定事实")} singleLine={editing.action === 'bookmark'} autoFocus disabled={!!turn || sending} lockWhileSaving
+                      onError={setError} onSave={value => saveMessageEdit(m, editing.action, value)} /><button onClick={() => setMessageEdit(null)}>{t("关闭窗口")}</button></>);
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
@@ -782,14 +781,14 @@ export default function App() {
                     <div className="avatar-column"><div
                       className={`avatar ${avatar ? 'clickable' : ''}`}
                       onClick={() => { if (avatar) setPreviewImage(avatar); }}
-                      title={avatar ? '点击查看大图立绘' : undefined}
+                      title={avatar ? t("点击查看大图立绘") : undefined}
                     >
                       {avatar ? (
                         <img src={avatar} alt="" loading="lazy" onLoad={onAvatarLoad} />
                       ) : narrator ? (
-                        '旁'
+                        t("旁")
                       ) : m.role === 'user' ? (
-                        '你'
+                        t("你")
                       ) : (
                         speakerName(m.speaker).slice(0, 1)
                       )}
@@ -799,17 +798,17 @@ export default function App() {
                         <strong>
                           {m.role === 'user'
                             ? m.authorKind === 'user_narrator'
-                              ? '你 · 旁白'
-                              : activePersona?.name ?? '你'
+                              ? t("你 · 旁白")
+                              : activePersona?.name ?? t("你")
                             : speakerName(m.speaker)}
                         </strong>
-                        <span>{info?.mode === 'manual' ? '手动录入' : narrator ? '旁白' : m.role === 'user' ? '主角' : 'Writer'}</span>
+                        <span>{info?.mode === 'manual' ? t("手动录入") : narrator ? t("旁白") : m.role === 'user' ? t("主角") : 'Writer'}</span>
                       </header>
                       {m.role === 'assistant' && info?.mode === 'plain' && <details className="message-thinking" open={plainThinkingExpanded}>
-                        <summary>模型思考</summary>
-                        <pre>{info.thinking || '模型未返回可见思考内容。'}</pre>
+                        <summary>{t("模型思考")}</summary>
+                        <pre>{info.thinking || t("模型未返回可见思考内容。")}</pre>
                       </details>}
-                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? 'AI 回复正文' : m.role === 'user' ? '用户消息正文' : '消息正文'} disabled={!!turn || sending} lockWhileSaving onError={setError}
+                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError}
                         onSave={async (content, previous) => {
                           const saved = await api<MessageNode>(`/messages/${m.id}/edit`, 'POST', { content, previous, head: chat.headMessageId }, { keepalive: true });
                           if (saved.id !== m.id) editedMessageIds.current.set(m.id, saved.id);
@@ -817,53 +816,51 @@ export default function App() {
                           await refresh().catch(error => setError(error.message)); setRecordsVersion(version => version + 1);
                         }} /></div>
                       {editing && <div className="message-inline-action">
-                        <small>{{ fact: '固定事实 · 保存到当前分支', rewrite: '一次性改写要求 · 不作为剧情输入', bookmark: '给这条消息命名书签' }[editing.action]}</small>
+                        <small>{{ fact: t("固定事实 · 保存到当前分支"), rewrite: t("一次性改写要求 · 不作为剧情输入"), bookmark: t("给这条消息命名书签") }[editing.action]}</small>
                         {inlineEditor}
                       </div>}
-                      {m.role === 'assistant' && <small className="generation-info">{info?.mode === 'manual' ? '手动录入 · 未调用正文模型' : info
-                        ? `${info.model} · 输入 ${totalInput ?? '未返回'} · 输出 ${info.usage?.output ?? '未返回'} · 缓存 ${info.usage?.cacheRead ?? '未返回'}${info.usage ? ` (${cacheRate}%)` : ''}`
-                        : '生成信息不可用（旧消息）'}</small>}
+                      {m.role === 'assistant' && <small className="generation-info">{info?.mode === 'manual' ? t("手动录入 · 未调用正文模型") : info
+                        ? t("{0} · 输入 {1} · 输出 {2} · 缓存 {3}{4}", info.model, totalInput ?? t("未返回"), info.usage?.output ?? t("未返回"), info.usage?.cacheRead ?? t("未返回"), info.usage ? ` (${cacheRate}%)` : '')
+                        : t("生成信息不可用（旧消息）")}</small>}
                       {!editing && <div className="message-actions" onMouseDown={event => {
                         // Run the click before blur can move or replace the message controls.
                         if (document.activeElement?.closest('.prose')) event.preventDefault();
                       }}>
                         {m.role !== 'system' && <button className={branch[historyStartPosition]?.id === m.id ? 'active' : ''} disabled={!!turn || sending}
-                          title="包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整"
+                          title={t("包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整")}
                           onClick={() => act(setHistoryStart(branch[historyStartPosition]?.id === m.id ? null : m.id))}>
-                          {branch[historyStartPosition]?.id === m.id ? '发送起点 · 取消' : '从此处开始发送'}
+                          {branch[historyStartPosition]?.id === m.id ? t("发送起点 · 取消") : t("从此处开始发送")}
                         </button>}
                         <button disabled={!!turn || sending} onClick={event => {
                           const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
                           const selected = body?.value.slice(body.selectionStart, body.selectionEnd).trim();
                           const content = selected || body?.value || m.content;
                           act(flushContentEdits().then(() => saveMessageEdit({ ...m, id: savedMessageId(m.id)! }, 'fact', content)));
-                        }}>固定事实</button>
+                        }}>{t("固定事实")}</button>
                         {swipes.length > 1 && (
                           <>
-                            <button title="上一个版本" disabled={!!turn || index <= 0} onClick={() => act(setHead(swipes[index - 1]!.id))}>
+                            <button title={t("上一个版本")} disabled={!!turn || index <= 0} onClick={() => act(setHead(swipes[index - 1]!.id))}>
                               <ChevronLeft size={13} />
                             </button>
                             <small>{index + 1}/{swipes.length}</small>
-                            <button title="下一个版本" disabled={!!turn || index >= swipes.length - 1} onClick={() => act(setHead(swipes[index + 1]!.id))}>
+                            <button title={t("下一个版本")} disabled={!!turn || index >= swipes.length - 1} onClick={() => act(setHead(swipes[index + 1]!.id))}>
                               <ChevronRight size={13} />
                             </button>
                           </>
                         )}
                         {m.role === 'assistant' && (
                           <>
-                            <button disabled={!!turn} title="只重新生成这一条，保持当前发言者；原文保留为其他版本" onClick={() => act(swipe(m))}>
-                              <RotateCw size={12} />新版本
-                            </button>
-                            {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title="重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留" onClick={() => act(send('regenerate', m.id))}>重做整轮（2 条）</button>}
-                            <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>续写</button>
-                            <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'rewrite', initial: '' })))}>按要求改写</button>
+                            <button disabled={!!turn} title={t("只重新生成这一条，保持当前发言者；原文保留为其他版本")} onClick={() => act(swipe(m))}>
+                              <RotateCw size={12} />{t("新版本")}</button>
+                            {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title={t("重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留")} onClick={() => act(send('regenerate', m.id))}>{t("重做整轮（2 条）")}</button>}
+                            <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>{t("续写")}</button>
+                            <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'rewrite', initial: '' })))}>{t("按要求改写")}</button>
                           </>
                         )}
-                        <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'bookmark', initial: '' })))}>书签</button>
-                        <button disabled={!!turn || sending} title="保留至本条消息，创建独立聊天；原聊天不变" onClick={() => act(forkFrom(m.id))}>
-                          <GitFork size={12} />从此处分支
-                        </button>
-                        <button className="danger" disabled={!!turn || sending} title="删除本条及其后的所有消息" onClick={() => act(deleteFrom(m.id))}>删除</button>
+                        <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'bookmark', initial: '' })))}>{t("书签")}</button>
+                        <button disabled={!!turn || sending} title={t("保留至本条消息，创建独立聊天；原聊天不变")} onClick={() => act(forkFrom(m.id))}>
+                          <GitFork size={12} />{t("从此处分支")}</button>
+                        <button className="danger" disabled={!!turn || sending} title={t("删除本条及其后的所有消息")} onClick={() => act(deleteFrom(m.id))}>{t("删除")}</button>
                       </div>}
                     </div>
                   </article>
@@ -875,10 +872,10 @@ export default function App() {
                   <div className="message-body">
                     <header>
                       <strong>{speakerName(draft.speaker)}</strong>
-                      <span>Writing</span>
+                      <span>{t("正在写作")}</span>
                     </header>
                     {generalSettings.generationMode === 'plain' && <details className="message-thinking" open={plainThinkingExpanded}>
-                      <summary>模型思考</summary><pre>{draft.thinking || '模型尚未返回可见思考内容。'}</pre>
+                      <summary>{t("模型思考")}</summary><pre>{draft.thinking || t("模型尚未返回可见思考内容。")}</pre>
                     </details>}
                     <div className="prose">{draft.text}<span className="caret">▍</span></div>
                   </div>
@@ -892,31 +889,31 @@ export default function App() {
             <div className="composer-wrap">
               <ActionChoices key={`${chat.id}:${chat.headMessageId ?? ''}`} chatId={chat.id} head={chat.headMessageId} disabled={sending || !!turn || !!messageEdit}
                 onSend={value => send('normal', undefined, value)} onBusy={setChoicesBusy} onChanged={() => setRecordsVersion(version => version + 1)}
-                toolbarEnd={<label className="manual-input-switch" title="仅改变消息发送；主动生成与记录更新仍可能调用 API。角色回复保存后，Memory／状态按现有间隔更新。">
-                  <input type="checkbox" aria-label="单人创作／网页聊天手动输入" checked={generalSettings.manualInput} disabled={sending || !!turn || choicesBusy || !!messageEdit}
+                toolbarEnd={<label className="manual-input-switch" title={t("仅改变消息发送；主动生成与记录更新仍可能调用 API。角色回复保存后，Memory／状态按现有间隔更新。")}>
+                  <input type="checkbox" aria-label={t("单人创作／网页聊天手动输入")} checked={generalSettings.manualInput} disabled={sending || !!turn || choicesBusy || !!messageEdit}
                     onChange={event => act(changeManualInput(event.target.checked))} />
-                  <span>单人创作／网页聊天手动输入</span><small>全局</small>
+                  <span>{t("单人创作／网页聊天手动输入")}</span><small>{t("全局")}</small>
                 </label>} />
-              {awayFromBottom && <button onClick={scrollToLatest}>回到最新 ↓</button>}
+              {awayFromBottom && <button onClick={scrollToLatest}>{t("回到最新 ↓")}</button>}
               {!turn && lastTurn && ['partial', 'failed', 'cancelled'].includes(lastTurn.status) && <div className="turn-recovery">
-                <strong>{lastTurn.status === 'partial' ? '本轮部分完成，已完成回复已保留。' : '本轮未完成，用户消息已保留。'}</strong>
-                {lastTurn.progress && <button disabled={sending} onClick={() => act(retryRemaining())}>重试剩余回复</button>}
+                <strong>{lastTurn.status === 'partial' ? t("本轮部分完成，已完成回复已保留。") : t("本轮未完成，用户消息已保留。")}</strong>
+                {lastTurn.progress && <button disabled={sending} onClick={() => act(retryRemaining())}>{t("重试剩余回复")}</button>}
                 {lastTurn.progress?.interruptedOutputs.map(output => <details key={output.outputIndex}>
-                  <summary>{speakerName(output.speaker)} · 未完成片段（不参与剧情）</summary>
+                  <summary>{speakerName(output.speaker)}  {t("· 未完成片段（不参与剧情）")}</summary>
                   <pre>{output.text}</pre>
-                  {output.thinking && <details><summary>已返回的思考</summary><pre>{output.thinking}</pre></details>}
-                  <button onClick={() => act(navigator.clipboard.writeText(output.text))}>复制片段</button>
+                  {output.thinking && <details><summary>{t("已返回的思考")}</summary><pre>{output.thinking}</pre></details>}
+                  <button onClick={() => act(navigator.clipboard.writeText(output.text))}>{t("复制片段")}</button>
                 </details>)}
               </div>}
-              {!turn && lastTurn?.status === 'completed' && ['failed', 'cancelled'].includes(lastTurn.recordsStatus) && <small>正文已完成；记录更新{lastTurn.recordsStatus === 'failed' ? '失败' : '已取消'}，可在 Memory／状态面板重试。</small>}
-              {turn && <div className="generation-status"><i />{phase || '正在生成…'}</div>}
+              {!turn && lastTurn?.status === 'completed' && ['failed', 'cancelled'].includes(lastTurn.recordsStatus) && <small>{t("正文已完成；记录更新")}{lastTurn.recordsStatus === 'failed' ? t("失败") : t("已取消")}{t("，可在 Memory／状态面板重试。")}</small>}
+              {turn && <div className="generation-status"><i />{phase ? t(phase.key, ...(phase.values ?? [])) : t("正在生成…")}</div>}
               <form className="composer" onSubmit={(e) => {
                 e.preventDefault();
                 act(send());
               }}>
                 <textarea
-                  aria-label="输入消息"
-                  placeholder={voice === 'assistant' ? '粘贴或输入角色的回复，发送后直接保存为 Assistant 消息…' : voice === 'narrator' ? '以旁白推动场景或描写事件…' : '输入主角的行动或对白…'}
+                  aria-label={t("输入消息")}
+                  placeholder={voice === 'assistant' ? t("粘贴或输入角色的回复，发送后直接保存为 Assistant 消息…") : voice === 'narrator' ? t("以旁白推动场景或描写事件…") : t("输入主角的行动或对白…")}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={(e) => {
@@ -929,19 +926,17 @@ export default function App() {
                 <div className="composer-controls">
                   <div className="voice-switch">
                     <button type="button" className={voice === 'protagonist' ? 'active' : ''} onClick={() => setVoice('protagonist')}>
-                      主角
-                    </button>
+                      {t("主角")}</button>
                     <button type="button" className={voice === 'narrator' ? 'active' : ''} onClick={() => setVoice('narrator')}>
-                      用户旁白
-                    </button>
+                      {t("用户旁白")}</button>
                     <button type="button" className={voice === 'assistant' ? 'active' : ''} onClick={() => {
                       setVoice('assistant'); if (replyTarget === 'auto') setReplyTarget(cast[0] ?? 'narrator');
-                    }}>角色</button>
+                    }}>{t("角色")}</button>
                   </div>
                   <label className="reply-select">
-                    {voice === 'assistant' ? '录入为' : generalSettings.manualInput ? '网页回复者' : '由谁回复'}
-                    <select aria-label="回复者" value={replyTarget} onChange={(e) => setReplyTarget(e.target.value)}>
-                      {voice !== 'assistant' && <option value="auto">自动选择</option>}
+                    {voice === 'assistant' ? t("录入为") : generalSettings.manualInput ? t("网页回复者") : t("由谁回复")}
+                    <select aria-label={t("回复者")} value={replyTarget} onChange={(e) => setReplyTarget(e.target.value)}>
+                      {voice !== 'assistant' && <option value="auto">{t("自动选择")}</option>}
                       <option value="narrator">{generalSettings.narrator.name}</option>
                       {cast.map((id: string) => (
                         <option value={id} key={id}>{data.characters?.find((c) => c.id === id)?.name}</option>
@@ -949,11 +944,11 @@ export default function App() {
                     </select>
                   </label>
                   {turn ? (
-                    <button type="button" className="send stop" aria-label="停止生成" onClick={() => act(api(`/turns/${turn.id}/cancel`, 'POST', {}))}>
+                    <button type="button" className="send stop" aria-label={t("停止生成")} onClick={() => act(api(`/turns/${turn.id}/cancel`, 'POST', {}))}>
                       <Square size={14} />
                     </button>
                   ) : (
-                    <button type="submit" className="send primary" aria-label="发送" title={voice === 'assistant' ? '保存角色回复' : generalSettings.manualInput ? '保存消息' : '发送'} disabled={sending || !!messageEdit || ((generalSettings.manualInput || voice === 'assistant') && !text.trim())}>
+                    <button type="submit" className="send primary" aria-label={t("发送")} title={voice === 'assistant' ? t("保存角色回复") : generalSettings.manualInput ? t("保存消息") : t("发送")} disabled={sending || !!messageEdit || ((generalSettings.manualInput || voice === 'assistant') && !text.trim())}>
                       <Send size={15} />
                     </button>
                   )}
@@ -967,7 +962,7 @@ export default function App() {
           <section className="management">
             <header>
               <button className="primary" onClick={() => (page === 'conversations' ? newChat() : edit(page))}>
-                <Plus size={14} />{page === 'conversations' ? '开启新故事' : `创建${titles[page]}`}
+                <Plus size={14} />{page === 'conversations' ? t("开启新故事") : t("创建{0}", titles[page])}
               </button>
             </header>
             <div className="management-content">
@@ -989,7 +984,7 @@ export default function App() {
                           <div
                             className="character-card-image-wrap"
                             onClick={() => { if (cover) setPreviewImage(cover); }}
-                            title={cover ? '点击查看高清原图' : undefined}
+                            title={cover ? t("点击查看高清原图") : undefined}
                           >
                             {cover ? (
                               <>
@@ -998,18 +993,18 @@ export default function App() {
                               </>
                             ) : (
                               <div className="character-card-placeholder">
-                                {isGroup ? <Users size={28} /> : (c.title?.slice(0, 1) || '话')}
+                                {isGroup ? <Users size={28} /> : (c.title?.slice(0, 1) || t("话"))}
                               </div>
                             )}
                           </div>
                           <div className="character-card-body">
                             <h3 className="character-card-title"><button className="content-link" onClick={() => edit('conversations', c)}>{c.title}</button></h3>
                             <div className="character-card-meta">
-                              <span className="badge">{isGroup ? `群聊 · ${grp?.name ?? '群组'}` : `单聊 · ${char?.name ?? '角色'}`}</span>
+                              <span className="badge">{isGroup ? t("群聊 · {0}", grp?.name ?? t("群组")) : t("单聊 · {0}", char?.name ?? t("角色"))}</span>
                               <small className="time">{formatTime(c.updatedAt || c.createdAt)}</small>
                             </div>
                             <button className="character-card-desc content-link" onClick={() => edit('conversations', c)}>
-                              {c.scenario || (isGroup ? (memberNames ? `成员：${memberNames}` : grp?.scenario) : char?.description) || '暂无描述'}
+                              {c.scenario || (isGroup ? (memberNames ? t("成员：{0}", memberNames) : grp?.scenario) : char?.description) || t("暂无描述")}
                             </button>
                             <div className="character-card-footer">
                               <button
@@ -1019,9 +1014,8 @@ export default function App() {
                                   setPage('chat');
                                 }}
                               >
-                                进入故事
-                              </button>
-                              <button className="danger" onClick={() => act(remove('conversations', c))}>删除</button>
+                                {t("进入故事")}</button>
+                              <button className="danger" onClick={() => act(remove('conversations', c))}>{t("删除")}</button>
                             </div>
                           </div>
                         </article>
@@ -1035,7 +1029,7 @@ export default function App() {
                           <div
                             className="character-card-image-wrap"
                             onClick={() => { if (v.avatarPath) setPreviewImage(v.avatarPath); }}
-                            title={v.avatarPath ? '点击查看高清原图' : undefined}
+                            title={v.avatarPath ? t("点击查看高清原图") : undefined}
                           >
                             {v.avatarPath ? (
                               <>
@@ -1051,25 +1045,24 @@ export default function App() {
                           <div className="character-card-body">
                             <h3 className="character-card-title"><button className="content-link" onClick={() => edit('groups', v)}>{v.name}</button></h3>
                             <div className="character-card-meta">
-                              <span className="badge">{v.memberIds?.length ?? 0} 位成员</span>
+                              <span className="badge">{v.memberIds?.length ?? 0}  {t("位成员")}</span>
                               <small className="time">{formatTime(v.updatedAt || v.createdAt)}</small>
                             </div>
                             <button className="character-card-desc content-link" onClick={() => edit('groups', v)}>
-                              {memberNames ? `成员：${memberNames}。` : ''}{v.scenario || '暂无群聊场景描述'}
+                              {memberNames ? t("成员：{0}。", memberNames) : ''}{v.scenario || t("暂无群聊场景描述")}
                             </button>
                             <div className="character-card-footer">
                               <button
                                 className="primary"
                                 onClick={() => edit('conversations', {
                                   ...defaults.conversations,
-                                  title: `${v.name} 的故事`,
+                                  title: t("{0} 的故事", v.name),
                                   kind: 'group',
                                   groupId: v.id,
                                 })}
                               >
-                                开启群聊
-                              </button>
-                              <button className="danger" onClick={() => act(remove('groups', v))}>删除</button>
+                                {t("开启群聊")}</button>
+                              <button className="danger" onClick={() => act(remove('groups', v))}>{t("删除")}</button>
                             </div>
                           </div>
                         </article>
@@ -1081,7 +1074,7 @@ export default function App() {
                         <div
                           className="character-card-image-wrap"
                           onClick={() => { if (v.avatarPath) setPreviewImage(v.avatarPath); }}
-                          title={v.avatarPath ? '点击查看高清原图' : undefined}
+                          title={v.avatarPath ? t("点击查看高清原图") : undefined}
                         >
                           {v.avatarPath ? (
                             <>
@@ -1090,31 +1083,30 @@ export default function App() {
                             </>
                           ) : (
                             <div className="character-card-placeholder">
-                              {v.name?.slice(0, 1) || '卡'}
+                              {v.name?.slice(0, 1) || t("卡")}
                             </div>
                           )}
                         </div>
                         <div className="character-card-body">
                           <h3 className="character-card-title"><button className="content-link" onClick={() => edit(page, v)}>{v.name}</button></h3>
                           <div className="character-card-meta">
-                            <span className="badge">{page === 'characters' ? '角色' : '主角'}</span>
+                            <span className="badge">{page === 'characters' ? t("角色") : t("主角")}</span>
                             <small className="time">{formatTime(v.updatedAt || v.createdAt)}</small>
                           </div>
-                          <button className="character-card-desc content-link" onClick={() => edit(page, v)}>{v.description || v.scenario || '暂无描述'}</button>
+                          <button className="character-card-desc content-link" onClick={() => edit(page, v)}>{v.description || v.scenario || t("暂无描述")}</button>
                           <div className="character-card-footer">
                             {page === 'characters' && (
                               <button
                                 className="primary"
                                 onClick={() => edit('conversations', {
                                   ...defaults.conversations,
-                                  title: `与 ${v.name} 的故事`,
+                                  title: t("与 {0} 的故事", v.name),
                                   characterId: v.id,
                                 })}
                               >
-                                开始聊天
-                              </button>
+                                {t("开始聊天")}</button>
                             )}
-                            <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
+                            <button className="danger" onClick={() => act(remove(page, v))}>{t("删除")}</button>
                           </div>
                         </div>
                       </article>
@@ -1134,17 +1126,17 @@ export default function App() {
                         </div>
                       </div>
                       <div className="resource-meta">
-                        <span>{v.protocol ?? (v.entries ? `${v.entries.length} 个条目` : v.memberIds ? `${v.memberIds.length} 位成员` : '')}</span>
+                        <span>{v.protocol ?? (v.entries ? t("{0} 个条目", v.entries.length) : v.memberIds ? t("{0} 位成员", v.memberIds.length) : '')}</span>
                       </div>
                       <div className="resource-actions">
-                        {page === 'connections' && <button onClick={() => edit(page, v)}>编辑</button>}
-                        <button className="danger" onClick={() => act(remove(page, v))}>删除</button>
+                        {page === 'connections' && <button onClick={() => edit(page, v)}>{t("编辑")}</button>}
+                        <button className="danger" onClick={() => act(remove(page, v))}>{t("删除")}</button>
                       </div>
                     </article>
                   ))}
                 </div>
               )}
-              {!data[page]?.length && <div className="empty">暂无{page === 'conversations' ? '故事' : titles[page]}。点击右上角按钮创建。</div>}
+              {!data[page]?.length && <div className="empty">{t("暂无{0}。点击右上角按钮创建。", page === 'conversations' ? t("故事") : titles[page])}</div>}
             </div>
           </section>
         )}
@@ -1152,29 +1144,27 @@ export default function App() {
         {page === 'import' && (
           <section className="import-page">
             <StoryImport disabled={!!turn || sending || importBusy} onError={setError} onImported={async id => { await refresh(); await selectChat(id); }} />
-            <h2>导入 SillyTavern 数据</h2>
-            <p className="muted">扫描角色卡、世界书、聊天、群组、Memory 与主角状态。不会修改源文件。</p>
+            <h2>{t("导入 SillyTavern 数据")}</h2>
+            <p className="muted">{t("扫描角色卡、世界书、聊天、群组、Memory 与主角状态。不会修改源文件。")}</p>
             <label>
-              SillyTavern 用户数据目录
-              <input value={importPath} onChange={(e) => { setImportPath(e.target.value); setPreview(null); }} />
+              {t("SillyTavern 用户数据目录")}<input value={importPath} onChange={(e) => { setImportPath(e.target.value); setPreview(null); }} />
             </label>
             <button className="primary" disabled={importBusy} onClick={() => act(runImport())}>
-              {importBusy ? '处理中…' : '扫描并预览'}
+              {importBusy ? t("处理中…") : t("扫描并预览")}
             </button>
             {preview && (
               <div className="import-preview">
-                <h3>导入预览</h3>
+                <h3>{t("导入预览")}</h3>
                 <div className="count-grid">
                   {Object.entries(preview.counts).map(([key, value]) => (
-                    <span key={key}><b>{value}</b>{key}</span>
+                    <span key={key}><b>{formatNumber(value)}</b>{countLabel(key)}</span>
                   ))}
                 </div>
                 {preview.warnings.map((warning, i) => (
-                  <p className="warning" key={i}>{warning}</p>
+                  <p className="warning" key={i}>{diagnosticText(preview.warningTexts?.[i], warning)}</p>
                 ))}
                 <button className="primary" disabled={importBusy} onClick={() => act(runImport(true))}>
-                  确认导入
-                </button>
+                  {t("确认导入")}</button>
               </div>
             )}
           </section>
@@ -1247,24 +1237,24 @@ export default function App() {
 
       {showBranches && chat && (
         <div className="modal-shade">
-          <section className="modal" role="dialog" aria-modal="true" aria-label="故事分支">
+          <section className="modal" role="dialog" aria-modal="true" aria-label={t("故事分支")}>
             <header>
-              <h2>故事分支</h2>
-              <button aria-label="关闭" onClick={() => setShowBranches(false)}>✕</button>
+              <h2>{t("故事分支")}</h2>
+              <button aria-label={t("关闭窗口")} onClick={() => setShowBranches(false)}>✕</button>
             </header>
             <div className="branch-picker">
-              <p className="muted" style={{ marginBottom: 12 }}>每个分支都是独立聊天，也可从左侧故事列表打开；切换时保留各自进度和记录。</p>
+              <p className="muted" style={{ marginBottom: 12 }}>{t("每个分支都是独立聊天，也可从左侧故事列表打开；切换时保留各自进度和记录。")}</p>
               {relatedBranches.map(item => <button key={item.id} disabled={!!turn || sending} onClick={() => act(selectChat(item.id).then(() => setShowBranches(false)))}>
-                <GitFork size={15} /><span>{item.id === chat.id ? '当前分支 · ' : ''}{item.title}</span>
+                <GitFork size={15} /><span>{item.id === chat.id ? t("当前分支 · ") : ''}{item.title}</span>
               </button>)}
               {messageIndex.leaves.some(node => !branch.some(message => message.id === node.id)) && <details>
-                <summary>历史消息版本</summary>
-                <p className="muted">旧走向和消息版本仍保留，可另存为独立分支继续。</p>
+                <summary>{t("历史消息版本")}</summary>
+                <p className="muted">{t("旧走向和消息版本仍保留，可另存为独立分支继续。")}</p>
                 {messageIndex.leaves.filter(node => !branch.some(message => message.id === node.id)).map((node) => (
                 <button key={node.id} disabled={!!turn || sending} onClick={() => act(forkFrom(node.id))}>
                   <GitFork size={15} />
                   <span>
-                    另存为分支 · {node.role === 'user' ? '用户' : speakerName(node.speaker)}
+                    {t("另存为分支 ·")} {node.role === 'user' ? t("用户") : speakerName(node.speaker)}
                     <small>{node.content.slice(0, 100)}</small>
                   </span>
                 </button>
@@ -1276,19 +1266,18 @@ export default function App() {
       )}
 
       {previewImage && (
-        <div className="lightbox-modal" onClick={() => setPreviewImage(null)} title="点击关闭大图">
-          <img className="lightbox-content" src={previewImage} alt="角色大图立绘" />
+        <div className="lightbox-modal" onClick={() => setPreviewImage(null)} title={t("点击关闭大图")}>
+          <img className="lightbox-content" src={previewImage} alt={t("角色大图立绘")} />
         </div>
       )}
       {showPersona && <div className="modal-shade" {...personaBackdrop}>
-        <section className="modal" role="dialog" aria-modal="true" aria-label="主角身份" onClick={e => e.stopPropagation()}>
-          <header><h2>主角身份</h2><button aria-label="关闭主角身份" onClick={() => setShowPersona(false)}>✕</button></header>
+        <section className="modal" role="dialog" aria-modal="true" aria-label={t("主角身份")} onClick={e => e.stopPropagation()}>
+          <header><h2>{t("主角身份")}</h2><button aria-label={t("关闭主角身份")} onClick={() => setShowPersona(false)}>✕</button></header>
           <div className="settings-content settings-section">
-            <label>全局默认主角
-              <PersonaPicker
+            <label>{t("全局默认主角")}<PersonaPicker
                 value={generalSettings.defaultPersonaId ?? null}
                 personas={data.personas ?? []}
-                emptyLabel="未选择"
+                emptyLabel={t("未选择")}
                 disabled={!!turn || sending || personaSaving}
                 onChange={(id) => act(savePersona(id, true))}
                 onCreatePersona={() => {
@@ -1298,11 +1287,11 @@ export default function App() {
                 }}
               />
             </label>
-            {chat && <label>当前故事：{chat.title}
+            {chat && <label>{t("当前故事：")}{chat.title}
               <PersonaPicker
                 value={chat.personaId ?? null}
                 personas={data.personas ?? []}
-                emptyLabel="跟随全局默认"
+                emptyLabel={t("跟随全局默认")}
                 defaultPersonaId={generalSettings.defaultPersonaId ?? null}
                 disabled={!!turn || sending || personaSaving}
                 onChange={(id) => act(savePersona(id, false))}
@@ -1313,7 +1302,7 @@ export default function App() {
                 }}
               />
             </label>}
-            <p className="muted">新故事和未绑定的故事使用全局默认主角；绑定后切换故事会恢复各自的身份。</p>
+            <p className="muted">{t("新故事和未绑定的故事使用全局默认主角；绑定后切换故事会恢复各自的身份。")}</p>
             {error && <p className="banner error" role="alert">{error}</p>}
           </div>
         </section>
@@ -1321,22 +1310,22 @@ export default function App() {
 
       {promptPreview && (
         <div className="modal-shade" style={{ zIndex: 130 }} {...promptBackdrop}>
-          <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label="提示词预览" onClick={e => e.stopPropagation()}>
-            <header><h2>发送提示词预览 · Raw input</h2><button aria-label="关闭" onClick={() => setPromptPreview(null)}>✕</button></header>
+          <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label={t("提示词预览")} onClick={e => e.stopPropagation()}>
+            <header><h2>{t("发送提示词预览 · Raw input")}</h2><button aria-label={t("关闭窗口")} onClick={() => setPromptPreview(null)}>✕</button></header>
             <div className="prompt-preview-body">
-              <p className="muted">动作：{promptPreview.action === 'auto' ? '自动继续' : promptPreview.existingUserInput ? '回复已有 User 消息' : '普通发送'} · 模式：{promptPreview.generationMode} · 阶段：{promptPreview.phase} · 协议：{promptPreview.protocol}</p>
-              {promptPreview.action === 'auto' && <p className="muted">草稿为空，末尾没有待回复的 User 消息，正在预览自动继续；不重复上一轮用户输入。</p>}
-              <p className="muted">身份：{promptPreview.pendingSelection ? '待选择' : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)} · 主角：{promptPreview.personaName ?? '未选择（请求使用 User）'}{promptPreview.clipped ? ' · 已按上下文预算裁剪' : ''}</p>
-              <p className="muted">以下是发送边界捕获的首请求原始 JSON Body，未发送、未重新格式化。修改草稿、设置或聊天内容后请重新预览；Agent 后续请求可在 Trace 中查看。</p>
+              <p className="muted">{t("动作：")}{promptPreview.action === 'auto' ? t("自动继续") : promptPreview.existingUserInput ? t("回复已有 User 消息") : t("普通发送")}  {t("· 模式：")}{generationLabel(promptPreview.generationMode)}  {t("· 阶段：")}{phaseLabel(promptPreview.phase)}  {t("· 协议：")}{promptPreview.protocol}</p>
+              {promptPreview.action === 'auto' && <p className="muted">{t("草稿为空，末尾没有待回复的 User 消息，正在预览自动继续；不重复上一轮用户输入。")}</p>}
+              <p className="muted">{t("身份：")}{promptPreview.pendingSelection ? t("待选择") : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)}  {t("· 主角：")}{promptPreview.personaName ?? t("未选择（请求使用 User）")}{promptPreview.clipped ? t(" · 已按上下文预算裁剪") : ''}</p>
+              <p className="muted">{t("以下是发送边界捕获的首请求原始 JSON Body，未发送、未重新格式化。修改草稿、设置或聊天内容后请重新预览；Agent 后续请求可在 Trace 中查看。")}</p>
               <section className="prompt-json" aria-label="Raw input">
-                <header><strong>Raw input · 首请求 Body</strong><button onClick={() => act(navigator.clipboard.writeText(promptPreview.requestBody))}>复制原始 Body</button></header>
+                <header><strong>{t("Raw input · 首请求 Body")}</strong><button onClick={() => act(navigator.clipboard.writeText(promptPreview.requestBody))}>{t("复制原始 Body")}</button></header>
                 <pre tabIndex={0}>{promptPreview.requestBody}</pre>
               </section>
-              <section className="prompt-json" aria-label="网页提示词">
-                <header><strong>网页提示词 · {speakerName(promptPreview.webSpeaker)}</strong>
-                  <button disabled={sending || !!turn} onClick={() => void copyWebPrompt()}>{promptPreview.input ? '复制网页提示词并保存 User 输入' : '复制网页提示词'}</button></header>
-                <p className="muted">适用于手动粘贴到 Gemini、ChatGPT、Claude 等网页。整理为普通写作的单条文本，角色标签不等于网页端真正的 System 消息。建议在新对话中粘贴。</p>
-                {promptPreview.input && <p className="muted">复制成功后同步保存本轮主角／用户旁白内容，不调用正文模型。</p>}
+              <section className="prompt-json" aria-label={t("网页提示词")}>
+                <header><strong>{t("网页提示词 ·")} {speakerName(promptPreview.webSpeaker)}</strong>
+                  <button disabled={sending || !!turn} onClick={() => void copyWebPrompt()}>{promptPreview.input ? t("复制网页提示词并保存 User 输入") : t("复制网页提示词")}</button></header>
+                <p className="muted">{t("适用于手动粘贴到 Gemini、ChatGPT、Claude 等网页。整理为普通写作的单条文本，角色标签不等于网页端真正的 System 消息。建议在新对话中粘贴。")}</p>
+                {promptPreview.input && <p className="muted">{t("复制成功后同步保存本轮主角／用户旁白内容，不调用正文模型。")}</p>}
                 {promptPreview.copyError && <p className="error" role="alert">{promptPreview.copyError}</p>}
                 <pre tabIndex={0}>{promptPreview.webPrompt}</pre>
               </section>

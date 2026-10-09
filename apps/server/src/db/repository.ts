@@ -1,3 +1,4 @@
+import { AppError, errorText, uiText, type UiText } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
 import { defaultPromptSettings, generalSettingsSchema, personaInputSchema, personaStateTemplateSchema, promptSettingsSchema, promptPresetSchema, type GeneralSettings, type PromptSettings, type PromptPreset, type PromptPresetInput, type PromptPresetPatch, type TurnTrace } from '@new-ai-chat/contracts';
@@ -125,13 +126,13 @@ export class Repository {
   }
   setGeneralSettings(value: GeneralSettings): GeneralSettings {
     const settings = generalSettingsSchema.parse(value);
-    if (settings.connectionId && !this.getRuntimeConnection(settings.connectionId)) throw new Error('Connection not found.');
-    if (settings.recordConnectionId && !this.getRuntimeConnection(settings.recordConnectionId)) throw new Error('Memory / 主角状态连接不存在。');
-    if (settings.defaultPersonaId && !this.getPersona(settings.defaultPersonaId)) throw new Error('Persona not found.');
+    if (settings.connectionId && !this.getRuntimeConnection(settings.connectionId)) throw new AppError("Connection not found.");
+    if (settings.recordConnectionId && !this.getRuntimeConnection(settings.recordConnectionId)) throw new AppError("Memory / 主角状态连接不存在。");
+    if (settings.defaultPersonaId && !this.getPersona(settings.defaultPersonaId)) throw new AppError("Persona not found.");
     const choiceConnectionId = settings.actionChoices.connectionId ?? settings.connectionId;
     const choiceConnection = choiceConnectionId ? this.getRuntimeConnection(choiceConnectionId) : null;
-    if (settings.actionChoices.connectionId && !choiceConnection) throw new Error('行动选项连接不存在。');
-    if (choiceConnection?.protocol === 'anthropic-messages' && (settings.actionChoices.temperature ?? choiceConnection.temperature) > 1) throw new Error('Anthropic 的行动选项温度不能超过 1。');
+    if (settings.actionChoices.connectionId && !choiceConnection) throw new AppError("行动选项连接不存在。");
+    if (choiceConnection?.protocol === 'anthropic-messages' && (settings.actionChoices.temperature ?? choiceConnection.temperature) > 1) throw new AppError("Anthropic 的行动选项温度不能超过 1。");
     this.database.db.insert(appSettings).values({ key: 'general', value: settings })
       .onConflictDoUpdate({ target: appSettings.key, set: { value: settings } }).run();
     return settings;
@@ -159,7 +160,7 @@ export class Repository {
     return this.database.sqlite.transaction(() => {
       const presets = this.listPromptPresets();
       const preset = promptPresetSchema.parse({ ...input, id: id() });
-      if (presets.some(item => item.name === preset.name)) throw new Error('预设名称已存在。');
+      if (presets.some(item => item.name === preset.name)) throw new AppError("预设名称已存在。");
       this.writePromptPresets([...presets, preset]);
       return preset;
     })();
@@ -170,7 +171,7 @@ export class Repository {
       const index = presets.findIndex(item => item.id === presetId);
       if (index < 0) return null;
       const preset = promptPresetSchema.parse({ ...presets[index], ...input, id: presetId });
-      if (presets.some(item => item.id !== presetId && item.name === preset.name)) throw new Error('预设名称已存在。');
+      if (presets.some(item => item.id !== presetId && item.name === preset.name)) throw new AppError("预设名称已存在。");
       presets[index] = preset;
       this.writePromptPresets(presets);
       return preset;
@@ -361,7 +362,7 @@ export class Repository {
     const all = new Map(this.listMessages(conversationId).map((message) => [message.id, message]));
     const branch: MessageNode[] = []; let current = all.get(headMessageId);
     const visited = new Set<string>();
-    while (current) { if (visited.has(current.id)) throw new Error('Cycle in message branch.'); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }
+    while (current) { if (visited.has(current.id)) throw new AppError("Cycle in message branch."); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }
     return branch.reverse();
   }
   createMessage(input: Omit<MessageNode, 'id' | 'createdAt' | 'generationInfo'> & { generationInfo?: MessageNode['generationInfo'] }): MessageNode {
@@ -369,12 +370,12 @@ export class Repository {
     this.database.db.insert(messages).values(row).run(); return this.getMessage(row.id)!;
   }
   setHead(conversationId: string, messageId: string | null): void {
-    if (messageId && this.getMessage(messageId)?.conversationId !== conversationId) throw new Error('Invalid branch head.');
+    if (messageId && this.getMessage(messageId)?.conversationId !== conversationId) throw new AppError("Invalid branch head.");
     this.database.db.update(conversations).set({ headMessageId: messageId, updatedAt: now() }).where(eq(conversations.id, conversationId)).run();
   }
   setHistoryStart(conversationId: string, messageId: string | null): Conversation {
-    if (!this.getConversation(conversationId)) throw new Error('Conversation not found.');
-    if (messageId && !this.getActiveBranch(conversationId).some(message => message.id === messageId && message.role !== 'system')) throw new Error('发送起点必须是当前分支中的故事消息。');
+    if (!this.getConversation(conversationId)) throw new AppError("Conversation not found.");
+    if (messageId && !this.getActiveBranch(conversationId).some(message => message.id === messageId && message.role !== 'system')) throw new AppError("发送起点必须是当前分支中的故事消息。");
     this.database.db.update(conversations).set({ historyStartMessageId: messageId, updatedAt: now() }).where(eq(conversations.id, conversationId)).run();
     return this.getConversation(conversationId)!;
   }
@@ -534,15 +535,15 @@ export class Repository {
     return [...facts.values()];
   }
   savePinnedFact(conversationId: string, content: string, sourceMessageId: string | null = null, factId?: string): PinnedFact {
-    const chat = this.getConversation(conversationId); if (!chat) throw new Error('Conversation not found.');
+    const chat = this.getConversation(conversationId); if (!chat) throw new AppError("Conversation not found.");
     const previous = factId ? this.listPinnedFacts(conversationId).find(fact => fact.id === factId) : null;
-    if (factId && !previous) throw new Error('Fact is not on the current branch.');
-    if (sourceMessageId && !this.getActiveBranch(conversationId).some(message => message.id === sourceMessageId)) throw new Error('Fact source is not on the current branch.');
+    if (factId && !previous) throw new AppError("Fact is not on the current branch.");
+    if (sourceMessageId && !this.getActiveBranch(conversationId).some(message => message.id === sourceMessageId)) throw new AppError("Fact source is not on the current branch.");
     const fact = { id: factId ?? id(), content, sourceMessageId: previous?.sourceMessageId ?? sourceMessageId, head: chat.headMessageId };
     this.addEvent(conversationId, null, 'fact.saved', fact); return fact;
   }
   removePinnedFact(conversationId: string, factId: string): void {
-    if (!this.listPinnedFacts(conversationId).some(fact => fact.id === factId)) throw new Error('Fact is not on the current branch.');
+    if (!this.listPinnedFacts(conversationId).some(fact => fact.id === factId)) throw new AppError("Fact is not on the current branch.");
     this.addEvent(conversationId, null, 'fact.removed', { id: factId, head: this.getConversation(conversationId)!.headMessageId });
   }
   listBookmarks(conversationId: string): StoryBookmark[] {
@@ -555,17 +556,17 @@ export class Repository {
     return [...bookmarks.values()];
   }
   saveBookmark(conversationId: string, name: string, messageId: string, bookmarkId?: string): StoryBookmark {
-    if (this.getMessage(messageId)?.conversationId !== conversationId) throw new Error('Bookmark target is not in this story.');
-    if (bookmarkId && !this.listBookmarks(conversationId).some(bookmark => bookmark.id === bookmarkId)) throw new Error('Bookmark not found.');
+    if (this.getMessage(messageId)?.conversationId !== conversationId) throw new AppError("Bookmark target is not in this story.");
+    if (bookmarkId && !this.listBookmarks(conversationId).some(bookmark => bookmark.id === bookmarkId)) throw new AppError("Bookmark not found.");
     const bookmark = { id: bookmarkId ?? id(), name, messageId };
     this.addEvent(conversationId, null, 'bookmark.saved', bookmark); return bookmark;
   }
   removeBookmark(conversationId: string, bookmarkId: string): void {
-    if (!this.listBookmarks(conversationId).some(bookmark => bookmark.id === bookmarkId)) throw new Error('Bookmark not found.');
+    if (!this.listBookmarks(conversationId).some(bookmark => bookmark.id === bookmarkId)) throw new AppError("Bookmark not found.");
     this.addEvent(conversationId, null, 'bookmark.removed', { id: bookmarkId });
   }
   navigation(conversationId: string): StoryNavigation {
-    const chat = this.getConversation(conversationId); if (!chat) throw new Error('Conversation not found.');
+    const chat = this.getConversation(conversationId); if (!chat) throw new AppError("Conversation not found.");
     const state = this.latestState(conversationId)?.tables;
     return { bookmarks: this.listBookmarks(conversationId), scene: {
       scenario: chat.scenario || (chat.groupId ? this.getGroup(chat.groupId)?.scenario : chat.characterId ? this.getCharacter(chat.characterId)?.scenario : '') || '',
@@ -599,11 +600,15 @@ export class Repository {
     }
     return text.slice(0, 4000);
   }
+  describeError(error: unknown): UiText | undefined {
+    const text = errorText(error);
+    return text && { ...text, ...(text.params ? { params: text.params.map(value => typeof value === 'number' ? value : this.redactError(value)) } : {}) };
+  }
   recoverInterruptedTurns(): void {
     for (const turn of this.database.db.select().from(turns).where(inArray(turns.status, ['queued', 'running'])).all()) {
       const status = turn.progress?.completedMessageIds.length ? 'partial' : 'failed';
       this.updateTurn(turn.id, { status, error: 'Server restarted during generation.', completedAt: now() });
-      this.addEvent(turn.conversationId, turn.id, `turn.${status}`, { turnId: turn.id, error: 'Server restarted during generation.' });
+      this.addEvent(turn.conversationId, turn.id, `turn.${status}`, { turnId: turn.id, error: 'Server restarted during generation.', errorText: uiText('Server restarted during generation.') });
     }
     for (const turn of this.database.db.select().from(turns).where(eq(turns.recordsStatus, 'running')).all()) {
       this.updateTurn(turn.id, { recordsStatus: 'cancelled' });
