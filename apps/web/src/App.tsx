@@ -20,6 +20,7 @@ import AutoSaveField from './AutoSaveField.js';
 import AuthorNoteEditor from './AuthorNoteEditor.js';
 import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
+import { readAppearance, saveAppearance } from './appearance.js';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
@@ -63,7 +64,7 @@ export default function App() {
   const [replyTarget, setReplyTarget] = useState('auto');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [panel, setPanel] = useState(true);
+  const [panel, setPanel] = useState(() => window.matchMedia('(min-width: 1121px)').matches);
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -97,6 +98,7 @@ export default function App() {
   const [showAuthorNote, setShowAuthorNote] = useState(false);
 
   // Appearance preferences are local to this browser.
+  const [readingAppearance, setReadingAppearance] = useState(readAppearance);
   const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => (localStorage.getItem('avatar-mode') as AvatarMode) || 'large');
   const [messageDisplayLimit, setMessageDisplayLimit] = useState(() => {
     const value = Number(localStorage.getItem('chat-message-display-limit'));
@@ -107,7 +109,7 @@ export default function App() {
 
   const { container: messageContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom,
     olderCount, loadOlder, onScroll, onAvatarLoad, scrollToLatest, scrollToMessage } = useChatWindow(
-    branch, chatId, messageDisplayLimit, drafts, `${page}:${avatarMode}:${plainThinkingExpanded}`,
+    branch, chatId, messageDisplayLimit, drafts, `${page}:${avatarMode}:${plainThinkingExpanded}:${readingAppearance.font}:${readingAppearance.fontSize}`,
   );
   const streamAbort = useRef<AbortController | null>(null);
 
@@ -808,7 +810,7 @@ export default function App() {
                         <summary>{t("模型思考")}</summary>
                         <pre>{info.thinking || t("模型未返回可见思考内容。")}</pre>
                       </details>}
-                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError}
+                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError} layoutKey={`${readingAppearance.font}:${readingAppearance.fontSize}`}
                         onSave={async (content, previous) => {
                           const saved = await api<MessageNode>(`/messages/${m.id}/edit`, 'POST', { content, previous, head: chat.headMessageId }, { keepalive: true });
                           if (saved.id !== m.id) editedMessageIds.current.set(m.id, saved.id);
@@ -1188,6 +1190,8 @@ export default function App() {
       )}
 
       {showSettings && <SettingsModal
+        readingAppearance={readingAppearance}
+        onSaveAppearance={value => { saveAppearance(value); setReadingAppearance(value); }}
         onClose={() => setShowSettings(false)}
         generalSettings={generalSettings}
         onSaveGeneral={async value => { setGeneralSettings(await api('/settings/general', 'PUT', value)); }}

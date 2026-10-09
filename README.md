@@ -61,6 +61,8 @@ pnpm start
 
 正文和资料通常直接点击编辑，失焦自动保存；设置和提示词使用显式保存。载入提示词预设只填入草稿，点击「保存提示词」后才生效。
 
+「设置 → 外观」提供石墨黑、午夜蓝、暖墨棕和纸白配色，并搭配对应的文字颜色。可以选择正文字体和 12–28 px 字号，先预览再保存；偏好仅保存在当前浏览器。字体使用设备已安装的字体及回退，不需要下载字体文件。
+
 **分支用于探索另一种走向，删除用于回到之前。** 分支会复制截至所选消息的故事和记录，原聊天保持不变。删除会永久移除当前聊天中所选消息及后续内容，包括对应位置之后的旧版本，并恢复保留位置的记录；其他独立聊天不受影响。
 
 聊天和设定默认存放在本机的 `apps/server/data/`。备份时先停止服务，再复制整个目录。故事包适合迁移单个故事，不代替整库备份。使用 API 时，选入请求的内容会发送给你配置的服务商。
@@ -135,6 +137,8 @@ Want to explore first? After installing dependencies and building, run `pnpm dem
 ### Editing, saving, and data
 
 Most content is edited directly and saved on blur. Settings and prompts have explicit save actions. Loading a prompt preset fills the draft; **Save prompts** applies it.
+
+**Settings → Appearance** offers Graphite, Midnight blue, Warm dark, and Paper white palettes with matching text colors. Preview a story font and size from 12–28 px before saving. Preferences stay in this browser; fonts come from your device with automatic fallbacks, without font downloads.
 
 **Branch to explore another outcome; delete to return to an earlier point.** Branching copies the story and records through the selected message into a separate chat, leaving the original unchanged. Deletion permanently removes the selected message and later content in the current chat, including alternate versions at those later positions, and restores records for the retained history. Other independent chats are unaffected.
 

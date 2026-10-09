@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { X, Plus } from 'lucide-react';
 import { defaultAgencyPrompts, defaultPromptSettings, type GeneralSettings, type PromptSettings, type PromptPreset } from '@new-ai-chat/contracts';
 import { api } from './api';
@@ -7,6 +7,7 @@ import AvatarField from './AvatarField';
 import ActionChoiceSettings from './ActionChoiceSettings';
 import { useLanguage } from './LanguageProvider.js';
 import type { Locale } from './i18n.js';
+import { readingThemes, readingFonts, type ReadingAppearance } from './appearance.js';
 
 export type AvatarMode = 'compact' | 'large' | 'full';
 
@@ -15,6 +16,7 @@ export default function SettingsModal({
   onEditConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
   avatarMode, setAvatarMode,
   messageDisplayLimit, setMessageDisplayLimit, plainThinkingExpanded, setPlainThinkingExpanded,
+  readingAppearance, onSaveAppearance,
 }: {
   onClose: () => void;
   generalSettings: GeneralSettings;
@@ -32,6 +34,8 @@ export default function SettingsModal({
   setMessageDisplayLimit: (limit: number) => void;
   plainThinkingExpanded: boolean;
   setPlainThinkingExpanded: (expanded: boolean) => void;
+  readingAppearance: ReadingAppearance;
+  onSaveAppearance: (value: ReadingAppearance) => void;
 }) {
   const { locale, saveLanguage } = useLanguage();
   const [languageDraft, setLanguageDraft] = useState(locale);
@@ -46,6 +50,7 @@ export default function SettingsModal({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [displayLimitDraft, setDisplayLimitDraft] = useState(String(messageDisplayLimit));
+  const [readingDraft, setReadingDraft] = useState(readingAppearance);
   useEffect(() => { setWriting(generalSettings); }, [generalSettings]);
   useEffect(() => {
     if (tab !== 'prompts') return;
@@ -235,6 +240,33 @@ export default function SettingsModal({
           </form>}
 
           {tab === 'appearance' && <div className="settings-section">
+            <form className="reading-settings" onSubmit={event => {
+              event.preventDefault();
+              try { onSaveAppearance(readingDraft); setError(''); setNotice(t('阅读外观已保存。')); }
+              catch { setNotice(''); setError(t('无法保存阅读外观，当前外观未改变。你的选择已保留，请重试。')); }
+            }}>
+              <div className="two-col">
+                <label>{t('阅读配色')}<select value={readingDraft.theme} onChange={event => setReadingDraft({ ...readingDraft, theme: event.target.value as ReadingAppearance['theme'] })}>
+                  {readingThemes.map(theme => <option value={theme} key={theme}>{t(({ graphite: '石墨黑', midnight: '午夜蓝', warm: '暖墨棕', paper: '纸白' } as const)[theme])}</option>)}
+                </select></label>
+                <label>{t('正文字体')}<select value={readingDraft.font} onChange={event => setReadingDraft({ ...readingDraft, font: event.target.value as ReadingAppearance['font'] })}>
+                  {readingFonts.map(font => <option value={font} key={font}>{t(({ sans: '系统黑体', serif: '宋体／衬线', mono: '等宽字体' } as const)[font])}</option>)}
+                </select></label>
+              </div>
+              <label>{t('正文字号')}<div className="reading-size">
+                <input type="range" min={12} max={28} step={1} value={readingDraft.fontSize} aria-label={t('正文字号')} onChange={event => setReadingDraft({ ...readingDraft, fontSize: Number(event.target.value) })} />
+                <output>{readingDraft.fontSize} px</output>
+              </div></label>
+              <p className="muted">{t('配色同时调整背景、文字和按钮。字体与字号用于正文和输入框；仅保存在当前浏览器。')}</p>
+              <div className="reading-preview" aria-label={t('阅读效果预览')} data-reading-theme={readingDraft.theme} data-reading-font={readingDraft.font}
+                style={{ '--reading-font-size': `${readingDraft.fontSize}px` } as CSSProperties}>
+                <p>{t('“雨停了，我们继续走吧。”')}</p>
+                <p className="reading-narration">{t('远处的灯光映在石板路上，故事从这里继续。')}</p>
+                <small>{t('旁白与辅助文字也会随配色调整。')}</small>
+              </div>
+              <small className="muted">{t('使用设备已安装字体；未安装时自动回退。不下载字体文件。')}</small>
+              <button type="submit" className="primary">{t('保存阅读外观')}</button>
+            </form>
             <label>{t("聊天显示条数")}<input type="number" min={1} max={1000} step={1} value={displayLimitDraft}
                 onChange={event => setDisplayLimitDraft(event.target.value)}
                 onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
