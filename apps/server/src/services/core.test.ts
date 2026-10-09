@@ -1028,7 +1028,7 @@ describe('branches and records',()=>{
     const head = repo.getConversation(chat)!.headMessageId;
     const edit = { content: '修订的记忆', previous: memory.content, head };
     expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBe(200);
-    expect(repo.listMemories(chat)[0]).toMatchObject({ ...memory, content: edit.content });
+    expect(repo.listMemories(chat, 1)[0]).toMatchObject({ ...memory, content: edit.content });
     const cell = { head, table: 'global_state', rowId: 1, column: 'current_location', previous: '', content: '书店' };
     expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: cell })).statusCode).toBe(200);
     const stale = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: { ...cell, content: '旧输入' } });
@@ -1072,10 +1072,14 @@ describe('branches and records',()=>{
     await server.records.generate(chat, 'memory', new AbortController().signal);
     expect(maintain.mock.calls[1]![0].history.every(message => message.storyTurnId === second.storyTurnId)).toBe(true);
     expect(repo.listMemories(chat)[0]?.coverage?.storyTurnIds).toEqual([second.storyTurnId]);
+    const stages = repo.listMemories(chat);
+    expect(stages).toHaveLength(2);
+    expect(repo.listMemories(chat, 1)).toEqual(stages.slice(0, 1));
     repo.removePinnedFact(chat, fact.id);
     repo.setHead(chat, firstBranch.at(-1)!.id);
     expect(repo.listPinnedFacts(chat)).toEqual([fact]);
     expect(repo.listMemories(chat)).toHaveLength(1);
+    expect(repo.listMemories(chat, 1)[0]?.coverage?.storyTurnIds).toEqual([first.storyTurnId]);
     const context = new StoryContext(repo, chat);
     const match = await context.searchMemory('灯塔', 3);
     expect(match[0]?.sourceId).toBe(repo.listMemories(chat)[0]?.id);
