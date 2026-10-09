@@ -161,11 +161,13 @@ it('compact chat history keeps full current prose and only summaries of older ve
   expect(compact.rawPayload.length).toBeLessThan(full.rawPayload.length / 2);
 });
 
-it('active history rejects cyclic message parents', () => {
+it('active history and records reject cyclic message parents', () => {
   const repo = server.repository;
   const message = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: 'Offline cycle guard', providerState: null, legacyPayload: null });
   repo.database.sqlite.prepare('UPDATE messages SET parent_id = ? WHERE id = ?').run(message.id, message.id);
+  repo.setHead(chat, message.id);
   expect(() => repo.getActiveBranch(chat, message.id)).toThrow('Cycle in message branch.');
+  expect(() => repo.listPinnedFacts(chat)).toThrow('Cycle in message branch.');
 });
 
 it('web copy previews plain prose and saves one User at the expected head without generation', async () => {

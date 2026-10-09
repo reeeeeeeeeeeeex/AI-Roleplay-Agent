@@ -51,6 +51,28 @@ type ConversationRow = typeof conversations.$inferSelect;
 type MessageRow = typeof messages.$inferSelect;
 type TurnRow = typeof turns.$inferSelect;
 
+function branchIds(conversationId: string, headMessageId: string) {
+  // UNION terminates corrupt cycles; orderedBranch still reports them as errors.
+  return sql`(WITH RECURSIVE branch(id, parent_id) AS (
+    SELECT id, parent_id FROM messages WHERE id = ${headMessageId} AND conversation_id = ${conversationId}
+    UNION
+    SELECT parent.id, parent.parent_id FROM messages AS parent JOIN branch ON parent.id = branch.parent_id
+    WHERE parent.conversation_id = ${conversationId}
+  ) SELECT id FROM branch)`;
+}
+
+function orderedBranch<T extends Pick<MessageNode, 'id' | 'parentId'>>(nodes: T[], headMessageId: string): T[] {
+  const all = new Map(nodes.map(message => [message.id, message]));
+  const branch: T[] = []; let current = all.get(headMessageId);
+  const visited = new Set<string>();
+  while (current) {
+    if (visited.has(current.id)) throw new AppError("Cycle in message branch.");
+    visited.add(current.id); branch.push(current);
+    current = current.parentId ? all.get(current.parentId) : undefined;
+  }
+  return branch.reverse();
+}
+
 function mapConversation(row: ConversationRow): Conversation {
   return {
     branchGroupId: row.branchGroupId,
@@ -374,19 +396,15 @@ export class Repository {
   getActiveBranch(conversationId: string, headMessageId = this.getConversation(conversationId)?.headMessageId, nodes?: MessageNode[]): MessageNode[] {
     if (!headMessageId) return [];
     // Follow IDs first so alternate versions' prose and provider state are never decoded.
-    // UNION terminates corrupt cycles; the traversal below still reports them as errors.
-    const ancestors = sql`(WITH RECURSIVE branch(id, parent_id) AS (
-      SELECT id, parent_id FROM messages WHERE id = ${headMessageId} AND conversation_id = ${conversationId}
-      UNION
-      SELECT parent.id, parent.parent_id FROM messages AS parent JOIN branch ON parent.id = branch.parent_id
-      WHERE parent.conversation_id = ${conversationId}
-    ) SELECT id FROM branch)`;
-    const selected = nodes ?? this.database.db.select().from(messages).where(inArray(messages.id, ancestors)).all().map(mapMessage);
-    const all = new Map(selected.map((message) => [message.id, message]));
-    const branch: MessageNode[] = []; let current = all.get(headMessageId);
-    const visited = new Set<string>();
-    while (current) { if (visited.has(current.id)) throw new AppError("Cycle in message branch."); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }
-    return branch.reverse();
+    const selected = nodes ?? this.database.db.select().from(messages).where(inArray(messages.id, branchIds(conversationId, headMessageId))).all().map(mapMessage);
+    return orderedBranch(selected, headMessageId);
+  }
+  private activeMessageIds(conversationId: string): Set<string> {
+    const head = this.getConversation(conversationId)?.headMessageId;
+    if (!head) return new Set();
+    const links = this.database.db.select({ id: messages.id, parentId: messages.parentId }).from(messages)
+      .where(inArray(messages.id, branchIds(conversationId, head))).all();
+    return new Set(orderedBranch(links, head).map(message => message.id));
   }
   createMessage(input: Omit<MessageNode, 'id' | 'createdAt' | 'generationInfo'> & { generationInfo?: MessageNode['generationInfo'] }): MessageNode {
     const row = { ...input, generationInfo: input.generationInfo ?? null, id: id(), createdAt: now() };
@@ -497,7 +515,7 @@ export class Repository {
     const selected = this.database.db.select({ id: memories.id }).from(memories).where(eq(memories.conversationId, conversationId))
       .orderBy(desc(sql`rowid`)).all().filter(row => active(row.id)).slice(0, limit).map(row => row.id);
     if (!selected.length) return [];
-    const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
+    const heads = this.activeMessageIds(conversationId);
     const edits = new Map<string, string>();
     for (const event of this.events(conversationId, ['memory.edited'])) {
       const edit = event.payload as { id: string; head: string | null; content: string };
@@ -569,7 +587,7 @@ export class Repository {
     return this.checkpointFilter(conversationId)(checkpointId);
   }
   listPinnedFacts(conversationId: string): PinnedFact[] {
-    const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
+    const heads = this.activeMessageIds(conversationId);
     const facts = new Map<string, PinnedFact>();
     for (const event of this.events(conversationId, ['fact.saved', 'fact.removed'])) {
       const value = event.payload as PinnedFact;
@@ -583,7 +601,7 @@ export class Repository {
     const chat = this.getConversation(conversationId); if (!chat) throw new AppError("Conversation not found.");
     const previous = factId ? this.listPinnedFacts(conversationId).find(fact => fact.id === factId) : null;
     if (factId && !previous) throw new AppError("Fact is not on the current branch.");
-    if (sourceMessageId && !this.getActiveBranch(conversationId).some(message => message.id === sourceMessageId)) throw new AppError("Fact source is not on the current branch.");
+    if (sourceMessageId && !this.activeMessageIds(conversationId).has(sourceMessageId)) throw new AppError("Fact source is not on the current branch.");
     const fact = { id: factId ?? id(), content, sourceMessageId: previous?.sourceMessageId ?? sourceMessageId, head: chat.headMessageId };
     this.addEvent(conversationId, null, 'fact.saved', fact); return fact;
   }
@@ -620,14 +638,14 @@ export class Repository {
     } };
   }
   private checkpointFilter(conversationId: string) {
-    const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));
+    const heads = this.activeMessageIds(conversationId);
     const checkpoints = new Map(this.events(conversationId, ['checkpoint']).map((event) => {
       const value = event.payload as { id: string; head: string | null }; return [value.id, value.head];
     }));
     return (checkpointId: string) => { const head = checkpoints.get(checkpointId); return !head || heads.has(head); };
   }
   currentWorld(conversationId: string): Array<{ summary: string; evidence: string }> {
-    const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));
+    const heads = this.activeMessageIds(conversationId);
     const applied = new Map<string, { summary: string; evidence: string }>();
     for (const event of this.events(conversationId, ['world.applied', 'world.undone'])) {
       const value = event.payload as { head: string | null; proposalId: string; summary: string; evidence: string };
