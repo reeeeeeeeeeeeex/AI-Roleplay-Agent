@@ -499,6 +499,7 @@ export const english = {
   "主": "P",
   "新建主角": "New protagonist",
   "状态检查点": "State checkpoints",
+  "正在读取检查点…": "Loading checkpoint…",
   "Planner / 路由历史": "Planner / Routing history",
   "恢复为新检查点": "Restore as new checkpoint",
   "全局状态": "Global state",

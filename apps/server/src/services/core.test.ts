@@ -1043,6 +1043,23 @@ describe('branches and records',()=>{
     expect(repo.latestState(chat)).toBeNull();
     expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBeGreaterThanOrEqual(400);
   });
+  it('loads state checkpoint summaries and details only from the current branch', async () => {
+    const repo = server.repository;
+    await normal();
+    const head = repo.getConversation(chat)!.headMessageId;
+    const earlier = repo.createState(chat, null, blankState());
+    await normal();
+    const later = repo.createState(chat, null, blankState());
+    repo.setHead(chat, head);
+    const base = `/api/conversations/${chat}/state/history`;
+    expect((await server.app.inject({ url: `${base}?view=summary` })).json()).toEqual([{ id: earlier.id, createdAt: earlier.createdAt }]);
+    expect((await server.app.inject({ url: base })).json()).toEqual([earlier]);
+    expect((await server.app.inject({ url: `${base}/${earlier.id}` })).json()).toEqual(earlier);
+    expect((await server.app.inject({ url: `${base}/${later.id}` })).statusCode).toBe(404);
+    const other = repo.createConversation(conversationInputSchema.parse({ title: 'Other checkpoint story', kind: 'solo', characterId: character }));
+    expect((await server.app.inject({ url: `/api/conversations/${other.id}/state/history/${earlier.id}` })).statusCode).toBe(404);
+    expect((await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/state/restore`, payload: { snapshotId: later.id } })).statusCode).toBeGreaterThanOrEqual(400);
+  });
   it('v0.2 memory coverage and pinned facts follow the branch without resummarizing covered turns', async () => {
     const repo = server.repository;
     const first = await normal(); const firstBranch = repo.getActiveBranch(chat);

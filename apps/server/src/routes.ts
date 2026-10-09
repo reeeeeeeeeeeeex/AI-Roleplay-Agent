@@ -235,11 +235,15 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return repo.createMemory({ conversationId: chat, content, source: mode === 'replace' ? 'manual' : 'generated', stage: (repo.listMemories(chat,1)[0]?.stage ?? 0)+1, storyTurnId: settledStoryIds(repo,chat).at(-1) ?? null });
   });
   app.get('/api/conversations/:id/state', async (req) => repo.latestState(idOf(req)) ?? { tables: blankState(), version: 2 });
-  app.get('/api/conversations/:id/state/history', async req => repo.listStateSnapshots(idOf(req)));
+  app.get('/api/conversations/:id/state/history', async req => (req.query as { view?: string }).view === 'summary' ? repo.listStateCheckpoints(idOf(req)) : repo.listStateSnapshots(idOf(req)));
+  app.get('/api/conversations/:id/state/history/:snapshotId', async (req, reply) => {
+    const { snapshotId } = req.params as { snapshotId: string };
+    return repo.getStateSnapshot(idOf(req), snapshotId) ?? reply.code(404).send({ error: 'Snapshot is not on the current branch.', errorText: uiText('Snapshot is not on the current branch.') });
+  });
   app.post('/api/conversations/:id/state/restore', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
     const { snapshotId } = z.object({ snapshotId: z.string() }).parse(req.body);
-    const snapshot = repo.listStateSnapshots(chat).find((item) => item.id === snapshotId);
+    const snapshot = repo.getStateSnapshot(chat, snapshotId);
     if (!snapshot) throw new AppError("Snapshot is not on the current branch.");
     return repo.createState(chat, settledStoryIds(repo, chat).at(-1) ?? null, snapshot.tables);
   });

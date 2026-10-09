@@ -508,6 +508,16 @@ export class Repository {
     const active = this.checkpointFilter(conversationId);
     return this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter((row) => active(row.id)).map((row) => ({ ...row, version: row.version as 1 | 2 }));
   }
+  listStateCheckpoints(conversationId: string) {
+    const active = this.checkpointFilter(conversationId);
+    return this.database.db.select({ id: stateSnapshots.id, createdAt: stateSnapshots.createdAt }).from(stateSnapshots)
+      .where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter(row => active(row.id));
+  }
+  getStateSnapshot(conversationId: string, snapshotId: string): ProtagonistStateSnapshot | null {
+    if (!this.checkpointActive(conversationId, snapshotId)) return null;
+    const row = this.database.db.select().from(stateSnapshots).where(and(eq(stateSnapshots.conversationId, conversationId), eq(stateSnapshots.id, snapshotId))).get();
+    return row ? { ...row, version: row.version as 1 | 2 } : null;
+  }
 
   createProposals(conversationId: string, plan: TurnPlan): void {
     const timestamp = now();
