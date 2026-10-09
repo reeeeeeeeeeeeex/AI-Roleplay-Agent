@@ -23,6 +23,7 @@ import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
 import { readAppearance, saveAppearance } from './appearance.js';
 import { copyText } from './clipboard.js';
+import { version as appVersion } from '../../../package.json';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
@@ -671,7 +672,7 @@ export default function App() {
         </nav>
 
         <div className="local-status">
-          <i />  {t("本地")} {session?.fakeModel ? t("离线演示") : 'v0.2'}
+          <i />  {t("本地")} {session?.fakeModel ? t("离线演示") : `v${appVersion}`}
         </div>
       </aside>
 
