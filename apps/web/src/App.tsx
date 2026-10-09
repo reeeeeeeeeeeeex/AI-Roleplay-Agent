@@ -54,6 +54,14 @@ export default function App() {
   chatRef.current = chatId;
 
   const [page, setPage] = useState<'chat' | Collection | 'import'>('chat');
+  const [resourceSearch, setResourceSearch] = useState('');
+  const resourceFilter = useRef<HTMLInputElement>(null);
+  useEffect(() => { setResourceSearch(''); }, [page]);
+  const filteredResources = useMemo(() => {
+    const query = resourceSearch.trim().toLowerCase();
+    const items = data[page] ?? [];
+    return query ? items.filter(item => String(item.name ?? item.title ?? '').toLowerCase().includes(query)) : items;
+  }, [data, page, resourceSearch]);
   const [branch, setBranch] = useState<MessageNode[]>([]);
   const [nodes, setNodes] = useState<MessageSummary[]>([]);
   const historyRequest = useRef(0);
@@ -1043,6 +1051,12 @@ export default function App() {
         {page !== 'chat' && page !== 'import' && (
           <section className="management">
             <header>
+              <div className="management-filter">
+                <Search size={15} aria-hidden="true" />
+                <input ref={resourceFilter} type="search" aria-label={t('按名称或标题筛选')} placeholder={t('按名称或标题筛选')} value={resourceSearch}
+                  onChange={event => setResourceSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && !event.nativeEvent.isComposing) setResourceSearch(''); }} />
+                {resourceSearch && <button type="button" aria-label={t('清除筛选')} onClick={() => { setResourceSearch(''); resourceFilter.current?.focus(); }}>×</button>}
+              </div>
               <button className="primary" onClick={() => (page === 'conversations' ? newChat() : edit(page))}>
                 <Plus size={14} />{page === 'conversations' ? t("开启新故事") : t("创建{0}", titles[page])}
               </button>
@@ -1051,7 +1065,7 @@ export default function App() {
               {page === 'characters' || page === 'personas' || page === 'groups' || page === 'conversations' ? (
                 <div className="character-grid">
                   {page === 'conversations' ? (
-                    data.conversations?.map((c) => {
+                    filteredResources.map((c) => {
                       const isGroup = c.kind === 'group';
                       const grp = isGroup ? (data.groups ?? []).find((g) => g.id === c.groupId) : null;
                       const char = !isGroup ? (data.characters ?? []).find((ch) => ch.id === c.characterId) : null;
@@ -1104,7 +1118,7 @@ export default function App() {
                       );
                     })
                   ) : page === 'groups' ? (
-                    data.groups?.map((v) => {
+                    filteredResources.map((v) => {
                       const memberNames = (v.memberIds ?? []).map((mid: string) => (data.characters ?? []).find((ch) => ch.id === mid)?.name).filter(Boolean).join('、');
                       return (
                         <article className="character-card" key={v.id}>
@@ -1151,7 +1165,7 @@ export default function App() {
                       );
                     })
                   ) : (
-                    data[page]?.map((v) => (
+                    filteredResources.map((v) => (
                       <article className="character-card" key={v.id}>
                         <div
                           className="character-card-image-wrap"
@@ -1197,7 +1211,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="resource-list">
-                  {data[page]?.map((v) => (
+                  {filteredResources.map((v) => (
                     <article className="resource-item" key={v.id}>
                       <div className="resource-main">
                         <div className="resource-info">
@@ -1219,6 +1233,7 @@ export default function App() {
                 </div>
               )}
               {!data[page]?.length && <div className="empty">{t("暂无{0}。点击右上角按钮创建。", page === 'conversations' ? t("故事") : titles[page])}</div>}
+              {!!data[page]?.length && !filteredResources.length && <p className="empty" role="status">{t('没有匹配的名称或标题。')}</p>}
             </div>
           </section>
         )}

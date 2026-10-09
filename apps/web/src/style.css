@@ -922,15 +922,30 @@ main {
 }
 
 .management > header {
-  height: 48px;
   min-height: 48px;
-  padding: 0 20px;
+  padding: 8px 20px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-surface);
 }
+
+.management-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.management-filter input { flex: 1; min-width: 0; width: 0; }
+.management-filter input::-webkit-search-cancel-button { display: none; }
+.management-filter svg, .management-filter button { flex-shrink: 0; }
 
 .management-content {
   flex: 1;

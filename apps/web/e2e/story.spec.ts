@@ -1197,6 +1197,29 @@ test('inline facts bookmarks scene and rewrite controls stay beside their conten
   await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
 });
 
+test('story filter stays usable in English on a narrow screen and opens the matching story', async ({ page, request }) => {
+  const characters = await (await request.get('/api/characters')).json();
+  const title = 'Shelved story · 原始标题';
+  expect((await request.post('/api/conversations', { data: { title, kind: 'solo', characterId: characters[0].id } })).status()).toBe(201);
+  await page.reload();
+  await englishInterface(page);
+  await page.getByRole('button', { name: 'Close records panel', exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+  await page.getByRole('button', { name: /^Story list/ }).click();
+  const filter = page.getByRole('searchbox', { name: 'Filter by name or title', exact: true });
+  await filter.fill('sHELVED');
+  await expect(page.locator('.management .character-card')).toHaveCount(1);
+  for (const control of [filter, page.locator('.management').getByRole('button', { name: 'Start a new story', exact: true })]) {
+    const box = (await control.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(320);
+  }
+  await page.getByRole('button', { name: 'Open story', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+  await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
+});
+
 test('content cards and nested persona creation save on leaving their fields', async ({ page, request }) => {
   await page.locator('.studio-nav').getByRole('button', { name: /^角色 \d/ }).click();
   await page.getByRole('button', { name: 'Sina', exact: true }).click();

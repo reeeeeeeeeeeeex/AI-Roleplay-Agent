@@ -1,5 +1,8 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  "按名称或标题筛选": "Filter by name or title",
+  "清除筛选": "Clear filter",
+  "没有匹配的名称或标题。": "No matching names or titles.",
   "复制连接": "Duplicate connection",
   "连接已复制，可编辑副本的模型和参数。": "Connection duplicated. You can edit the copy's model and parameters.",
   "（副本）": " (copy)",
