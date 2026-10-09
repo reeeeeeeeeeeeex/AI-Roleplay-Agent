@@ -1,7 +1,8 @@
 import { t } from './i18n.js';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { X, Plus } from 'lucide-react';
-import { defaultAgencyPrompts, defaultPromptSettings, type GeneralSettings, type PromptSettings, type PromptPreset } from '@new-ai-chat/contracts';
+import { defaultAgencyPrompts, defaultPromptSettings } from '@new-ai-chat/contracts/client';
+import type { GeneralSettings, PromptSettings, PromptPreset } from '@new-ai-chat/contracts';
 import { api } from './api';
 import AvatarField from './AvatarField';
 import ActionChoiceSettings from './ActionChoiceSettings';

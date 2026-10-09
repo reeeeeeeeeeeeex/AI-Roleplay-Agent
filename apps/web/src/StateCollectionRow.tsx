@@ -1,7 +1,8 @@
 import { stateLabel } from './state-labels.js';
 import { t } from './i18n.js';
 import { useLayoutEffect, useRef, useState } from 'react';
-import { stateColumns, type StateRow, type StateTableName } from '@new-ai-chat/contracts';
+import { stateColumns } from '@new-ai-chat/contracts/client';
+import type { StateRow, StateTableName } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import { useContentAutosave } from './useContentAutosave.js';
 

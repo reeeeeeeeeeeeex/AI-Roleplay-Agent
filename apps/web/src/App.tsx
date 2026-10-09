@@ -3,7 +3,8 @@ import { t, formatDate, formatNumber, diagnosticText, type MessageKey } from './
 import { useLanguage } from './LanguageProvider.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine, Search, Copy } from 'lucide-react';
-import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type MessageSummary, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
+import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex } from '@new-ai-chat/contracts/client';
+import type { GeneralSettings, Conversation, MessageNode, MessageSummary, SpeakerRef, ImportPreview, PromptSettings, TurnRecord, TurnRequest, UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';

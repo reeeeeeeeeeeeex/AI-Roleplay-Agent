@@ -22,6 +22,8 @@ This guide describes the current implementation and its important invariants. St
 
 Pi 依赖集中在 `agent-runtime`；前端通过本地服务访问模型，不直接向供应商发送密钥。SQLite 是持久数据来源，浏览器负责界面状态和未提交草稿。
 
+前端通过 `@new-ai-chat/contracts/client` 读取默认设置、状态字段和显示辅助函数；领域类型使用 `import type`。这个入口不加载 Zod 或服务端校验器，服务端仍从原入口执行完整校验。
+
 ```mermaid
 flowchart LR
   UI[React WebUI] -->|REST| API[Fastify]
@@ -144,6 +146,8 @@ Pi dependencies are contained in `agent-runtime`. The browser talks to the local
 The request path is **WebUI → Fastify → story context → AgentRuntime → ModelGateway / Pi → configured provider**, with SQLite persistence and SSE updates back to the UI.
 
 A lightweight React context and local dictionaries provide the UI language, stored in the browser as `interface-language`. Application diagnostics may carry `UiText` keys and parameters alongside their original text. Language never enters model requests; state display labels are separate from model-facing field descriptions.
+
+The UI reads defaults, state columns, and display helpers from `@new-ai-chat/contracts/client`, and uses `import type` for domain types. This entry point does not load Zod or server validators. Server-side validation continues through the original package entry point.
 
 ### 2. From input to a completed turn
 

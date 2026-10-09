@@ -958,6 +958,7 @@ test('collection rows edit together and delete invalid drafts without saving the
     important_characters: [{ row_id: 1, name: 'Sina', gender_age: 'adult', is_absent: '是' }],
   } } });
   await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
   await page.locator('summary').filter({ hasText: '背包物品' }).click();
@@ -976,7 +977,7 @@ test('collection rows edit together and delete invalid drafts without saving the
   await page.locator('summary').filter({ hasText: '重要角色' }).click();
   const character = page.locator('.state-row[data-table="important_characters"]');
   await expect(character.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
-  await expect(character.getByRole('combobox', { name: 'is_dead' })).toHaveValue('');
+  await expect(character.getByRole('combobox', { name: '是否确认死亡', exact: true })).toHaveValue('');
   await character.getByRole('button', { name: '删除', exact: true }).click();
   await character.getByRole('button', { name: '确认删除', exact: true }).click();
   await expect(character).toHaveCount(0);
