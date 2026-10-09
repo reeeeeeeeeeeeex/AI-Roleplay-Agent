@@ -342,6 +342,11 @@ export default function App() {
     setPanel(false);
   }
 
+  async function showRecordSource(messageId: string) {
+    await closeRecords();
+    scrollToMessage(messageId);
+  }
+
   async function selectChat(id: string, flush = true) {
     if (flush) await flushContentEdits();
     if (id !== chatRef.current) {
@@ -1346,7 +1351,7 @@ export default function App() {
       {page === 'chat' && chat && panel && (
             <Records
               key={chat.id}
-              onSource={scrollToMessage}
+              onSource={id => act(showRecordSource(id))}
           chat={chat}
           generationMode={generalSettings.generationMode}
           version={recordsVersion}

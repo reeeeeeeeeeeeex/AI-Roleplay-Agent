@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page, type Locator } from '@playwright/test';
 import { defaultGeneralSettings } from '@new-ai-chat/contracts';
 
 test.use({ serviceWorkers: 'block' });
@@ -84,6 +84,60 @@ async function enableUpdateNotification(page: Page) {
   await page.reload();
   await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
 }
+
+async function openRecordSource(page: Page, request: APIRequestContext, title: string) {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${title}`);
+  await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 } });
+  const source = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
+    role: 'user', head: null, input: { voice: 'protagonist', text: 'The letter is hidden under the northern bridge.' },
+  } })).json();
+  const reply = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
+    role: 'assistant', head: source.message.id, speaker: { kind: 'narrator' }, text: 'The travelers continue along the river.\n'.repeat(40),
+  } })).json();
+  const fact = await request.post(`/api/conversations/${chat.id}/facts`, { data: { content: 'The letter is under the bridge.', sourceMessageId: source.message.id } });
+  expect(fact.ok()).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
+  if (!await page.getByRole('button', { name: '关闭记录面板', exact: true }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await page.getByRole('button', { name: '展开记录窗口', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '固定事实内容', exact: true })).toHaveValue('The letter is under the bridge.');
+  return { chat, source: source.message, head: reply.message.id };
+}
+
+test('record source navigation saves the draft and reveals prose on a narrow screen', async ({ page, request }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { chat, source, head } = await openRecordSource(page, request, info.title);
+  await page.getByRole('textbox', { name: '固定事实内容', exact: true }).fill('The letter is beneath the northern bridge.');
+  await page.getByRole('button', { name: '查看来源', exact: true }).click();
+  await expect(page.locator('.records')).toHaveCount(0);
+  const target = page.locator(`#message-${source.id}`);
+  await expect(target).toBeInViewport();
+  await expect.poll(() => target.evaluate(element => Math.abs(element.getBoundingClientRect().top - document.querySelector('.messages')!.getBoundingClientRect().top - 12))).toBeLessThan(2);
+  expect((await (await request.get(`/api/conversations/${chat.id}/facts`)).json())[0].content).toBe('The letter is beneath the northern bridge.');
+  const chats = await (await request.get('/api/conversations')).json();
+  expect(chats.find((item: any) => item.id === chat.id).headMessageId).toBe(head);
+});
+
+test('record source navigation stays open with the draft when saving fails', async ({ page, request }, info) => {
+  const { chat, source } = await openRecordSource(page, request, info.title);
+  let fail = true;
+  await page.route(`**/api/conversations/${chat.id}/facts`, route => fail && route.request().method() === 'POST'
+    ? route.fulfill({ status: 500, json: { error: 'Source draft save failed' } }) : route.continue());
+  const field = page.getByRole('textbox', { name: '固定事实内容', exact: true });
+  await field.fill('Keep this source draft.');
+  const before = await page.locator('.messages').evaluate(element => element.scrollTop);
+  await page.getByRole('button', { name: '查看来源', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '故事记录窗口', exact: true })).toBeVisible();
+  await expect(page.locator('.records').getByRole('alert')).toContainText('Source draft save failed');
+  await expect(field).toHaveValue('Keep this source draft.');
+  expect(await page.locator('.messages').evaluate(element => element.scrollTop)).toBe(before);
+  expect((await (await request.get(`/api/conversations/${chat.id}/facts`)).json())[0].content).toBe('The letter is under the bridge.');
+  fail = false;
+  await page.getByRole('button', { name: '查看来源', exact: true }).click();
+  await expect(page.locator('.records')).toHaveCount(0);
+  await expect(page.locator(`#message-${source.id}`)).toBeInViewport();
+});
 
 test('record inspector keeps its Agent tab and expanded window when a reply finishes', async ({ page }) => {
   let release!: () => void;
