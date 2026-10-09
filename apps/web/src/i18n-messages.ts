@@ -1,5 +1,8 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  "复制正文": "Copy message",
+  "正文已复制。": "Message copied.",
+  "剪贴板不可用或未获授权，请选择文字后手动复制。": "Clipboard access is unavailable or blocked. Select the text and copy it manually.",
   "浏览器无法保存本地状态。当前仍可使用，刷新后可能无法自动恢复；关闭前请复制未发送草稿。": "Browser storage is unavailable. You can keep working, but automatic recovery after reload may be unavailable. Copy unsent drafts before closing.",
   "无法保存显示设置，当前设置未改变。请检查浏览器存储权限后重试。": "Could not save display settings. The current settings are unchanged. Check browser storage permissions and retry.",
   "搜索正文": "Search story",

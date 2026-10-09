@@ -198,6 +198,40 @@ test('language: Gateway preview and web prompt remain identical', async ({ page,
   await expect(page.getByRole('region', { name: 'Web prompt', exact: true }).locator('pre')).toHaveText(prompt!);
   await expect(page.getByRole('dialog', { name: 'Prompt preview', exact: true })).toContainText('Context report');
 });
+test('message copy uses current edited text without saving or generating', async ({ page }) => {
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '这封信留在桌上。', 2);
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async (text: string) => { (window as any).__copiedMessage = text; },
+  } }));
+  const message = page.locator('article.message').last();
+  const body = message.getByRole('textbox', { name: 'AI 回复正文', exact: true });
+  const revised = '尚未保存的修改，包含换行。\nCopy only the visible prose.';
+  await body.fill(revised);
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && req.method() !== 'GET') writes++; });
+  await message.getByRole('button', { name: '复制正文', exact: true }).click();
+  await expect(page.locator('.banner').filter({ hasText: '正文已复制。' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__copiedMessage)).toBe(revised);
+  await expect(body).toHaveValue(revised);
+  expect(writes).toBe(0);
+});
+
+test('web copy without clipboard access keeps its draft and creates no User', async ({ page }) => {
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('复制失败时仍保留这份输入。');
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && req.method() !== 'GET') writes++; });
+  const web = page.getByRole('region', { name: '网页提示词', exact: true });
+  await web.getByRole('button', { name: '复制网页提示词并保存 User 输入', exact: true }).click();
+  await expect(web.getByRole('alert')).toContainText('请选择文字后手动复制');
+  await expect(page.locator('article.message')).toHaveCount(0);
+  await expect(input).toHaveValue('复制失败时仍保留这份输入。');
+  expect(writes).toBe(0);
+});
+
 test('web copy saves User and manual Assistant replies reappear in the next prompt', async ({ page, request }) => {
   const manualToggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
   await manualToggle.click();

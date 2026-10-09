@@ -2,7 +2,7 @@ import { countLabel, generationLabel, phaseLabel } from './ui-labels.js';
 import { t, formatDate, formatNumber, diagnosticText, type MessageKey } from './i18n.js';
 import { useLanguage } from './LanguageProvider.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine, Search } from 'lucide-react';
+import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine, Search, Copy } from 'lucide-react';
 import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
@@ -22,6 +22,7 @@ import AuthorNoteEditor from './AuthorNoteEditor.js';
 import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
 import { readAppearance, saveAppearance } from './appearance.js';
+import { copyText } from './clipboard.js';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
@@ -514,7 +515,7 @@ export default function App() {
     try {
       await flushContentEdits();
       if (chatRef.current !== preview.conversationId) throw new Error(t("聊天已切换，请重新预览。"));
-      await navigator.clipboard.writeText(preview.webPrompt);
+      await copyText(preview.webPrompt);
       copied = true;
       if (preview.input) {
         const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', { role: 'user', input: preview.input, head: preview.headMessageId });
@@ -853,6 +854,10 @@ export default function App() {
                         // Run the click before blur can move or replace the message controls.
                         if (document.activeElement?.closest('.prose')) event.preventDefault();
                       }}>
+                        <button onClick={event => {
+                          const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
+                          act(copyText(body?.value ?? m.content).then(() => setNotice(t('正文已复制。'))));
+                        }}><Copy size={12} />{t('复制正文')}</button>
                         {m.role !== 'system' && <button className={branch[historyStartPosition]?.id === m.id ? 'active' : ''} disabled={!!turn || sending}
                           title={t("包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整")}
                           onClick={() => act(setHistoryStart(branch[historyStartPosition]?.id === m.id ? null : m.id))}>
@@ -929,7 +934,7 @@ export default function App() {
                   <summary>{speakerName(output.speaker)}  {t("· 未完成片段（不参与剧情）")}</summary>
                   <pre>{output.text}</pre>
                   {output.thinking && <details><summary>{t("已返回的思考")}</summary><pre>{output.thinking}</pre></details>}
-                  <button onClick={() => act(navigator.clipboard.writeText(output.text))}>{t("复制片段")}</button>
+                  <button onClick={() => act(copyText(output.text))}>{t("复制片段")}</button>
                 </details>)}
               </div>}
               {!turn && lastTurn?.status === 'completed' && ['failed', 'cancelled'].includes(lastTurn.recordsStatus) && <small>{t("正文已完成；记录更新")}{lastTurn.recordsStatus === 'failed' ? t("失败") : t("已取消")}{t("，可在 Memory／状态面板重试。")}</small>}
@@ -1347,7 +1352,7 @@ export default function App() {
               <p className="muted">{t("身份：")}{promptPreview.pendingSelection ? t("待选择") : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)}  {t("· 主角：")}{promptPreview.personaName ?? t("未选择（请求使用 User）")}{promptPreview.clipped ? t(" · 已按上下文预算裁剪") : ''}</p>
               <p className="muted">{t("以下是发送边界捕获的首请求原始 JSON Body，未发送、未重新格式化。修改草稿、设置或聊天内容后请重新预览；Agent 后续请求可在 Trace 中查看。")}</p>
               <section className="prompt-json" aria-label="Raw input">
-                <header><strong>{t("Raw input · 首请求 Body")}</strong><button onClick={() => act(navigator.clipboard.writeText(promptPreview.requestBody))}>{t("复制原始 Body")}</button></header>
+                <header><strong>{t("Raw input · 首请求 Body")}</strong><button onClick={() => act(copyText(promptPreview.requestBody))}>{t("复制原始 Body")}</button></header>
                 <pre tabIndex={0}>{promptPreview.requestBody}</pre>
               </section>
               <section className="prompt-json" aria-label={t("网页提示词")}>
