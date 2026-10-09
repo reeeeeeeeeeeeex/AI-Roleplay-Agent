@@ -30,6 +30,8 @@ function StateCheckpoint({ chatId, item, disabled, onRestore, onError }: {
 
 export default function RecordHistory({ chatId, tab, version, disabled, onChanged, onError }: { chatId: string; tab: string; version: number; disabled: boolean; onChanged: () => void; onError: (error: string) => void }) {
   const [history, setHistory] = useState<any[]>([]), [busy, setBusy] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(100);
+  useEffect(() => { setVisibleCount(100); }, [chatId, tab]);
   useEffect(() => {
     let active = true; setHistory([]);
     if (tab !== 'state' && tab !== 'planner') return;
@@ -39,9 +41,11 @@ export default function RecordHistory({ chatId, tab, version, disabled, onChange
   if (!history.length) return null;
   // State snapshots arrive newest first; planner events arrive oldest first.
   const recent = tab === 'state' ? history : [...history].reverse();
-  return <details><summary>{tab === 'state' ? t("状态检查点") : t("Planner / 路由历史")} · {formatNumber(history.length)}</summary>{recent.slice(0, 100).map(item => tab === 'state'
+  return <details><summary>{tab === 'state' ? t("状态检查点") : t("Planner / 路由历史")} · {formatNumber(history.length)}</summary>{recent.slice(0, visibleCount).map(item => tab === 'state'
     ? <StateCheckpoint key={item.id} chatId={chatId} item={item} disabled={disabled || busy} onError={onError} onRestore={() => {
       void flushContentEdits().then(async () => { setBusy(true); await api(`/conversations/${chatId}/state/restore`, 'POST', { snapshotId: item.id }); onChanged(); }).catch(error => onError(error.message)).finally(() => setBusy(false));
     }} />
-    : <details key={item.id}><summary>{formatDate(item.createdAt)} {item.type ?? ''}</summary><pre>{JSON.stringify(item.payload, null, 2)}</pre></details>)}</details>;
+    : <details key={item.id}><summary>{formatDate(item.createdAt)} {item.type ?? ''}</summary><pre>{JSON.stringify(item.payload, null, 2)}</pre></details>)}
+    {recent.length > visibleCount && <button onClick={() => setVisibleCount(count => count + 100)}>{t("显示更早记录（还有 {0} 条）", formatNumber(recent.length - visibleCount))}</button>}
+  </details>;
 }

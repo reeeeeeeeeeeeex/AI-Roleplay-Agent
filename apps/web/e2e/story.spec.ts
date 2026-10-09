@@ -37,13 +37,15 @@ async function englishInterface(page: Page) {
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
 }
 
-test('state history keeps the newest checkpoint visible and restorable after its display limit', async ({ page, request }, info) => {
+test('state history loads older checkpoints on demand without replacing open details', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
   const state = await (await request.get(`/api/conversations/${chat.id}/state`)).json();
+  state.tables.global_state[0].current_location = 'Oldest checkpoint';
+  const oldest = await (await request.post(`/api/conversations/${chat.id}/state`, { data: state })).json();
   state.tables.global_state[0].current_location = 'Newest checkpoint';
   const newest = await (await request.post(`/api/conversations/${chat.id}/state`, { data: state })).json();
-  const history = [{ id: newest.id, createdAt: newest.createdAt }, ...Array.from({ length: 100 }, (_, i) => ({ id: `older-${i}`, createdAt: newest.createdAt }))];
+  const history = [{ id: newest.id, createdAt: newest.createdAt }, ...Array.from({ length: 99 }, (_, i) => ({ id: `older-${i}`, createdAt: newest.createdAt })), { id: oldest.id, createdAt: oldest.createdAt }];
   await page.route(`**/api/conversations/${chat.id}/state/history?view=summary`, route => route.fulfill({ json: history }));
   let detailRequests = 0;
   page.on('request', req => { if (req.url().includes(`/conversations/${chat.id}/state/history/`)) detailRequests++; });
@@ -60,10 +62,17 @@ test('state history keeps the newest checkpoint visible and restorable after its
   await checkpoints.first().locator('summary').click();
   await expect(checkpoints.first().locator('pre')).toBeVisible();
   expect(detailRequests).toBe(1);
+  await panel.getByRole('button', { name: '显示更早记录（还有 1 条）', exact: true }).click();
+  await expect(checkpoints).toHaveCount(101);
+  await expect(checkpoints.first().locator('pre')).toBeVisible();
+  expect(detailRequests).toBe(1);
+  await checkpoints.last().locator('summary').click();
+  await expect(checkpoints.last().locator('pre')).toContainText('Oldest checkpoint');
+  expect(detailRequests).toBe(2);
   const restored = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith('/state/restore'));
-  await checkpoints.first().getByRole('button', { name: '恢复为新检查点', exact: true }).click();
-  expect((await restored).postDataJSON()).toEqual({ snapshotId: newest.id });
-  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).id).not.toBe(newest.id);
+  await checkpoints.last().getByRole('button', { name: '恢复为新检查点', exact: true }).click();
+  expect((await restored).postDataJSON()).toEqual({ snapshotId: oldest.id });
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0].current_location).toBe('Oldest checkpoint');
 });
 
 async function enableUpdateNotification(page: Page) {

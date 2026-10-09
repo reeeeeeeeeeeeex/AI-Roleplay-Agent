@@ -69,6 +69,8 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 导出的 Markdown 和故事包文件名包含故事标题及短编号，方便辨认不同故事和分支。导出前会先保存正在编辑的正文；保存失败时保留草稿并停止导出。
 
+状态检查点和 Planner 历史先显示最近 100 项，点击「显示更早记录」可继续查看。状态表在展开检查点时才读取，旧检查点可恢复为一份新记录。
+
 点击聊天顶部的搜索按钮，或按 **Ctrl / ⌘ + F**，可以查找当前分支已保存的全部正文，包括尚未显示的早期消息。使用上下箭头或 Enter／Shift+Enter 切换匹配消息，Esc 关闭；搜索只定位阅读位置，不改变故事进度。
 
 导入 SillyTavern 数据时，请填写自己的数据目录；也可通过 `SILLYTAVERN_DATA_PATH` 设置默认路径。
@@ -161,6 +163,8 @@ Filter story and resource lists by name or title. Clear the filter or press Esc 
 Use the search button above the chat or **Ctrl / ⌘ + F** to find saved story text across the current branch, including older messages outside the displayed window. Move between matching messages with the arrows or Enter / Shift+Enter, and close with Esc. Searching changes only the reading position, not story progress.
 
 Exported Markdown and story packages include the story title and a short ID in their filenames to distinguish stories and branches. Pending content edits are saved before exporting; a failed save keeps the draft and stops the export.
+
+State checkpoints and Planner history initially show the latest 100 entries. Use **Show earlier records** to see older entries. State tables load when you expand a checkpoint; restoring an earlier checkpoint creates a new record.
 
 To import SillyTavern data, enter your own data directory. You can optionally set its default with `SILLYTAVERN_DATA_PATH`.
 
