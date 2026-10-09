@@ -53,7 +53,11 @@ export default function Records({
   const [proposals, setProposals] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [facts, setFacts] = useState<PinnedFact[]>([]);
-  const selectedMemory = memorySection ?? memory.at(-1)?.id ?? 'facts';
+  const [loadedHead, setLoadedHead] = useState<string | null>();
+  const [loading, setLoading] = useState(true);
+  const ready = loadedHead === chat.headMessageId;
+  const selectedMemory = memorySection === 'facts' || memorySection === 'new' || memory.some(entry => entry.id === memorySection)
+    ? memorySection : memory.at(-1)?.id ?? 'facts';
 
   useEffect(() => { setExpanded(false); }, [chat.id]);
   useEffect(() => {
@@ -67,6 +71,7 @@ export default function Records({
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
     void Promise.all([
       api(`/conversations/${chat.id}/memory`),
       api(`/conversations/${chat.id}/state`),
@@ -79,15 +84,17 @@ export default function Records({
           setState(s);
           setProposals(p);
           setFacts(f);
+          setLoadedHead(chat.headMessageId);
         }
       })
       .catch((error: Error) => {
         if (active) onError(error.message);
-      });
+      })
+      .finally(() => { if (active) setLoading(false); });
     return () => {
       active = false;
     };
-  }, [chat.id, version]);
+  }, [chat.id, chat.headMessageId, version]);
 
   async function run(path: string, value: unknown = {}, method = 'POST') {
     try {
@@ -137,7 +144,7 @@ export default function Records({
       </nav>
 
       <div className={`records-layout${tab === 'planner' ? ' records-agent-layout' : ''}`}>
-        {expanded && tab === 'memory' && <nav className="records-section-nav" aria-label={t("Memory 记录导航")}>
+        {expanded && ready && tab === 'memory' && <nav className="records-section-nav" aria-label={t("Memory 记录导航")}>
           <button className={selectedMemory === 'facts' ? 'selected' : ''} onClick={() => setMemorySection('facts')}><strong>{t("固定事实")}</strong><small>{t("仅由你维护 ·")} {facts.length}  {t("条")}</small></button>
           {[...memory].reverse().map(entry => <button key={entry.id} className={selectedMemory === entry.id ? 'selected' : ''} onClick={() => setMemorySection(entry.id)}>
             <strong>{t("阶段 {0}", entry.stage)}</strong><small>{String(entry.content).trim().slice(0, 60) || t("空记忆标记")}</small>
@@ -145,13 +152,14 @@ export default function Records({
           {!memory.length && <p className="muted">{t("尚无 Memory 记录。")}</p>}
           <button className={selectedMemory === 'new' ? 'selected' : ''} onClick={() => setMemorySection('new')}>{t("手动添加记录")}</button>
         </nav>}
-        {expanded && tab === 'state' && <nav className="records-section-nav" aria-label={t("主角状态表导航")}>
+        {expanded && ready && tab === 'state' && <nav className="records-section-nav" aria-label={t("主角状态表导航")}>
           {Object.entries(state.tables ?? {}).map(([table, rows]) => <button key={table} className={stateSection === table ? 'selected' : ''} onClick={() => setStateSection(table)}>
             <strong>{tableNames[table] ?? table}</strong><small>{(rows as any[]).length}  {t("条记录")}</small>
           </button>)}
         </nav>}
       <div className={`records-content${tab === 'planner' ? ' records-agent-content' : ''}`}>
-        {tab === 'memory' && (
+        {!ready && loading && <p className="muted" role="status">{t("正在读取记录…")}</p>}
+        {ready && tab === 'memory' && (
           <>
             <details open hidden={expanded && selectedMemory !== 'facts'}>
               <summary>{t("固定事实 · 仅由你修改")}</summary>
@@ -191,7 +199,7 @@ export default function Records({
           </>
         )}
 
-        {tab === 'state' && (
+        {ready && tab === 'state' && (
           <>
             <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/state/generate`)}>{t("AI 更新")}</button>
             {Object.entries(state.tables ?? {}).map(([table, rows]) => (
@@ -227,7 +235,7 @@ export default function Records({
         <div className="records-agent-view" hidden={tab !== 'planner'}>
           <AgentTrace key={chat.id} chatId={chat.id} version={version} activeTurnId={activeTurnId} expanded={expanded} visible={tab === 'planner'} onError={onError}>
             <h3 className="planner-status">{generationMode === 'plain' ? t("普通写作") : generationMode === 'planner' ? 'Planner → Writer' : t("统一 Writer Agent")}</h3>
-            {proposals.map((p) => (
+            {ready && proposals.map((p) => (
               <article className="proposal" key={p.id}>
                 <small className="muted">{p.kind === 'state' ? t("状态提案") : t("世界事件")} · {proposalLabel(p.status)}</small>
                 <pre>{JSON.stringify(p.payload, null, 2)}</pre>
@@ -241,11 +249,12 @@ export default function Records({
               </article>
             ))}
             {activity.length > 0 && <details className="activity"><summary>{t("当前回合事件 · 最近 80 条")}</summary><pre>{JSON.stringify(activity, null, 2)}</pre></details>}
-            {tab === 'planner' && <RecordHistory chatId={chat.id} tab={tab} version={version} disabled={disabled || busy} onChanged={onChanged} onError={onError} />}
+            {ready && tab === 'planner' && <RecordHistory key={chat.headMessageId} chatId={chat.id} tab={tab} version={version} disabled={disabled || busy} onChanged={onChanged} onError={onError} />}
           </AgentTrace>
         </div>
 
-        {tab !== 'planner' && <RecordHistory
+        {ready && tab !== 'planner' && <RecordHistory
+          key={chat.headMessageId}
           chatId={chat.id}
           tab={tab}
           version={version}

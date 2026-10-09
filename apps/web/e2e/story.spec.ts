@@ -85,6 +85,61 @@ async function enableUpdateNotification(page: Page) {
   await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
 }
 
+test('record inspector keeps its Agent tab and expanded window when a reply finishes', async ({ page }) => {
+  let release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/turns/*/events?*', async route => { await waiting; await route.continue(); });
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  await page.getByRole('button', { name: /^跟随最新/ }).click();
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('Keep the inspector open.');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '展开记录窗口', exact: true }).click();
+    const inspector = page.getByRole('dialog', { name: '故事记录窗口', exact: true });
+    await expect(inspector).toBeVisible(); release();
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0);
+    await expect(inspector).toBeVisible();
+    await expect(inspector.getByRole('button', { name: 'Agent', exact: true })).toHaveClass('active');
+    await expect(inspector.getByRole('button', { name: /^跟随最新/ })).not.toHaveClass('active');
+    await expect(inspector.getByRole('region', { name: 'Agent Trace', exact: true })).toBeVisible();
+  } finally { release(); }
+});
+
+test('state inspector keeps its tab and waits for the selected message version records', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const original = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
+    role: 'assistant', head: null, speaker: { kind: 'character', characterId: chat.characterId }, text: 'Original path.',
+  } })).json();
+  await expect.poll(async () => (await (await request.get(`/api/turns/${original.turn.id}`)).json()).recordsStatus).not.toBe('running');
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { global_state: [{ row_id: 1, current_location: 'Original location' }] } } });
+  const revised = await request.post(`/api/messages/${original.message.id}/edit`, { data: { content: 'Revised path.', previous: 'Original path.' } });
+  expect(revised.ok()).toBe(true);
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { global_state: [{ row_id: 1, current_location: 'Revised location' }] } } });
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  const location = page.getByRole('textbox', { name: '全局状态 1 当前地点', exact: true });
+  await expect(location).toHaveValue('Revised location');
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  await page.route(`**/api/conversations/${chat.id}/state`, async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch(); captured(); await waiting; await route.fulfill({ response });
+  });
+  try {
+    await page.getByTitle('上一个版本', { exact: true }).click(); await ready;
+    await expect(page.getByRole('button', { name: '主角状态', exact: true })).toHaveClass('active');
+    await expect(location).toHaveCount(0);
+    release();
+    await expect(location).toHaveValue('Original location');
+    await location.fill('Edited original location'); await location.blur();
+    await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0].current_location).toBe('Edited original location');
+  } finally { release(); }
+});
+
 test('reopening the current story keeps its active reply', async ({ page }, info) => {
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
