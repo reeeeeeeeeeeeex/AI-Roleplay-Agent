@@ -130,7 +130,16 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return { models: await listModels({ ...input, apiKey: input.apiKey || (sameEndpoint ? saved.apiKey : ''),
       headers: Object.fromEntries(Object.entries(input.headers).map(([key, value]) => [key, value === '[stored]' && sameEndpoint ? saved.headers[key] ?? '' : value])) }) };
   });
-  app.get('/api/conversations/:id/messages', async (req) => ({ branch: repo.getActiveBranch(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })), nodes: repo.listMessages(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })) }));
+  app.get('/api/conversations/:id/messages', async req => {
+    const { view } = z.object({ view: z.enum(['full', 'chat']).default('full') }).parse(req.query);
+    const nodes = repo.listMessages(idOf(req));
+    return {
+      branch: repo.getActiveBranch(idOf(req), undefined, nodes).map(m => ({ ...m, providerState: null, legacyPayload: null })),
+      nodes: nodes.map(m => view === 'chat'
+        ? { id: m.id, parentId: m.parentId, role: m.role, speaker: m.speaker, content: m.content.slice(0, 100) }
+        : { ...m, providerState: null, legacyPayload: null }),
+    };
+  });
   app.post('/api/conversations/:id/manual-messages', async (req, reply) => reply.code(201).send(turns.appendManual(idOf(req), manualMessageSchema.parse(req.body))));
   app.post('/api/conversations/:id/branches', async (req, reply) => {
     const chatId = idOf(req); turns.assertIdle(chatId);

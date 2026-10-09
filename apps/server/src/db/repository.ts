@@ -357,9 +357,9 @@ export class Repository {
   getMessage(messageId: string): MessageNode | null {
     const row = this.database.db.select().from(messages).where(eq(messages.id, messageId)).get(); return row ? mapMessage(row) : null;
   }
-  getActiveBranch(conversationId: string, headMessageId = this.getConversation(conversationId)?.headMessageId): MessageNode[] {
+  getActiveBranch(conversationId: string, headMessageId = this.getConversation(conversationId)?.headMessageId, nodes?: MessageNode[]): MessageNode[] {
     if (!headMessageId) return [];
-    const all = new Map(this.listMessages(conversationId).map((message) => [message.id, message]));
+    const all = new Map((nodes ?? this.listMessages(conversationId)).map((message) => [message.id, message]));
     const branch: MessageNode[] = []; let current = all.get(headMessageId);
     const visited = new Set<string>();
     while (current) { if (visited.has(current.id)) throw new AppError("Cycle in message branch."); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }

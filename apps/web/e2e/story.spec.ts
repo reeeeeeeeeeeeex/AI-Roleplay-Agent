@@ -493,6 +493,25 @@ test('replacing a persona image preserves the original 20 MB file', async ({ pag
   expect((await imageResponse.body()).equals(image)).toBe(true);
 });
 
+test('switching versions reloads complete prose from compact navigation', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const original = '原本的完整正文。'.repeat(40) + '原文末尾。';
+  const replacement = '修改后的完整正文。'.repeat(40) + '修改后的末尾。';
+  const saved = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: null, speaker: { kind: 'narrator' }, text: original } });
+  expect(saved.status()).toBe(201);
+  const { message } = await saved.json();
+  const edited = await request.post(`/api/messages/${message.id}/edit`, { data: { content: replacement, previous: original, head: message.id } });
+  expect(edited.ok()).toBe(true);
+  await page.reload();
+  const body = page.locator('article.message textarea');
+  await expect(body).toHaveValue(replacement);
+  await page.getByTitle('上一个版本', { exact: true }).click();
+  await expect(body).toHaveValue(original);
+  await page.getByTitle('下一个版本', { exact: true }).click();
+  await expect(body).toHaveValue(replacement);
+});
+
 test('global send count and fixed message start control the raw prompt range', async ({ page }) => {
   await send(page, '仅早期历史包含蓝色车票。', 3);
   await send(page, '现在进入旧书店。', 6);

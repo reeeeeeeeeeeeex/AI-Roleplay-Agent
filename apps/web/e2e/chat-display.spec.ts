@@ -19,7 +19,7 @@ async function openHistory(page: Page, request: APIRequestContext, limit?: numbe
     generationInfo: index % 2 && !avatar ? { mode: 'plain', model: 'offline-fixture', streaming: true, requestCount: 1, thinking: '模型返回的可见思考。', usage: null, timing: null } : null,
     providerState: null, legacyPayload: null, createdAt: '2026-09-29T12:00:00.000Z',
   }));
-  await page.route(`**/api/conversations/${chat.id}/messages`, route => route.fulfill({ json: { branch: messages, nodes: messages } }));
+  await page.route(`**/api/conversations/${chat.id}/messages*`, route => route.fulfill({ json: { branch: messages, nodes: messages } }));
   await page.addInitScript(({ chatId, initialLimit }) => {
     localStorage.setItem('selected-chat', chatId);
     if (initialLimit && !localStorage.getItem('chat-message-display-limit')) localStorage.setItem('chat-message-display-limit', String(initialLimit));
@@ -94,7 +94,7 @@ test('story search is literal, stays inside a narrow screen and preserves the dr
   messages[0]!.content = 'Beside the [Northern Gate].';
   messages[119]!.content = 'Back to the [northern gate].';
   const chatId = messages[0]!.conversationId;
-  await page.route(`**/api/conversations/${chatId}/messages`, route => route.fulfill({ json: {
+  await page.route(`**/api/conversations/${chatId}/messages*`, route => route.fulfill({ json: {
     branch: messages, nodes: [...messages, { ...messages[119], id: 'hidden-version', content: 'A hidden [northern gate] version.' }],
   } }));
   await page.reload();
@@ -359,7 +359,7 @@ test('opening and reentering a conversation starts at its latest message', async
     await route.fulfill({ response });
   });
   // History can arrive before the conversation data mounts the scroll container.
-  const historyResponse = page.waitForResponse(/\/api\/conversations\/[^/]+\/messages$/);
+  const historyResponse = page.waitForResponse(/\/api\/conversations\/[^/]+\/messages(?:\?|$)/);
   const opening = openHistory(page, request, 20);
   await (await historyResponse).finished();
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));

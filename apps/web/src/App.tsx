@@ -3,7 +3,7 @@ import { t, formatDate, formatNumber, diagnosticText, type MessageKey } from './
 import { useLanguage } from './LanguageProvider.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine, Search, Copy } from 'lucide-react';
-import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
+import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type MessageSummary, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';
@@ -54,7 +54,7 @@ export default function App() {
 
   const [page, setPage] = useState<'chat' | Collection | 'import'>('chat');
   const [branch, setBranch] = useState<MessageNode[]>([]);
-  const [nodes, setNodes] = useState<MessageNode[]>([]);
+  const [nodes, setNodes] = useState<MessageSummary[]>([]);
   const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
   const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
@@ -148,7 +148,7 @@ export default function App() {
   };
 
   const messageIndex = useMemo(() => {
-    const siblings = new Map<string, MessageNode[]>();
+    const siblings = new Map<string, MessageSummary[]>();
     const parents = new Set(nodes.map(node => node.parentId));
     for (const node of nodes) {
       const key = `${node.parentId}:${node.role}`;
@@ -221,7 +221,10 @@ export default function App() {
   }
 
   async function refreshMessages(id: string) {
-    const [value, latest] = await Promise.all([api(`/conversations/${id}/messages`), api(`/conversations/${id}/last-turn`)]);
+    const [value, latest] = await Promise.all([
+      api<{ branch: MessageNode[]; nodes: MessageSummary[] }>(`/conversations/${id}/messages?view=chat`),
+      api(`/conversations/${id}/last-turn`),
+    ]);
     if (chatRef.current === id) {
       setBranch(value.branch);
       setNodes(value.nodes);
@@ -359,7 +362,7 @@ export default function App() {
     const draft = choiceText ?? (voice === 'assistant' ? '' : text);
     if (trigger === 'normal' && !draft.trim()) {
       // Read after autosave: editing a message can replace the branch head.
-      const { branch: current } = await api<{ branch: MessageNode[] }>(`/conversations/${chat!.id}/messages`);
+      const { branch: current } = await api<{ branch: MessageNode[] }>(`/conversations/${chat!.id}/messages?view=chat`);
       const last = current.at(-1);
       if (last?.role === 'user') targetMessageId = last.id;
       else trigger = 'auto';

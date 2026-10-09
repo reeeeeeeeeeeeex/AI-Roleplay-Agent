@@ -387,6 +387,9 @@ export interface MessageNode {
   createdAt: string;
 }
 
+/** Navigation only: content is a short display snippet, never a prompt source. */
+export type MessageSummary = Pick<MessageNode, 'id' | 'parentId' | 'role' | 'speaker' | 'content'>;
+
 export interface AgentUsage {
   input: number;
   output: number;
