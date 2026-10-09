@@ -47,6 +47,26 @@ async function enableUpdateNotification(page: Page) {
   await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
 }
 
+test('reopening the current story keeps its active reply', async ({ page }, info) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/turns/*/events?*', async route => { await pending; await route.continue(); });
+  let cancelled = 0;
+  page.on('request', request => { if (request.method() === 'POST' && /\/turns\/[^/]+\/cancel$/.test(request.url())) cancelled++; });
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('继续读完这封信。');
+    const eventRequest = page.waitForRequest(request => /\/turns\/[^/]+\/events\?/.test(request.url()));
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await eventRequest;
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible();
+    await page.locator('.story-list button').filter({ hasText: `Browser ${info.title}` }).click();
+    release();
+    await expect(page.locator('article.message:not(.streaming)')).toHaveCount(3);
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0);
+    expect(cancelled).toBe(0);
+  } finally { release(); }
+});
+
 test('connection copy opens a separate editable model without exposing its saved key', async ({ page, request }) => {
   const created = await request.post('/api/connections', { data: {
     name: 'Copy source', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1',

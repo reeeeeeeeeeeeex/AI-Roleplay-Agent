@@ -295,13 +295,15 @@ export default function App() {
 
   async function selectChat(id: string, flush = true) {
     if (flush) await flushContentEdits();
-    editedMessageIds.current.clear();
-    if (turn) {
-      await api(`/turns/${turn.id}/cancel`, 'POST', {});
-      streamAbort.current?.abort();
-      setTurn(null);
+    if (id !== chatRef.current) {
+      editedMessageIds.current.clear();
+      if (turn) {
+        await api(`/turns/${turn.id}/cancel`, 'POST', {});
+        streamAbort.current?.abort();
+        setTurn(null);
+      }
+      setChatId(id);
     }
-    setChatId(id);
     setPage('chat');
     setMobileNav(false);
   }
