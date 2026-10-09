@@ -666,6 +666,24 @@ test('global send count and fixed message start control the raw prompt range', a
   expect(await preview()).not.toContain('蓝色车票');
 });
 
+test('writing drafts survive saving model settings without reverting them', async ({ page, request }) => {
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  const protectedPrompt = settings.getByRole('textbox', { name: '保护主角提示词', exact: true });
+  const draft = `${await protectedPrompt.inputValue()}\n保留这份尚未保存的写作草稿。`;
+  await protectedPrompt.fill(draft);
+  await settings.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('none');
+  await settings.getByRole('button', { name: '模型', exact: true }).click();
+  await settings.getByRole('checkbox', { name: '流式传输', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('流式传输已关闭');
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  await expect(protectedPrompt).toHaveValue(draft);
+  await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('none');
+  await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('写作设置已保存');
+  expect(await (await request.get('/api/settings/general')).json()).toMatchObject({ streaming: false, agencyMode: 'none', agencyPrompts: { protected: draft } });
+});
+
 test('prompt presets load drafts and only apply after saving, preserving failed edits', async ({ page, request }) => {
   const active = await (await request.get('/api/settings/prompts')).json();
   const created = await request.post('/api/settings/prompt-presets', { data: { name: '浏览器预设', prompts: { ...active, additionalInstruction: '来自预设的附加指令' } } });

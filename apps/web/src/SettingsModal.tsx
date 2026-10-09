@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { X, Plus } from 'lucide-react';
 import { defaultAgencyPrompts, defaultPromptSettings, type GeneralSettings, type PromptSettings, type PromptPreset } from '@new-ai-chat/contracts';
 import { api } from './api';
@@ -42,6 +42,7 @@ export default function SettingsModal({
   const [languageDraft, setLanguageDraft] = useState(locale);
   const [tab, setTab] = useState('language');
   const [writing, setWriting] = useState(generalSettings);
+  const writingBaseline = useRef(generalSettings);
   const [prompts, setPrompts] = useState(promptSettings);
   const [promptBaseline, setPromptBaseline] = useState(promptSettings);
   const [presets, setPresets] = useState<PromptPreset[] | null>(null);
@@ -52,7 +53,13 @@ export default function SettingsModal({
   const [notice, setNotice] = useState('');
   const [displayLimitDraft, setDisplayLimitDraft] = useState(String(messageDisplayLimit));
   const [readingDraft, setReadingDraft] = useState(readingAppearance);
-  useEffect(() => { setWriting(generalSettings); }, [generalSettings]);
+  useEffect(() => {
+    const previous = writingBaseline.current;
+    writingBaseline.current = generalSettings;
+    // Immediate model controls must not replace unsaved writing edits.
+    setWriting(draft => ({ ...generalSettings, ...Object.fromEntries(Object.entries(draft)
+      .filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(previous[key as keyof GeneralSettings]))) }));
+  }, [generalSettings]);
   useEffect(() => {
     if (tab !== 'prompts') return;
     let active = true;
