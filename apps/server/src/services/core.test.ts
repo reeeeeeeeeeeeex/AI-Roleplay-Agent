@@ -81,6 +81,33 @@ it('shutdown aborts active generation before waiting for its open SSE connection
   }
 });
 
+it('shutdown cancels manual record requests and discards late model results', async () => {
+  let started!: () => void, finish!: () => void, aborted = false;
+  const running = new Promise<void>(resolve => { started = resolve; });
+  runtime.maintain = async request => new Promise<string>(resolve => {
+    finish = () => resolve(JSON.stringify([{ op: 'updateRow', table: 'global_state', rowId: 1, cells: { current_location: 'Late result' } }]));
+    request.signal.addEventListener('abort', () => { aborted = true; finish(); }, { once: true });
+    started();
+  });
+  const address = await server.listen();
+  const response = fetch(`${address}/api/conversations/${chat}/state/generate`, { method: 'POST', headers: { connection: 'close' } });
+  let closing: Promise<void> | undefined;
+  try {
+    await running;
+    closing = server.app.close();
+    await vi.waitFor(() => expect(aborted).toBe(true), { timeout: 800 });
+    expect((await response).status).toBeGreaterThanOrEqual(400);
+    await closing;
+    expect(server.app.server.listening).toBe(false);
+    server = await createApp(server.config, runtime);
+    expect(server.repository.latestState(chat)).toBeNull();
+  } finally {
+    finish?.();
+    await response;
+    await (closing ?? server.app.close());
+  }
+});
+
 it('local image caching keeps uploaded replacements at distinct URLs', async () => {
   const original = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('original-image-fixture')]);
   const upload = await server.app.inject({ method: 'POST', url: '/api/assets/upload', headers: { 'content-type': 'application/octet-stream' }, payload: original });
