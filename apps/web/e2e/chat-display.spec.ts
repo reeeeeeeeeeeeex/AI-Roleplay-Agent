@@ -69,9 +69,14 @@ async function insideViewport(page: Page, locator: Locator) {
 test('story search reveals older messages and navigates saved prose only', async ({ page, request }) => {
   await openHistory(page, request, 10);
   await expect(page.locator('#message-display-0')).toHaveCount(0);
-  await page.getByRole('button', { name: '搜索正文', exact: true }).click();
+  await page.keyboard.press('Control+f');
   const search = page.getByRole('searchbox', { name: '搜索当前分支正文' });
+  await expect(search).toBeFocused();
   await search.fill('用户消息');
+  await page.getByRole('textbox', { name: '输入消息', exact: true }).focus();
+  await page.keyboard.press('Control+f');
+  await expect(search).toBeFocused();
+  expect(await search.evaluate(input => [(input as HTMLInputElement).selectionStart, (input as HTMLInputElement).selectionEnd])).toEqual([0, 4]);
   await expect(page.getByRole('search').getByRole('status')).toHaveText('1 / 60 条消息');
   await expect(page.locator('#message-display-0')).toHaveClass(/search-match/);
   await expect.poll(() => page.locator('#message-display-0').evaluate(element => Math.abs(element.getBoundingClientRect().top - document.querySelector('.messages')!.getBoundingClientRect().top - 12))).toBeLessThan(2);
@@ -85,6 +90,19 @@ test('story search reveals older messages and navigates saved prose only', async
   await expect(page.getByRole('search').getByRole('status')).toHaveText('0 / 0 条消息');
   await expect(page.getByRole('button', { name: '下一条匹配消息' })).toBeDisabled();
   await expect(page.locator('.search-match')).toHaveCount(0);
+});
+
+test('story search shortcut leaves modal Find behavior available', async ({ page, request }) => {
+  await openHistory(page, request, 10);
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const prevented = await page.evaluate(() => {
+    const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    document.activeElement!.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(prevented).toBe(false);
+  await expect(page.getByRole('dialog', { name: '设置 / Settings', exact: true })).toBeVisible();
+  await expect(page.getByRole('search')).toHaveCount(0);
 });
 
 test('story search is literal, stays inside a narrow screen and preserves the draft', async ({ page, request }) => {

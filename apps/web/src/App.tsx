@@ -125,6 +125,7 @@ export default function App() {
   const [showSearch, setShowSearch] = useState(false);
   const [searchMatchId, setSearchMatchId] = useState<string | null>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   useEffect(() => { setShowSearch(false); setSearchMatchId(null); }, [chatId]);
   function closeSearch() {
     setShowSearch(false); setSearchMatchId(null); searchButton.current?.focus();
@@ -175,6 +176,19 @@ export default function App() {
   }, [branch]);
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
+  useEffect(() => {
+    if (page !== 'chat' || !chat) return;
+    const find = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.key.toLowerCase() !== 'f' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      // Keep browser Find available in settings, previews, and record editors.
+      if (document.querySelector('[aria-modal="true"]') || document.activeElement?.closest('.records')) return;
+      event.preventDefault();
+      setShowSearch(true);
+      searchInput.current?.focus(); searchInput.current?.select();
+    };
+    window.addEventListener('keydown', find);
+    return () => window.removeEventListener('keydown', find);
+  }, [page, chat?.id]);
   const relatedBranches = (data.conversations ?? []).filter(item => item.id === chatId || (chat?.branchGroupId && item.branchGroupId === chat.branchGroupId));
   const historyStart = nodes.find(message => message.id === chat?.historyStartMessageId);
   const historyStartPosition = historyStart ? historyStartIndex(branch, historyStart) : -1;
@@ -789,7 +803,7 @@ export default function App() {
                   <BookOpen size={14} />
                   <span>{t("故事资料")}</span>
                 </button>
-                <button ref={searchButton} title={t('搜索正文')} aria-label={t('搜索正文')} aria-expanded={showSearch}
+                <button ref={searchButton} title={t('搜索正文（Ctrl / ⌘ + F）')} aria-label={t('搜索正文')} aria-keyshortcuts="Control+f Meta+f" aria-expanded={showSearch}
                   onClick={() => showSearch ? closeSearch() : setShowSearch(true)}><Search size={14} /></button>
                 <button title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
                 <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => setPanel(!panel)}>
@@ -841,7 +855,7 @@ export default function App() {
             </div>
 
             <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
-            {showSearch && <MessageSearch key={chat.id} messages={branch} onClose={closeSearch}
+            {showSearch && <MessageSearch key={chat.id} inputRef={searchInput} messages={branch} onClose={closeSearch}
               onMatch={id => { setSearchMatchId(id); if (id) scrollToMessage(id); }} />}
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">
               <span>{historyStartPosition < 0 ? t("固定发送起点不在当前分支，请重新选择或取消。") : t("已固定发送起点 · 从此处起 {0} 条消息，后续持续追加", branch.slice(historyStartPosition).filter(message => message.role !== 'system').length)}</span>

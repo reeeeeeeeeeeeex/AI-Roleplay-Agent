@@ -67,7 +67,7 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 故事和资料列表可按名称或标题筛选；清除筛选或按 Esc 即可恢复完整列表。
 
-聊天顶部的搜索按钮可以查找当前分支已保存的全部正文，包括尚未显示的早期消息。使用上下箭头或 Enter／Shift+Enter 切换匹配消息，Esc 关闭；搜索只定位阅读位置，不改变故事进度。
+点击聊天顶部的搜索按钮，或按 **Ctrl / ⌘ + F**，可以查找当前分支已保存的全部正文，包括尚未显示的早期消息。使用上下箭头或 Enter／Shift+Enter 切换匹配消息，Esc 关闭；搜索只定位阅读位置，不改变故事进度。
 
 导入 SillyTavern 数据时，请填写自己的数据目录；也可通过 `SILLYTAVERN_DATA_PATH` 设置默认路径。
 
@@ -156,7 +156,7 @@ Composer drafts are saved in the current browser separately for each story and i
 
 Filter story and resource lists by name or title. Clear the filter or press Esc to return to the full list.
 
-Use the search button above the chat to find saved story text across the current branch, including older messages outside the displayed window. Move between matching messages with the arrows or Enter / Shift+Enter, and close with Esc. Searching changes only the reading position, not story progress.
+Use the search button above the chat or **Ctrl / ⌘ + F** to find saved story text across the current branch, including older messages outside the displayed window. Move between matching messages with the arrows or Enter / Shift+Enter, and close with Esc. Searching changes only the reading position, not story progress.
 
 To import SillyTavern data, enter your own data directory. You can optionally set its default with `SILLYTAVERN_DATA_PATH`.
 

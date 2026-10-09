@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { ArrowDown, ArrowUp, X } from 'lucide-react';
 import type { MessageNode } from '@new-ai-chat/contracts';
 import { t } from './i18n.js';
 import './message-search.css';
 
-export default function MessageSearch({ messages, onMatch, onClose }: {
-  messages: MessageNode[]; onMatch: (id: string | null) => void; onClose: () => void;
+export default function MessageSearch({ messages, onMatch, onClose, inputRef }: {
+  messages: MessageNode[]; onMatch: (id: string | null) => void; onClose: () => void; inputRef: Ref<HTMLInputElement>;
 }) {
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<string | null>(null);
@@ -30,7 +30,7 @@ export default function MessageSearch({ messages, onMatch, onClose }: {
     if (event.nativeEvent.isComposing) return;
     if (event.key === 'Escape') { event.preventDefault(); onClose(); }
   }}>
-    <input type="search" autoFocus aria-label={t('搜索当前分支正文')} placeholder={t('搜索当前分支正文')}
+    <input ref={inputRef} type="search" autoFocus aria-label={t('搜索当前分支正文')} placeholder={t('搜索当前分支正文')}
       title={t('搜索已保存的正文；Enter 下一条，Shift+Enter 上一条。')} value={query}
       onChange={event => { setQuery(event.target.value); setChosen(null); }}
       onKeyDown={event => {

@@ -18,6 +18,7 @@ export const english = {
   "浏览器无法保存本地状态。当前仍可使用，刷新后可能无法自动恢复；关闭前请复制未发送草稿。": "Browser storage is unavailable. You can keep working, but automatic recovery after reload may be unavailable. Copy unsent drafts before closing.",
   "无法保存显示设置，当前设置未改变。请检查浏览器存储权限后重试。": "Could not save display settings. The current settings are unchanged. Check browser storage permissions and retry.",
   "搜索正文": "Search story",
+  "搜索正文（Ctrl / ⌘ + F）": "Search story (Ctrl / ⌘ + F)",
   "搜索当前分支正文": "Search this branch",
   "搜索已保存的正文；Enter 下一条，Shift+Enter 上一条。": "Search saved story text. Enter: next match. Shift+Enter: previous match.",
   "{0} / {1} 条消息": "{0} / {1} messages",
