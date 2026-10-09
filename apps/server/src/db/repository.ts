@@ -432,11 +432,13 @@ export class Repository {
     this.database.db.insert(turnTraces).values(row).run();
     return row as TurnTrace;
   }
-  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'events' | 'thinking' | 'usage' | 'timing' | 'error' | 'completedAt'>>): TurnTrace | null {
+  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'events' | 'thinking' | 'usage' | 'timing' | 'error' | 'completedAt'>>): void {
     const patch = { ...values, request: values.request === undefined ? undefined : this.traceSafe(values.request), response: values.response === undefined ? undefined : this.traceSafe(values.response), tools: values.tools === undefined ? undefined : this.traceSafe(values.tools) as unknown[], events: values.events === undefined ? undefined : this.traceSafe(values.events) as TurnTrace['events'] };
     this.database.db.update(turnTraces).set(patch).where(eq(turnTraces.id, traceId)).run();
-    const row = this.database.db.select().from(turnTraces).where(eq(turnTraces.id, traceId)).get();
-    return row ? row as TurnTrace : null;
+  }
+  getTraceMetadata(traceId: string) {
+    return this.database.db.select({ phase: turnTraces.phase, timing: turnTraces.timing, tools: turnTraces.tools })
+      .from(turnTraces).where(eq(turnTraces.id, traceId)).get() ?? null;
   }
   listTraces(turnId: string): TurnTrace[] {
     return this.database.db.select().from(turnTraces).where(eq(turnTraces.turnId, turnId)).orderBy(asc(turnTraces.requestIndex)).all() as TurnTrace[];

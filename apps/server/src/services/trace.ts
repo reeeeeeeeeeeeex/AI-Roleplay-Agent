@@ -34,11 +34,11 @@ export function createTraceSink(repository: Repository, broker: EventBroker, tur
     response(traceId, response) { repository.updateTrace(traceId, { response }); emit('trace.response', { traceId }); },
     thinking(traceId, thinking) { repository.updateTrace(traceId, { thinking }); },
     timing(traceId, timing) {
-      const current = repository.getTrace(traceId, true);
+      const current = repository.getTraceMetadata(traceId);
       if (current?.timing) repository.updateTrace(traceId, { timing: { ...current.timing, ...timing } });
     },
     tool(traceId, name, args, result, ok = true) {
-      const current = repository.getTrace(traceId, true);
+      const current = repository.getTraceMetadata(traceId);
       repository.updateTrace(traceId, { tools: [...(current?.tools as TurnTrace['tools'] ?? []), { name, arguments: args, result, ok }] });
       emit('tool.completed', { phase: current?.phase, traceId, name, args, ok });
     },
