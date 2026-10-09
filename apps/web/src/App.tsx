@@ -2,7 +2,7 @@ import { countLabel, generationLabel, phaseLabel } from './ui-labels.js';
 import { t, formatDate, formatNumber, diagnosticText, type MessageKey } from './i18n.js';
 import { useLanguage } from './LanguageProvider.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine } from 'lucide-react';
+import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine, Search } from 'lucide-react';
 import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
@@ -14,6 +14,7 @@ import StoryImport from './StoryImport.js';
 import InlineEdit from './InlineEdit.js';
 import SettingsModal, { type AvatarMode } from './SettingsModal.js';
 import MessageNavigation from './MessageNavigation.js';
+import MessageSearch from './MessageSearch.js';
 import { useChatWindow } from './useChatWindow.js';
 import ActionChoices from './ActionChoices.js';
 import AutoSaveField from './AutoSaveField.js';
@@ -96,6 +97,13 @@ export default function App() {
   const [personaCreateTarget, setPersonaCreateTarget] = useState<'global' | 'chat' | null>(null);
   const [showBranches, setShowBranches] = useState(false);
   const [showAuthorNote, setShowAuthorNote] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchMatchId, setSearchMatchId] = useState<string | null>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => { setShowSearch(false); setSearchMatchId(null); }, [chatId]);
+  function closeSearch() {
+    setShowSearch(false); setSearchMatchId(null); searchButton.current?.focus();
+  }
 
   // Appearance preferences are local to this browser.
   const [readingAppearance, setReadingAppearance] = useState(readAppearance);
@@ -704,6 +712,8 @@ export default function App() {
                   <BookOpen size={14} />
                   <span>{t("故事资料")}</span>
                 </button>
+                <button ref={searchButton} title={t('搜索正文')} aria-label={t('搜索正文')} aria-expanded={showSearch}
+                  onClick={() => showSearch ? closeSearch() : setShowSearch(true)}><Search size={14} /></button>
                 <button title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
                 <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => setPanel(!panel)}>
                   {panel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
@@ -750,6 +760,8 @@ export default function App() {
             </div>
 
             <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
+            {showSearch && <MessageSearch key={chat.id} messages={branch} onClose={closeSearch}
+              onMatch={id => { setSearchMatchId(id); if (id) scrollToMessage(id); }} />}
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">
               <span>{historyStartPosition < 0 ? t("固定发送起点不在当前分支，请重新选择或取消。") : t("已固定发送起点 · 从此处起 {0} 条消息，后续持续追加", branch.slice(historyStartPosition).filter(message => message.role !== 'system').length)}</span>
               {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>{t("查看起点")}</button>}
@@ -779,7 +791,7 @@ export default function App() {
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
-                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={messageRenderKey(m.id)} id={`message-${m.id}`} data-message-id={m.id}>
+                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''} ${m.id === searchMatchId ? 'search-match' : ''}`} key={messageRenderKey(m.id)} id={`message-${m.id}`} data-message-id={m.id}>
                     <div className="avatar-column"><div
                       className={`avatar ${avatar ? 'clickable' : ''}`}
                       onClick={() => { if (avatar) setPreviewImage(avatar); }}

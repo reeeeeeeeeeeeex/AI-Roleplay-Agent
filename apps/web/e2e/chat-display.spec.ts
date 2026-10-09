@@ -66,6 +66,62 @@ async function insideViewport(page: Page, locator: Locator) {
   expect(rect!.y + rect!.height).toBeLessThanOrEqual(size.height + 1);
 }
 
+test('story search reveals older messages and navigates saved prose only', async ({ page, request }) => {
+  await openHistory(page, request, 10);
+  await expect(page.locator('#message-display-0')).toHaveCount(0);
+  await page.getByRole('button', { name: '搜索正文', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: '搜索当前分支正文' });
+  await search.fill('用户消息');
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('1 / 60 条消息');
+  await expect(page.locator('#message-display-0')).toHaveClass(/search-match/);
+  await expect.poll(() => page.locator('#message-display-0').evaluate(element => Math.abs(element.getBoundingClientRect().top - document.querySelector('.messages')!.getBoundingClientRect().top - 12))).toBeLessThan(2);
+  await search.press('Enter');
+  await expect(page.locator('#message-display-2')).toHaveClass(/search-match/);
+  await search.press('Shift+Enter');
+  await expect(page.locator('#message-display-0')).toHaveClass(/search-match/);
+  await page.getByRole('button', { name: '上一条匹配消息' }).click();
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('60 / 60 条消息');
+  await search.fill('模型返回的可见思考。');
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('0 / 0 条消息');
+  await expect(page.getByRole('button', { name: '下一条匹配消息' })).toBeDisabled();
+  await expect(page.locator('.search-match')).toHaveCount(0);
+});
+
+test('story search is literal, stays inside a narrow screen and preserves the draft', async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.addInitScript(() => localStorage.setItem('interface-language', 'en'));
+  const messages = await openHistory(page, request, 10);
+  messages[0]!.content = 'Beside the [Northern Gate].';
+  messages[119]!.content = 'Back to the [northern gate].';
+  const chatId = messages[0]!.conversationId;
+  await page.route(`**/api/conversations/${chatId}/messages`, route => route.fulfill({ json: {
+    branch: messages, nodes: [...messages, { ...messages[119], id: 'hidden-version', content: 'A hidden [northern gate] version.' }],
+  } }));
+  await page.reload();
+  const input = page.getByRole('textbox', { name: 'Message input', exact: true });
+  await input.fill('Keep this unsent draft.');
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && req.method() !== 'GET') writes++; });
+  const before = (await page.locator('.messages-wrap').boundingBox())!.height;
+  await page.getByRole('button', { name: 'Search story', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: 'Search this branch' });
+  await search.fill('[NORTHERN');
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('1 / 2 messages');
+  await page.getByRole('button', { name: 'Next matching message' }).click();
+  await expect(page.locator('#message-display-119')).toHaveClass(/search-match/);
+  await insideViewport(page, page.getByRole('search'));
+  await insideViewport(page, page.getByRole('button', { name: 'Send', exact: true }));
+  await search.press('Escape');
+  await expect(page.getByRole('search')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Search story', exact: true })).toBeFocused();
+  await expect(input).toHaveValue('Keep this unsent draft.');
+  // Restore the same reading position, so the existing back-to-latest control is hidden.
+  await page.getByRole('button', { name: 'Back to latest ↓' }).click();
+  await expect(page.getByRole('button', { name: 'Back to latest ↓' })).toHaveCount(0);
+  expect((await page.locator('.messages-wrap').boundingBox())!.height).toBeCloseTo(before, 0);
+  expect(writes).toBe(0);
+});
+
 test('reading: saved colors and typography survive reload without changing content', async ({ page, request }, info) => {
   const body = await readingStory(page, request);
   const input = page.getByRole('textbox', { name: '输入消息', exact: true });

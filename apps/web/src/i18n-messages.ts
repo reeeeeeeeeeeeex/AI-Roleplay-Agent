@@ -1,5 +1,12 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  "搜索正文": "Search story",
+  "搜索当前分支正文": "Search this branch",
+  "搜索已保存的正文；Enter 下一条，Shift+Enter 上一条。": "Search saved story text. Enter: next match. Shift+Enter: previous match.",
+  "{0} / {1} 条消息": "{0} / {1} messages",
+  "上一条匹配消息": "Previous matching message",
+  "下一条匹配消息": "Next matching message",
+  "关闭搜索": "Close search",
   "阅读外观已保存。": "Reading appearance saved.",
   "无法保存阅读外观，当前外观未改变。你的选择已保留，请重试。": "Could not save reading appearance. The current appearance is unchanged and your choices are kept. Please retry.",
   "阅读配色": "Reading colors",

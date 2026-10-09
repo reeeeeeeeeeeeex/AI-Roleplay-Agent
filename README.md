@@ -61,6 +61,8 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 正文和资料通常直接点击编辑，失焦自动保存；设置和提示词使用显式保存。载入提示词预设只填入草稿，点击「保存提示词」后才生效。
 
+聊天顶部的搜索按钮可以查找当前分支已保存的全部正文，包括尚未显示的早期消息。使用上下箭头或 Enter／Shift+Enter 切换匹配消息，Esc 关闭；搜索只定位阅读位置，不改变故事进度。
+
 导入 SillyTavern 数据时，请填写自己的数据目录；也可通过 `SILLYTAVERN_DATA_PATH` 设置默认路径。
 
 「设置 → 外观」提供石墨黑、午夜蓝、暖墨棕和纸白配色，并搭配对应的文字颜色。可以选择正文字体和 12–28 px 字号，先预览再保存；偏好仅保存在当前浏览器。字体使用设备已安装的字体及回退，不需要下载字体文件。
@@ -139,6 +141,8 @@ Want to explore first? After the initial setup, Windows users can run [Demo.cmd]
 ### Editing, saving, and data
 
 Most content is edited directly and saved on blur. Settings and prompts have explicit save actions. Loading a prompt preset fills the draft; **Save prompts** applies it.
+
+Use the search button above the chat to find saved story text across the current branch, including older messages outside the displayed window. Move between matching messages with the arrows or Enter / Shift+Enter, and close with Esc. Searching changes only the reading position, not story progress.
 
 To import SillyTavern data, enter your own data directory. You can optionally set its default with `SILLYTAVERN_DATA_PATH`.
 
