@@ -105,6 +105,63 @@ test('reopening the current story keeps its active reply', async ({ page }, info
   } finally { release(); }
 });
 
+for (const phase of ['start', 'history'] as const) test(`late turn ${phase} response cancels the abandoned turn without following it in another story`, async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const other = chats.find((item: any) => item.id !== chat.id);
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let delayed = false, cancelled = 0, followed = 0;
+  page.on('request', req => {
+    if (req.method() === 'POST' && /\/turns\/[^/]+\/cancel$/.test(req.url())) cancelled++;
+    if (/\/turns\/[^/]+\/events\?/.test(req.url())) followed++;
+  });
+  await page.route(phase === 'start' ? '**/api/turns' : `**/api/conversations/${chat.id}/messages*`, async route => {
+    if (delayed || (phase === 'start' && route.request().method() !== 'POST')) return route.continue();
+    const response = await route.fetch();
+    if (phase === 'history' && !(await response.json()).branch.some((message: any) => message.content === 'Delayed reply input.')) return route.fulfill({ response });
+    delayed = true; captured(); await waiting; await route.fulfill({ response });
+  });
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('Delayed reply input.');
+    await page.getByRole('button', { name: '发送', exact: true }).click(); await ready;
+    await page.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(other.title);
+    release();
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled();
+    expect(cancelled).toBe(1); expect(followed).toBe(0);
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0);
+  } finally { release(); }
+});
+
+test('late manual save updates its original story head after switching away', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const other = chats.find((item: any) => item.id !== chat.id);
+  const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await toggle.click(); await expect(toggle).toBeChecked();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let delayed = false;
+  await page.route(`**/api/conversations/${chat.id}/manual-messages`, async route => {
+    if (delayed) return route.continue();
+    delayed = true; const response = await route.fetch(); captured(); await waiting; await route.fulfill({ response });
+  });
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('First manual input.');
+    await page.getByRole('button', { name: '发送', exact: true }).click(); await ready;
+    await page.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(other.title);
+    release(); await expect(toggle).toBeEnabled();
+    await page.locator('.story-list button').filter({ hasText: chat.title }).click();
+    await expect(page.locator('article.message')).toHaveCount(1);
+    await send(page, 'Second manual input.', 2);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  } finally { release(); }
+});
+
 test('connection copy opens a separate editable model without exposing its saved key', async ({ page, request }) => {
   const created = await request.post('/api/connections', { data: {
     name: 'Copy source', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1',

@@ -353,6 +353,12 @@ export default function App() {
   }
 
   async function follow(id: string, currentChat: string) {
+    // A turn may start while its request is still in flight after leaving the story.
+    if (chatRef.current !== currentChat) {
+      await api(`/turns/${id}/cancel`, 'POST', {});
+      await refresh();
+      return;
+    }
     const controller = new AbortController();
     streamAbort.current?.abort();
     streamAbort.current = controller;
@@ -473,8 +479,11 @@ export default function App() {
           } : { role: 'user', input: { voice: choiceText === undefined && voice === 'narrator' ? 'narrator' : 'protagonist', text: manualText } }),
         });
         if (choiceText === undefined) setInputDrafts(old => old[draftKey] === text ? { ...old, [draftKey]: '' } : old);
-        if (chatRef.current !== chat.id) return;
         updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        if (chatRef.current !== chat.id) {
+          if (result.turn) await follow(result.turn.id, chat.id);
+          return;
+        }
         setPromptPreview(null);
         await refreshMessages(chat.id);
         if (result.turn) await follow(result.turn.id, chat.id);
@@ -486,7 +495,6 @@ export default function App() {
       const result = await api('/turns', 'POST', payload);
       // Clear only the accepted draft, never newer typing or another chat's input.
       if (payload.input && choiceText === undefined) setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
-      if (chatRef.current !== chat.id) return;
       await refreshMessages(chat.id);
       await follow(result.id, chat.id);
     } finally {
