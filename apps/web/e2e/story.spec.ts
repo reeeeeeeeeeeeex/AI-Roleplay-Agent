@@ -160,7 +160,7 @@ test('record inspector keeps its Agent tab and expanded window when a reply fini
   } finally { release(); }
 });
 
-test('state inspector keeps its tab and waits for the selected message version records', async ({ page, request }, info) => {
+test('state and scene editors wait for the selected message version records', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
   const original = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
@@ -176,6 +176,9 @@ test('state inspector keeps its tab and waits for the selected message version r
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
   const location = page.getByRole('textbox', { name: '全局状态 1 当前地点', exact: true });
   await expect(location).toHaveValue('Revised location');
+  await page.locator('.story-navigation > summary').click();
+  const sceneLocation = page.getByRole('textbox', { name: '当前地点', exact: true });
+  await expect(sceneLocation).toHaveValue('Revised location');
   let release!: () => void, captured!: () => void;
   const waiting = new Promise<void>(resolve => { release = resolve; });
   const ready = new Promise<void>(resolve => { captured = resolve; });
@@ -183,14 +186,20 @@ test('state inspector keeps its tab and waits for the selected message version r
     if (route.request().method() !== 'GET') return route.continue();
     const response = await route.fetch(); captured(); await waiting; await route.fulfill({ response });
   });
+  await page.route(`**/api/conversations/${chat.id}/navigation`, async route => {
+    const response = await route.fetch(); await waiting; await route.fulfill({ response });
+  });
   try {
     await page.getByTitle('上一个版本', { exact: true }).click(); await ready;
     await expect(page.getByRole('button', { name: '主角状态', exact: true })).toHaveClass('active');
     await expect(location).toHaveCount(0);
+    await expect(sceneLocation).toHaveCount(0);
     release();
     await expect(location).toHaveValue('Original location');
-    await location.fill('Edited original location'); await location.blur();
+    await expect(sceneLocation).toHaveValue('Original location');
+    await sceneLocation.fill('Edited original location'); await sceneLocation.blur();
     await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0].current_location).toBe('Edited original location');
+    await expect(location).toHaveValue('Edited original location');
   } finally { release(); }
 });
 
