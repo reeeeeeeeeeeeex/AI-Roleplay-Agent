@@ -54,7 +54,7 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
       <dt>{stateLabel(column)}</dt>
       <dd className="record-field">{column === 'is_dead' ? <select aria-label={stateLabel(column)} disabled={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })}>
         <option value="">{t("未知")}</option><option value="否">{t("否 · 未死亡")}</option><option value="是">{t("是 · 已确认死亡")}</option>
-      </select> : <textarea aria-label={column} placeholder="—" rows={1} readOnly={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })} />}</dd>
+      </select> : <textarea aria-label={stateLabel(column)} placeholder="—" rows={1} readOnly={locked} value={String(edit.value[column] ?? '')} onChange={event => edit.change({ ...edit.value, [column]: event.target.value })} />}</dd>
       {column === 'is_dead' && <small className="muted">{t("仅表示是否死亡；离场、失踪或未出现不等于死亡。")}</small>}
     </div>)}</dl>
     {edit.status === 'saving' && <small role="status">{t("保存中…")}</small>}
