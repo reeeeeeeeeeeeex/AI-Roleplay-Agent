@@ -260,6 +260,7 @@ export class PiAgentRuntime implements AgentRuntime {
     let activeTrace: string | null = null;
     let activeFirstThinking = false;
     let finalMessage: AssistantMessage | null = null;
+    let transportError: AppError | undefined;
     let activeToolError: string | undefined;
     let toolStopError: string | undefined;
     const agent = new Agent({
@@ -276,6 +277,7 @@ export class PiAgentRuntime implements AgentRuntime {
         activeTrace = request.trace?.start(fullPlanner ? 'planning' : 'selection', request.connection.model, undefined, request.contextReport) ?? null;
         return this.gateway.stream(request.connection, context, { ...options, signal: request.signal,
           streaming: request.streaming ?? true,
+          onTransportError: (error) => { transportError = error; },
           tracePayload: (payload) => { if (activeTrace) request.trace?.request(activeTrace, payload); },
           traceResponse: (response) => { if (activeTrace) request.trace?.response(activeTrace, response); },
           onSent: () => { if (activeTrace) request.trace?.timing(activeTrace, { sentAt: new Date().toISOString() }); },
@@ -318,7 +320,7 @@ export class PiAgentRuntime implements AgentRuntime {
       }
       if (event.type === 'turn_end' && activeTrace) {
         const message = event.message as AssistantMessage;
-        const error = message.errorMessage || toolStopError || activeToolError;
+        const error = transportError?.message || message.errorMessage || toolStopError || activeToolError;
         request.trace?.finish(activeTrace, message.stopReason === 'aborted' || request.signal.aborted ? 'cancelled' : error ? 'failed' : 'completed', usageOf(message), error);
         activeTrace = null;
       }
@@ -326,7 +328,7 @@ export class PiAgentRuntime implements AgentRuntime {
     request.signal.throwIfAborted();
     const abort = () => agent.abort();
     request.signal.addEventListener('abort', abort, { once: true });
-    try { await agent.prompt(start.prompt); }
+    try { await agent.prompt(start.prompt); request.signal.throwIfAborted(); if (transportError) throw transportError; }
     catch (error) {
       if (activeTrace) request.trace?.finish(activeTrace, request.signal.aborted ? 'cancelled' : 'failed', undefined, error instanceof Error ? error.message : String(error));
       throw error;
@@ -351,11 +353,13 @@ export class PiAgentRuntime implements AgentRuntime {
       const timing: RequestTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
       const traceId = request.trace?.start('plain', request.connection.model, output.speaker, context.contextReport) ?? null;
       let final: AssistantMessage | null = null;
+      let transportError: AppError | undefined;
       let thinking = '';
       let text = '';
       try {
         const stream = this.gateway.stream(request.connection, context, {
           signal: request.signal, streaming: request.streaming ?? true, replayReasoning: false,
+          onTransportError: (error) => { transportError = error; },
           tracePayload: (payload) => { if (traceId) request.trace?.request(traceId, payload); },
           traceResponse: (response) => { if (traceId) request.trace?.response(traceId, response); },
           onSent: () => { timing.sentAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { sentAt: timing.sentAt }); },
@@ -364,6 +368,7 @@ export class PiAgentRuntime implements AgentRuntime {
         for await (const event of stream) {
           recordModelEvent(request, traceId, event);
           request.signal.throwIfAborted();
+          if (transportError) throw transportError;
           if (event.type === 'thinking_delta') {
             if (request.streaming !== false && !timing.firstThinkingAt) { timing.firstThinkingAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { firstThinkingAt: timing.firstThinkingAt }); }
             thinking += event.delta; options.onThinkingDelta?.(event.delta, outputIndex);
@@ -413,6 +418,7 @@ export class PiAgentRuntime implements AgentRuntime {
     let selectionTurns = 0;
     let finalMessage: AssistantMessage | null = null;
     const results: AgentTurnResult['results'] = [];
+    let transportError: AppError | undefined;
     const seen = new Set<string>();
     let readCalls = 0;
     let thinking = '';
@@ -436,6 +442,7 @@ export class PiAgentRuntime implements AgentRuntime {
           ...streamOptions,
           signal: request.signal,
           streaming: request.streaming ?? true,
+          onTransportError: (error) => { transportError = error; },
           tracePayload: (payload) => { if (activeTrace) request.trace?.request(activeTrace, payload); },
           traceResponse: (response) => { if (activeTrace) request.trace?.response(activeTrace, response); },
           onSent: () => { if (activeTiming) activeTiming.sentAt = new Date().toISOString(); if (activeTrace) request.trace?.timing(activeTrace, { sentAt: new Date().toISOString() }); },
@@ -499,7 +506,7 @@ export class PiAgentRuntime implements AgentRuntime {
       }
       if (event.type === 'turn_end' && activeTrace) {
         const message = event.message as AssistantMessage;
-        const error = message.errorMessage || toolStopError || activeToolError;
+        const error = transportError?.message || message.errorMessage || toolStopError || activeToolError;
         request.trace?.finish(activeTrace, message.stopReason === 'aborted' || request.signal.aborted ? 'cancelled' : error ? 'failed' : 'completed', usageOf(message), error);
         activeTrace = null;
       }
@@ -511,6 +518,7 @@ export class PiAgentRuntime implements AgentRuntime {
       options.onPhase?.(selected ? 'writing' : 'selection', selected ?? undefined);
       await agent.continue();
       request.signal.throwIfAborted();
+      if (transportError) throw transportError;
       if (!selected) throw writerError() ? new Error(writerError()) : new AppError('Writer Agent did not call select_output_voices with a valid selection.');
       if (!results[0]) throw writerError() ? new Error(writerError()) : new AppError('Writer Agent returned no visible text.');
       options.onOutputComplete?.(results[0], 0);
@@ -519,6 +527,7 @@ export class PiAgentRuntime implements AgentRuntime {
         options.onPhase?.('writing', selected.outputs[1]);
         await agent.prompt(`[Writer Control]\nWrite only the second selected voice now. Do not select another voice or explain the process.\n[Current Speaker]\n${selected.outputs[1]!.speaker.kind === 'narrator' ? request.narrator.name : request.characters.find((c) => c.id === (selected!.outputs[1]!.speaker as { characterId: string }).characterId)?.name ?? 'Character'}\n[Writer Brief]\n${selected.outputs[1]!.brief}`);
         request.signal.throwIfAborted();
+        if (transportError) throw transportError;
         if (!results[1]) throw writerError() ? new Error(writerError()) : new AppError('Writer Agent returned no visible text for the second voice.');
         options.onOutputComplete?.(results[1], 1);
       }
@@ -558,9 +567,11 @@ export class PiAgentRuntime implements AgentRuntime {
     const traceId = request.trace?.start(phase, request.connection.model, undefined, request.contextReport) ?? null;
     const timing: RequestTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
     let final: AssistantMessage | null = null;
+    let transportError: AppError | undefined;
     let thinking = '';
     try {
       const stream = this.gateway.stream(request.connection, context, { signal: request.signal, streaming: request.streaming ?? true, replayReasoning: false,
+        onTransportError: (error) => { transportError = error; },
         tracePayload: (payload) => { if (traceId) request.trace?.request(traceId, payload); },
         traceResponse: (response) => { if (traceId) request.trace?.response(traceId, response); },
         onSent: () => { timing.sentAt = new Date().toISOString(); if (traceId) request.trace?.timing(traceId, { sentAt: timing.sentAt }); },
@@ -568,6 +579,8 @@ export class PiAgentRuntime implements AgentRuntime {
       });
       for await (const event of stream) {
         recordModelEvent(request, traceId, event);
+        request.signal.throwIfAborted();
+        if (transportError) throw transportError;
         if (event.type === 'thinking_delta') { if (request.streaming !== false && !timing.firstThinkingAt) timing.firstThinkingAt = new Date().toISOString(); thinking += event.delta; }
         if (event.type === 'text_delta' && request.streaming !== false && !timing.firstTextAt) timing.firstTextAt = new Date().toISOString();
         if (event.type === 'done') final = event.message;
@@ -589,11 +602,15 @@ export class PiAgentRuntime implements AgentRuntime {
 
   async testConnection(connection: RouteRequest['connection'], signal: AbortSignal): Promise<{ text: string; usage: AgentUsage }> {
     let final: AssistantMessage | null = null;
+    let transportError: AppError | undefined;
+    const onTransportError = (error: AppError) => { transportError = error; };
     const stream = this.gateway.stream(connection, {
       systemPrompt: 'Reply with exactly OK.',
       messages: [{ role: 'user', content: 'Connection test.', timestamp: Date.now() }],
-    }, { signal, maxTokens: 32 });
+    }, { signal, maxTokens: 32, onTransportError });
     for await (const event of stream) {
+      signal.throwIfAborted();
+      if (transportError) throw transportError;
       if (event.type === 'done') final = event.message;
       if (event.type === 'error') throw event.error.errorMessage != null ? new Error(event.error.errorMessage) : new AppError('Connection test failed.');
     }
@@ -605,10 +622,12 @@ export class PiAgentRuntime implements AgentRuntime {
         parameters: Type.Object({ value: Type.String() }),
         execute: async () => { called = true; return { ...textResult({ ok: true }), terminate: true }; },
       }] },
-      streamFn: (_m, ctx, options) => this.gateway.stream(connection, ctx, { ...options, signal, maxTokens: 256 }),
+      streamFn: (_m, ctx, options) => this.gateway.stream(connection, ctx, { ...options, signal, maxTokens: 256, onTransportError }),
       shouldStopAfterTurn: () => true,
     });
     await probe.prompt('Call connection_probe now.');
+    signal.throwIfAborted();
+    if (transportError) throw transportError;
     if (!called) throw new AppError("Text streaming succeeded, but tool calling was not confirmed.");
     return { text: visibleText(final), usage: usageOf(final) };
   }

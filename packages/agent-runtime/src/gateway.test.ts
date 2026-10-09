@@ -13,7 +13,8 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
       : protocol === 'anthropic-messages'
         ? { id: 'msg-1', model: 'test', content: [{ type: 'thinking', thinking: 'think', signature: 'hidden' }, { type: 'text', text: 'OK' }], stop_reason: 'end_turn', usage: { input_tokens: 10, cache_read_input_tokens: 4, output_tokens: 3 } }
         : { id: 'resp-1', model: 'test', status: 'completed', output: [{ id: 'r1', type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] }, { id: 'm1', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'OK', annotations: [] }] }], usage: { input_tokens: 10, input_tokens_details: { cached_tokens: 4 }, output_tokens: 3, output_tokens_details: { reasoning_tokens: 1 }, total_tokens: 13 } };
-    return Response.json(body);
+    // Some compatible gateways mislabel valid JSON as HTML; inspect the body before diagnosing it.
+    return Response.json(body, protocol === 'openai-chat-completions' ? { headers: { 'content-type': 'text/html' } } : undefined);
   }
   if (protocol === 'openai-chat-completions') return new Response([
     'data: {"id":"chat-1","object":"chat.completion.chunk","model":"test","choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}',

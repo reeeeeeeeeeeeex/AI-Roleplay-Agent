@@ -20,6 +20,7 @@ export type GatewayStreamOptions = SimpleStreamOptions & {
   traceResponse?: (response: unknown) => void;
   onSent?: () => void;
   onHeaders?: (response: Response) => void;
+  onTransportError?: (error: AppError) => void;
 };
 
 function captureResponseStream(response: Response, capture: (body: string) => void): Response {
@@ -204,7 +205,7 @@ export class PiModelGateway {
   }
 
   private openStream(connection: RuntimeConnection, context: Context, options: GatewayStreamOptions, baseFetch: typeof fetch, terminalLog: boolean): AssistantMessageEventStream {
-    const { streaming = true, replayReasoning = true, tracePayload, traceResponse, onSent, onHeaders, ...providerOptions } = options;
+    const { streaming = true, replayReasoning = true, tracePayload, traceResponse, onSent, onHeaders, onTransportError, ...providerOptions } = options;
     const configuredOptions = Object.fromEntries(Object.entries(providerOptions).filter(([, value]) => value !== undefined));
     const inputTokens = estimateContextTokens(context, replayReasoning);
     const maxOutput = options.maxTokens ?? connection.maxTokens;
@@ -227,11 +228,18 @@ export class PiModelGateway {
       tracePayload?.(requestBody); onSent?.();
       const response = await baseFetch(input, { ...init, body: requestBody });
       onHeaders?.(response);
-      if (streaming) return traceResponse ? captureResponseStream(response, traceResponse) : response;
+      const htmlResponse = response.ok && /^(?:text\/html|application\/xhtml\+xml)(?:\s*;|$)/i.test(response.headers.get('content-type')?.trim() ?? '');
+      if (streaming && !htmlResponse) return traceResponse ? captureResponseStream(response, traceResponse) : response;
       const responseBody = await response.text();
       if (sequence) logRaw('Output', sequence, responseBody);
       traceResponse?.(responseBody);
-      if (!response.ok) return new Response(responseBody, { status: response.status, statusText: response.statusText, headers: response.headers });
+      if (response.ok && /^\s*(?:<!doctype\s+html\b|<html\b)/i.test(responseBody)) {
+        const error = new AppError('connection.htmlResponse', response.status);
+        // Provider SDKs wrap fetch failures; keep this application diagnostic for the runtime.
+        onTransportError?.(error);
+        throw error;
+      }
+      if (streaming || !response.ok) return new Response(responseBody, { status: response.status, statusText: response.statusText, headers: response.headers });
       return new Response(convertNonStreamingResponse(connection.protocol, JSON.parse(responseBody)), {
         status: response.status,
         statusText: response.statusText,

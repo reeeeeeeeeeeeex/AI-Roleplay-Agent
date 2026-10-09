@@ -33,6 +33,8 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 同一服务商使用多个模型时，可以在「设置 → 模型」复制已有连接，再修改副本的模型 ID。地址、参数和已保存的密钥会一并复制；密钥不会返回浏览器，也不会自动切换当前模型。
 
+如果连接提示返回了 HTML 网页，请检查填写的是 API 地址，以及服务商是否要求 `/v1`；中转站异常也可能返回网页。Trace 会保留原始响应，便于排查。
+
 角色和主角资料也可以在资源列表中复制，再调整副本的设定。头像、角色提示词和主角初始状态模板会保留；原资料、已有故事绑定和全局默认主角保持不变。
 
 **手动录入，掌握每一句话。** 开启输入框上方的「单人创作／网页聊天手动输入」，主角、用户旁白和角色发言都只保存消息。可以连续输入同一种身份，无须强制交替。
@@ -127,6 +129,8 @@ The project follows a **Minimalist** approach: edit content directly, keep every
 **Connect an API and write together.** Send a protagonist action or user narration, then let the model respond. Plain writing is the default. Writer Agent and Planner＋Writer offer speaker selection, planning, and tool-assisted writing when needed. Supported protocols are **Chat Completions, Anthropic Messages, and OpenAI Responses**.
 
 To use several models from one provider, duplicate a connection in **Settings → Models**, then edit the copy's model ID. The URL, parameters, and saved credentials are copied on the server. Saved secrets are not returned to the browser, and your current model selection stays unchanged.
+
+If a connection reports an HTML page, check that you entered an API address and whether your provider requires `/v1`. Proxy failures can also return HTML. The trace retains the original response for diagnosis.
 
 Duplicate a character or persona from its resource card to try a different version of the profile. Copies retain avatars, character prompts, and persona starting-state templates. The original profile, existing story bindings, and default persona stay unchanged.
 

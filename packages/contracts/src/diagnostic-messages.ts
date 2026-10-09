@@ -9,6 +9,7 @@ export const diagnosticMessages = {
   '行动选项返回空内容。': { original: '行动选项返回空内容。', zh: '行动选项返回空内容。', en: 'The action choices response was empty.' },
   'Record generation returned no text.': { original: 'Record generation returned no text.', zh: '记录生成未返回正文。', en: 'Record generation returned no text.' },
   'Connection test failed.': { original: 'Connection test failed.', zh: '连接测试失败。', en: 'Connection test failed.' },
+  'connection.htmlResponse': { original: '接口返回了 HTML 网页（HTTP {0}），未收到模型响应。请检查 Base URL 是否为 API 地址（服务商可能要求 /v1），以及中转站是否正常。', zh: '接口返回了 HTML 网页（HTTP {0}），未收到模型响应。请检查 Base URL 是否为 API 地址（服务商可能要求 /v1），以及中转站是否正常。', en: 'The endpoint returned an HTML page (HTTP {0}) instead of a model response. Check that the Base URL is an API address (your provider may require /v1) and that the proxy is working.' },
   'Current state': { original: 'Current state', zh: '当前主角状态', en: 'Current state' },
   'Pinned Fact': { original: 'Pinned Fact', zh: '固定事实', en: 'Pinned fact' },
   'Applied world facts': { original: 'Applied world facts', zh: '已应用的世界事实', en: 'Applied world facts' },

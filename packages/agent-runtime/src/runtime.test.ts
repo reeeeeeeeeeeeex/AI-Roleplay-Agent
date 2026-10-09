@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { defaultPromptSettings, type TurnPlan } from '@new-ai-chat/contracts';
+import { defaultPromptSettings, errorText, formatUiText, type TurnPlan } from '@new-ai-chat/contracts';
 import { PiAgentRuntime } from './runtime.js';
 import { PiModelGateway } from './pi-gateway.js';
 import type { BaseAgentRequest, RuntimeTraceSink } from './types.js';
@@ -65,6 +65,25 @@ it('plain thinking-only responses preserve diagnostics without saving prose or r
   expect(thinking).toHaveBeenCalledWith('0', '离线模拟思考内容');
   expect(finish).toHaveBeenCalledWith('0', 'failed', expect.objectContaining({ input: 50, output: 10 }), expect.stringContaining('本次输出未保存'));
   expect(traces[0]?.response).toContain('data: [DONE]');
+});
+
+it.each([
+  { mode: 'plain' as const, streaming: true },
+  { mode: 'writer-agent' as const, streaming: false },
+])('$mode reports HTML endpoints without losing the original response or saving prose', async ({ mode, streaming }) => {
+  const { runtime, request, network, traces } = setup([]);
+  request.streaming = streaming;
+  const html = '<!DOCTYPE html><html><body>API gateway home page</body></html>';
+  network.mockResolvedValueOnce(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } }));
+  const onDelta = vi.fn(), onOutputComplete = vi.fn();
+  const error = await runtime.writeTurn(request, { mode, onDelta, onOutputComplete }).catch(error => error);
+  expect(errorText(error)).toEqual({ key: 'connection.htmlResponse', params: [200] });
+  expect(formatUiText(errorText(error)!, 'en')).toContain('HTML page (HTTP 200)');
+  expect(error.message).toContain('/v1');
+  expect(network).toHaveBeenCalledTimes(1);
+  expect(onDelta).not.toHaveBeenCalled(); expect(onOutputComplete).not.toHaveBeenCalled();
+  expect(traces[0]).toMatchObject({ status: 'failed', response: html, error: error.message });
+  expect(traces[0]?.events).toContainEqual({ type: 'http.response', data: { status: 200, statusText: '', contentType: 'text/html; charset=utf-8', requestId: null } });
 });
 
 it('sends memories from oldest to newest in the plain request body and preview', async () => {
@@ -179,7 +198,9 @@ describe('Agent tool lifecycle', () => {
   it.each(['writer', 'planner'] as const)('preserves upstream errors before %s selection', async (mode) => {
     const { runtime, request, bodies, traces } = setup([{ error: 'Upstream rejected the test model.' }]);
     const result = mode === 'planner' ? runtime.plan({ ...request, plannerEnabled: true }) : runtime.writeTurn(request, { mode: 'writer-agent', onDelta: () => {} });
-    await expect(result).rejects.toThrow('Upstream rejected the test model.');
+    const error = await result.catch(error => error);
+    expect(error.message).toContain('Upstream rejected the test model.');
+    expect(errorText(error)).toBeUndefined();
     expect(bodies).toHaveLength(1);
     expect(traces[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('Upstream rejected') });
   });
