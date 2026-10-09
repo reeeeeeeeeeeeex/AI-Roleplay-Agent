@@ -549,6 +549,57 @@ test('manual input toggle failure keeps its original mode and draft', async ({ p
   await expect(page.locator('article.message')).toHaveCount(0);
 });
 
+test('an older background refresh cannot undo a saved manual input mode', async ({ page, request }) => {
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  await page.route('**/api/settings/general', async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch(); captured();
+    await waiting; await route.fulfill({ response });
+  });
+  try {
+    const navigation = page.locator('.story-navigation');
+    await navigation.locator('summary').click();
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).fill('A saved scene before switching mode.');
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).blur();
+    await ready;
+    const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+    await toggle.click(); await expect(toggle).toBeChecked();
+    const late = page.waitForResponse(response => response.request().method() === 'GET' && response.url().endsWith('/api/settings/general'));
+    release(); await (await late).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(toggle).toBeChecked();
+    expect((await (await request.get('/api/settings/general')).json()).manualInput).toBe(true);
+  } finally { release(); }
+});
+
+test('an older story list refresh cannot move the head behind a manually saved message', async ({ page }) => {
+  const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await toggle.click(); await expect(toggle).toBeChecked();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  await page.route('**/api/conversations', async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch(); captured();
+    await waiting; await route.fulfill({ response });
+  });
+  try {
+    const navigation = page.locator('.story-navigation');
+    await navigation.locator('summary').click();
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).fill('Scene saved before manual messages.');
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).blur();
+    await ready;
+    await send(page, '第一条手动消息。', 1);
+    const late = page.waitForResponse(response => response.request().method() === 'GET' && response.url().endsWith('/api/conversations'));
+    release(); await (await late).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await send(page, '第二条继续保存，不应误用旧位置。', 2);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  } finally { release(); }
+});
+
 test('startup distinguishes missing endpoints from required pairing', async ({ page }) => {
   let status = 404;
   await page.route('**/api/settings/general', route => status

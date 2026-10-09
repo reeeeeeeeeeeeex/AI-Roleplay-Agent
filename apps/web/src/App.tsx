@@ -49,6 +49,7 @@ function formatTime(isoString?: string) {
 export default function App() {
   useLanguage(); // Re-render labels without replacing the story/editor component tree.
   const [data, setData] = useState<Record<string, any[]>>({});
+  const refreshVersions = useRef({ data: 0, general: 0, prompts: 0 });
   const [chatId, setChatId] = useState<string | null>(() => storedValue('selected-chat'));
   const chatRef = useRef(chatId);
   chatRef.current = chatId;
@@ -231,15 +232,36 @@ export default function App() {
       ? generalSettings.narrator.avatarPath ?? undefined
       : data.characters?.find((c) => c.id === (message.speaker?.kind === 'character' ? message.speaker.characterId : null))?.avatarPath ?? undefined;
 
+  function updateData(value: Parameters<typeof setData>[0]) {
+    refreshVersions.current.data++;
+    setData(value);
+  }
+
+  function applyGeneralSettings(value: GeneralSettings) {
+    refreshVersions.current.general++;
+    setGeneralSettings(value);
+  }
+
+  function applyPromptSettings(value: PromptSettings) {
+    refreshVersions.current.prompts++;
+    setPromptSettings(value);
+  }
+
   async function refresh() {
+    const version = {
+      data: ++refreshVersions.current.data,
+      general: ++refreshVersions.current.general,
+      prompts: ++refreshVersions.current.prompts,
+    };
     const [values, general, prompts] = await Promise.all([
       Promise.all(collections.map((kind) => api(`/${kind}`))),
       api('/settings/general'),
       api('/settings/prompts'),
     ]);
-    setGeneralSettings(general);
-    setPromptSettings(prompts);
-    setData(Object.fromEntries(collections.map((kind, index) => [kind, values[index]])));
+    // A delayed read must not replace a newer refresh or an already saved change.
+    if (version.general === refreshVersions.current.general) setGeneralSettings(general);
+    if (version.prompts === refreshVersions.current.prompts) setPromptSettings(prompts);
+    if (version.data === refreshVersions.current.data) setData(Object.fromEntries(collections.map((kind, index) => [kind, values[index]])));
   }
 
   async function refreshMessages(id: string) {
@@ -264,10 +286,10 @@ export default function App() {
   async function savePersona(personaId: string | null, global: boolean) {
     setPersonaSaving(true);
     try {
-      if (global) setGeneralSettings(await api('/settings/general', 'PUT', { ...generalSettings, defaultPersonaId: personaId }));
+      if (global) applyGeneralSettings(await api('/settings/general', 'PUT', { ...generalSettings, defaultPersonaId: personaId }));
       else if (chat) {
         const updated = await api(`/conversations/${chat.id}`, 'PUT', { ...chat, personaId });
-        setData(old => ({ ...old, conversations: old.conversations!.map(c => c.id === updated.id ? updated : c) }));
+        updateData(old => ({ ...old, conversations: old.conversations!.map(c => c.id === updated.id ? updated : c) }));
       }
       setPromptPreview(null);
     } finally { setPersonaSaving(false); }
@@ -450,7 +472,7 @@ export default function App() {
         });
         if (choiceText === undefined) setInputDrafts(old => old[draftKey] === text ? { ...old, [draftKey]: '' } : old);
         if (chatRef.current !== chat.id) return;
-        setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
         setPromptPreview(null);
         await refreshMessages(chat.id);
         if (result.turn) await follow(result.turn.id, chat.id);
@@ -476,7 +498,7 @@ export default function App() {
     sendPending.current = true; setSending(true); setError('');
     try {
       await flushContentEdits();
-      setGeneralSettings(await api('/settings/general', 'PATCH', { manualInput }));
+      applyGeneralSettings(await api('/settings/general', 'PATCH', { manualInput }));
     } finally { sendPending.current = false; setSending(false); }
   }
 
@@ -554,7 +576,7 @@ export default function App() {
     if (!chatId) return;
     await flushContentEdits();
     const updated = await api<Conversation>(`/conversations/${chatId}/history-start`, 'POST', { messageId: savedMessageId(messageId ?? undefined) ?? null });
-    setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === updated.id ? updated : item) }));
+    updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === updated.id ? updated : item) }));
     setPromptPreview(null);
   }
 
@@ -584,7 +606,7 @@ export default function App() {
         const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', { role: 'user', input: preview.input, head: preview.headMessageId });
         setInputDrafts(old => old[chat.id] === preview.draftText ? { ...old, [chat.id]: '' } : old);
         if (chatRef.current !== chat.id) return;
-        setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
         // Clear this input before any refresh, so a retry never appends it twice.
         setPromptPreview((old: any) => old ? { ...old, input: undefined, headMessageId: result.message.id, existingUserInput: true } : old);
         await refreshMessages(chat.id);
@@ -615,7 +637,7 @@ export default function App() {
       number++;
     } while (names.has(name));
     const copied = await api(`/connections/${source.id}/copy`, 'POST', { name });
-    setData(old => ({ ...old, connections: [...(old.connections ?? []), copied] }));
+    updateData(old => ({ ...old, connections: [...(old.connections ?? []), copied] }));
     edit('connections', copied);
   }
 
@@ -1309,7 +1331,7 @@ export default function App() {
         onSaveAppearance={value => { saveAppearance(value); setReadingAppearance(value); }}
         onClose={() => setShowSettings(false)}
         generalSettings={generalSettings}
-        onSaveGeneral={async value => { setGeneralSettings(await api('/settings/general', 'PUT', value)); }}
+        onSaveGeneral={async value => { applyGeneralSettings(await api('/settings/general', 'PUT', value)); }}
         generationActive={sending || !!turn}
         connections={data.connections ?? []}
         onEditConnection={(conn) => edit('connections', conn ?? defaults.connections)}
@@ -1325,12 +1347,12 @@ export default function App() {
         plainThinkingExpanded={plainThinkingExpanded}
         setPlainThinkingExpanded={value => { localStorage.setItem('plain-thinking-expanded', String(value)); setPlainThinkingExpanded(value); }}
         promptSettings={promptSettings}
-        onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
+        onSavePrompts={async value => { applyPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
       />}
 
       {showAuthorNote && chat && <AuthorNoteEditor key={chat.id} chat={chat} disabled={sending || !!turn || choicesBusy}
         onClose={() => setShowAuthorNote(false)} onSaved={saved => {
-          setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === saved.id ? saved : item) }));
+          updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === saved.id ? saved : item) }));
           setPromptPreview(null);
         }} />}
 
@@ -1342,7 +1364,7 @@ export default function App() {
           data={data}
           defaultPersonaId={generalSettings.defaultPersonaId}
           onPersonaCreated={(newPersona) => {
-            setData(old => ({ ...old, personas: [...(old.personas ?? []).filter(persona => persona.id !== newPersona.id), newPersona] }));
+            updateData(old => ({ ...old, personas: [...(old.personas ?? []).filter(persona => persona.id !== newPersona.id), newPersona] }));
           }}
           onClose={() => {
             setEditor(null);
