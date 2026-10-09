@@ -37,6 +37,62 @@ async function englishInterface(page: Page) {
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
 }
 
+test('browser storage: blocked reads do not prevent opening and writing a story', async ({ page }, info) => {
+  await page.addInitScript(() => {
+    Storage.prototype.getItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+    Storage.prototype.setItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+    Storage.prototype.removeItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+  });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.reload();
+  await page.locator('.story-list button').filter({ hasText: `Browser ${info.title}` }).click();
+  const manual = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await manual.click();
+  await expect(manual).toBeChecked();
+  await send(page, '本地存储不可用时仍能保存故事。', 1);
+  await expect(page.getByRole('textbox', { name: '用户消息正文' })).toHaveValue('本地存储不可用时仍能保存故事。');
+  expect(errors).toEqual([]);
+});
+
+test('browser storage: failed recovery markers do not interrupt live replies', async ({ page }) => {
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem, remove = Storage.prototype.removeItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'active-turn') throw new DOMException('Storage full', 'QuotaExceededError');
+      set.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function (key) {
+      if (key === 'active-turn') throw new DOMException('Storage blocked', 'SecurityError');
+      remove.call(this, key);
+    };
+  });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '等待完整的离线回复。', 2);
+  await expect(page.locator('.banner').filter({ hasText: '浏览器无法保存本地状态' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue('');
+  expect(errors).toEqual([]);
+});
+
+test('browser storage: display preferences keep the applied value when saving fails', async ({ page }) => {
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '外观', exact: true }).click();
+  const avatar = settings.getByRole('combobox', { name: '头像尺寸', exact: true });
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'avatar-mode') throw new DOMException('Storage blocked', 'SecurityError');
+      set.call(this, key, value);
+    };
+  });
+  await avatar.selectOption('compact');
+  await expect(settings.getByRole('alert')).toContainText('当前设置未改变');
+  await expect(avatar).toHaveValue('large');
+  await expect(page.locator('.messages')).toHaveClass(/avatar-large/);
+});
+
 test('language: defaults to Chinese and persists with bilingual discovery', async ({ page }, info) => {
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
   const settings = await languageSettings(page);

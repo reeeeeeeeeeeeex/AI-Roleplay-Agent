@@ -62,6 +62,12 @@ export default function SettingsModal({
   }, [tab]);
   const locked = busy || generationActive;
 
+  function saveDisplay(action: () => void) {
+    setNotice('');
+    try { action(); setError(''); }
+    catch { setError(t('无法保存显示设置，当前设置未改变。请检查浏览器存储权限后重试。')); }
+  }
+
   function selectPreset(presetId: string) {
     const dirty = (Object.keys(promptBaseline) as Array<keyof PromptSettings>).some(key => prompts[key] !== promptBaseline[key]);
     if (dirty && !window.confirm(t("有未保存的提示词修改，确定切换并放弃这些修改？"))) return;
@@ -275,15 +281,15 @@ export default function SettingsModal({
                   if (!Number.isInteger(value) || value < 1 || value > 1000) {
                     setDisplayLimitDraft(String(messageDisplayLimit)); setError(t("聊天显示条数请填写 1–1000 的整数。")); return;
                   }
-                  setError(''); setMessageDisplayLimit(value);
+                  saveDisplay(() => setMessageDisplayLimit(value));
                 }} />
             </label>
             <p className="muted">{t("默认 100 条，可设置 1–1000；向上滚动继续加载，仅影响页面显示，不影响发送给模型的条数。")}</p>
             <label className="checkbox-row">
-              <input type="checkbox" checked={plainThinkingExpanded} onChange={event => setPlainThinkingExpanded(event.target.checked)} />
+              <input type="checkbox" checked={plainThinkingExpanded} onChange={event => saveDisplay(() => setPlainThinkingExpanded(event.target.checked))} />
               {t("普通模式默认展开思考（CoT）")}</label>
             <label>{t("头像尺寸")}<select value={avatarMode} onChange={e => {
-                setAvatarMode(e.target.value as AvatarMode); localStorage.setItem('avatar-mode', e.target.value);
+                saveDisplay(() => setAvatarMode(e.target.value as AvatarMode));
               }}>
                 <option value="compact">{t("紧凑标准")}</option>
                 <option value="large">{t("大图立绘")}</option>

@@ -27,6 +27,11 @@ import './branches.css';
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
 const studioCollections: Collection[] = ['characters', 'personas', 'groups', 'lorebooks'];
 
+function storedValue(key: string): string | null {
+  try { return localStorage.getItem(key); }
+  catch { return null; }
+}
+
 function formatTime(isoString?: string) {
   if (!isoString) return '';
   try {
@@ -41,7 +46,7 @@ function formatTime(isoString?: string) {
 export default function App() {
   useLanguage(); // Re-render labels without replacing the story/editor component tree.
   const [data, setData] = useState<Record<string, any[]>>({});
-  const [chatId, setChatId] = useState<string | null>(() => localStorage.getItem('selected-chat'));
+  const [chatId, setChatId] = useState<string | null>(() => storedValue('selected-chat'));
   const chatRef = useRef(chatId);
   chatRef.current = chatId;
 
@@ -107,12 +112,15 @@ export default function App() {
 
   // Appearance preferences are local to this browser.
   const [readingAppearance, setReadingAppearance] = useState(readAppearance);
-  const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => (localStorage.getItem('avatar-mode') as AvatarMode) || 'large');
+  const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => {
+    const saved = storedValue('avatar-mode');
+    return saved === 'compact' || saved === 'full' ? saved : 'large';
+  });
   const [messageDisplayLimit, setMessageDisplayLimit] = useState(() => {
-    const value = Number(localStorage.getItem('chat-message-display-limit'));
+    const value = Number(storedValue('chat-message-display-limit'));
     return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : 100;
   });
-  const [plainThinkingExpanded, setPlainThinkingExpanded] = useState(() => localStorage.getItem('plain-thinking-expanded') !== 'false');
+  const [plainThinkingExpanded, setPlainThinkingExpanded] = useState(() => storedValue('plain-thinking-expanded') !== 'false');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const { container: messageContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom,
@@ -165,6 +173,11 @@ export default function App() {
     setError('');
     void promise.catch((err: Error) => setError(err.message));
   };
+
+  function rememberSession(key: 'selected-chat' | 'active-turn', value: string | null) {
+    try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }
+    catch { setNotice(t('浏览器无法保存本地状态。当前仍可使用，刷新后可能无法自动恢复；关闭前请复制未发送草稿。')); }
+  }
 
   const avatarFor = (message: MessageNode): string | undefined =>
     message.role === 'user'
@@ -230,7 +243,7 @@ export default function App() {
     setActivity([]);
     setReplyTarget('auto');
     setVoice(current => current === 'assistant' ? 'protagonist' : current);
-    if (chatId) { localStorage.setItem('selected-chat', chatId); act(refreshMessages(chatId)); }
+    if (chatId) { rememberSession('selected-chat', chatId); act(refreshMessages(chatId)); }
   }, [chatId]);
 
   useEffect(() => {
@@ -256,7 +269,7 @@ export default function App() {
     streamAbort.current?.abort();
     streamAbort.current = controller;
     setTurn({ id, chatId: currentChat });
-    localStorage.setItem('active-turn', JSON.stringify({ id, chatId: currentChat }));
+    rememberSession('active-turn', JSON.stringify({ id, chatId: currentChat }));
     let finished = false;
     try {
       await streamTurn(id, (event) => {
@@ -300,14 +313,14 @@ export default function App() {
         setTurn(null);
         queueDraft({});
         setPhase(null);
-        if (finished || controller.signal.aborted) localStorage.removeItem('active-turn');
+        if (finished || controller.signal.aborted) rememberSession('active-turn', null);
       }
     }
   }
 
   useEffect(() => {
     if (!Object.keys(data).length || turn) return;
-    const saved = localStorage.getItem('active-turn');
+    const saved = storedValue('active-turn');
     if (!saved) return;
     try {
       const pending = JSON.parse(saved);
@@ -315,7 +328,7 @@ export default function App() {
       setChatId(pending.chatId);
       act(follow(pending.id, pending.chatId));
     } catch {
-      localStorage.removeItem('active-turn');
+      rememberSession('active-turn', null);
     }
   }, [Object.keys(data).length]);
 
@@ -1215,11 +1228,11 @@ export default function App() {
           await api(`/connections/${id}/test`, 'POST', {});
         }}
         avatarMode={avatarMode}
-        setAvatarMode={setAvatarMode}
+        setAvatarMode={value => { localStorage.setItem('avatar-mode', value); setAvatarMode(value); }}
         messageDisplayLimit={messageDisplayLimit}
-        setMessageDisplayLimit={value => { setMessageDisplayLimit(value); localStorage.setItem('chat-message-display-limit', String(value)); }}
+        setMessageDisplayLimit={value => { localStorage.setItem('chat-message-display-limit', String(value)); setMessageDisplayLimit(value); }}
         plainThinkingExpanded={plainThinkingExpanded}
-        setPlainThinkingExpanded={value => { setPlainThinkingExpanded(value); localStorage.setItem('plain-thinking-expanded', String(value)); }}
+        setPlainThinkingExpanded={value => { localStorage.setItem('plain-thinking-expanded', String(value)); setPlainThinkingExpanded(value); }}
         promptSettings={promptSettings}
         onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
       />}
