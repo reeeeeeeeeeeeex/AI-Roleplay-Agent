@@ -296,7 +296,13 @@ export class Repository {
   deleteGroup(groupId: string): boolean { return this.database.db.delete(groups).where(eq(groups.id, groupId)).run().changes > 0; }
 
   listLorebooks(): Lorebook[] {
-    return this.database.db.select().from(lorebooks).orderBy(asc(lorebooks.name)).all().map((book) => this.getLorebook(book.id)!);
+    const books = this.database.db.select().from(lorebooks).orderBy(asc(lorebooks.name)).all().map(book => ({ ...book, entries: [] as Lorebook['entries'] }));
+    if (!books.length) return books;
+    const entriesByBook = new Map(books.map(book => [book.id, book.entries]));
+    for (const entry of this.database.db.select().from(loreEntries).orderBy(asc(loreEntries.order)).all()) {
+      entriesByBook.get(entry.lorebookId)?.push({ ...entry, position: entry.position as 'before' | 'after' | 'depth' });
+    }
+    return books;
   }
   getLorebook(lorebookId: string): Lorebook | null {
     const book = this.database.db.select().from(lorebooks).where(eq(lorebooks.id, lorebookId)).get();

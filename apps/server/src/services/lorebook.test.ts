@@ -14,6 +14,19 @@ let folder: string, repo: Repository;
 beforeEach(() => { folder = mkdtempSync(join(tmpdir(), 'lorebook-test-')); repo = new Repository(createDatabase(join(folder, 'test.db'))); });
 afterEach(() => { repo.database.sqlite.close(); rmSync(folder, { recursive: true, force: true }); });
 
+it('lists complete lorebooks with entries ordered and scoped to their own book', () => {
+  expect(repo.listLorebooks()).toEqual([]);
+  const beta = repo.createLorebook(lorebookInputSchema.parse({ name: 'B Coast', description: 'Coastal settings', legacyPayload: { imported: true }, entries: [
+    { title: 'Harbor', keys: ['harbor'], secondaryKeys: ['ship'], content: 'Ships arrive at the harbor.', order: 20, position: 'after', depth: 3, legacyPayload: { comment: 'Original metadata' } },
+    { title: 'Lighthouse', content: 'A light above the sea.', order: -1, constant: true, enabled: false },
+  ] }));
+  const alpha = repo.createLorebook(lorebookInputSchema.parse({ name: 'A Mountain', entries: [{ title: 'Harbor', keys: ['snow'], content: 'A separate mountain entry.', order: 5 }] }));
+  const empty = repo.createLorebook(lorebookInputSchema.parse({ name: 'C Empty' }));
+  const books = repo.listLorebooks();
+  expect(books).toEqual([alpha, beta, empty]);
+  expect(books[1]!.entries.map(entry => entry.title)).toEqual(['Lighthouse', 'Harbor']);
+});
+
 it('recovers legacy lore titles once and imports Tavern titles without losing entry data', async () => {
   const legacy = { comment: '海边灯塔', name: '后备名称', key: ['灯塔'], content: '守塔人在此居住。', position: 4, depth: 3, probability: 75 };
   const book = repo.createLorebook(lorebookInputSchema.parse({ name: '旧世界书', entries: [{ keys: legacy.key, content: legacy.content, depth: legacy.depth, legacyPayload: legacy }] }));
