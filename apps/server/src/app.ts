@@ -99,7 +99,9 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     await app.register(fastifyStatic,{root:config.webDist,prefix:'/'});
     app.setNotFoundHandler((req,reply)=> req.url.startsWith('/api/') ? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') }) : reply.sendFile('index.html'));
   }
-  app.addHook('onClose',async()=>{await choices.shutdown();await turns.shutdown();database.sqlite.close();});
+  // Active SSE requests need their generation cancelled before the server can drain them.
+  app.addHook('preClose',async()=>{await Promise.all([choices.shutdown(),turns.shutdown()]);});
+  app.addHook('onClose',async()=>{database.sqlite.close();});
   async function listen() {
     try {
       // A second launcher must acquire the port before changing persisted tasks.

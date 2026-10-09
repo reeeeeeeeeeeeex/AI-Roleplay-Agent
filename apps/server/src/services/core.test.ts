@@ -51,6 +51,36 @@ it('successful startup recovers interrupted generation after acquiring the port'
   expect(server.repository.getTurn(turn.id)).toMatchObject({ status: 'failed', recordsStatus: 'cancelled', error: 'Server restarted during generation.' });
 });
 
+it('shutdown aborts active generation before waiting for its open SSE connection', async () => {
+  let started!: () => void, aborted = false;
+  const running = new Promise<void>(resolve => { started = resolve; });
+  runtime.writeTurn = async request => {
+    started();
+    return new Promise<never>((_resolve, reject) => request.signal.addEventListener('abort', () => {
+      aborted = true; reject(request.signal.reason);
+    }, { once: true }));
+  };
+  const address = await server.listen();
+  const turn = server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'normal', input: { voice: 'protagonist', text: 'Wait for shutdown.' } }));
+  await running;
+  const subscription = new AbortController();
+  let closing: Promise<void> | undefined, transcript: Promise<string | null> | undefined;
+  try {
+    const response = await fetch(`${address}/api/turns/${turn.id}/events`, { signal: subscription.signal });
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    transcript = response.text().catch(() => null);
+    closing = server.app.close();
+    await vi.waitFor(() => expect(aborted).toBe(true), { timeout: 800 });
+    expect(await transcript).toContain('turn.cancelled');
+    await closing;
+    expect(server.app.server.listening).toBe(false);
+  } finally {
+    subscription.abort(); server.turns.cancel(turn.id);
+    await (closing ?? server.app.close());
+    await transcript;
+  }
+});
+
 it('local image caching keeps uploaded replacements at distinct URLs', async () => {
   const original = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('original-image-fixture')]);
   const upload = await server.app.inject({ method: 'POST', url: '/api/assets/upload', headers: { 'content-type': 'application/octet-stream' }, payload: original });
