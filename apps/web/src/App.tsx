@@ -23,6 +23,7 @@ import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
 import { readAppearance, saveAppearance } from './appearance.js';
 import { copyText } from './clipboard.js';
+import { readComposerDrafts, saveComposerDrafts } from './composer-drafts.js';
 import { version as appVersion } from '../../../package.json';
 import './branches.css';
 
@@ -59,10 +60,8 @@ export default function App() {
   const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
   const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
-  const [inputDrafts, setInputDrafts] = useState<Record<string, string>>(() => {
-    try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('story-drafts') ?? '{}')).filter(([, value]) => typeof value === 'string')) as Record<string, string>; }
-    catch { return {}; }
-  });
+  const [inputDrafts, setInputDrafts] = useState(readComposerDrafts);
+  const savedInputDrafts = useRef({ ...inputDrafts });
   const inputDraftsRef = useRef(inputDrafts);
   inputDraftsRef.current = inputDrafts;
   const [voice, setVoice] = useState<UserVoice | 'assistant'>('protagonist');
@@ -197,7 +196,7 @@ export default function App() {
     sendPending.current = true; setRefreshingApp(true);
     try {
       await flushContentEdits();
-      try { localStorage.setItem('story-drafts', JSON.stringify(inputDraftsRef.current)); }
+      try { saveComposerDrafts(inputDraftsRef.current, savedInputDrafts.current); }
       catch { throw new Error(t('无法保留输入草稿，暂未刷新。请先复制草稿，再检查浏览器存储权限。')); }
       window.location.reload();
     } finally { sendPending.current = false; setRefreshingApp(false); }
@@ -282,7 +281,7 @@ export default function App() {
   }, [chatId]);
 
   useEffect(() => {
-    try { localStorage.setItem('story-drafts', JSON.stringify(inputDrafts)); }
+    try { saveComposerDrafts(inputDrafts, savedInputDrafts.current); }
     catch { setNotice(t("浏览器无法保存草稿，请在关闭页面前复制输入。")); }
   }, [inputDrafts]);
 

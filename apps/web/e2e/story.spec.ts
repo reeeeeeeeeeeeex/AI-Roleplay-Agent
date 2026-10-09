@@ -134,6 +134,67 @@ test('browser storage: blocked reads do not prevent opening and writing a story'
   expect(errors).toEqual([]);
 });
 
+test('browser drafts: two windows keep their separate story drafts after reload', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const other = await (await request.post('/api/conversations', { data: { title: 'Second window story', kind: 'solo', characterId: chat.characterId } })).json();
+  const second = await page.context().newPage();
+  try {
+    await second.goto('/');
+    await second.locator('.story-list button').filter({ hasText: other.title }).click();
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('第一个窗口的草稿。');
+    await second.getByRole('textbox', { name: '输入消息', exact: true }).fill('第二个窗口的草稿。');
+    await page.reload();
+    await page.locator('.story-list button').filter({ hasText: chat.title }).click();
+    await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue('第一个窗口的草稿。');
+    await second.reload();
+    await second.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(second.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue('第二个窗口的草稿。');
+  } finally { await second.close(); }
+});
+
+test('browser drafts: legacy drafts load and an accepted message stays cleared after reload', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await page.evaluate(id => localStorage.setItem('story-drafts', JSON.stringify({ [id]: '旧版保留的用户草稿。', [`${id}:assistant`]: '旧版保留的角色草稿。' })), chat.id);
+  await page.reload();
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await expect(input).toHaveValue('旧版保留的用户草稿。');
+  await page.locator('.voice-switch').getByRole('button', { name: '角色', exact: true }).click();
+  await expect(input).toHaveValue('旧版保留的角色草稿。');
+  await page.locator('.voice-switch').getByRole('button', { name: '主角', exact: true }).click();
+  const manual = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await manual.click(); await expect(manual).toBeChecked();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(1);
+  await expect(input).toHaveValue('');
+  await page.reload();
+  await expect(input).toHaveValue('');
+  await page.locator('.voice-switch').getByRole('button', { name: '角色', exact: true }).click();
+  await expect(input).toHaveValue('旧版保留的角色草稿。');
+});
+
+test('browser drafts: failed storage keeps the composer and prevents an update reload', async ({ page }) => {
+  await enableUpdateNotification(page);
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith('story-draft:')) throw new DOMException('Storage full', 'QuotaExceededError');
+      set.call(this, key, value);
+    };
+  });
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('存储失败时仍须保留的草稿。');
+  await expect(page.locator('.banner').filter({ hasText: '浏览器无法保存草稿' })).toBeVisible();
+  let reloads = 0;
+  page.on('request', req => { if (req.url().endsWith('/api/session')) reloads++; });
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+  await page.getByRole('button', { name: '刷新应用', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '无法保留输入草稿' })).toBeVisible();
+  await expect(input).toHaveValue('存储失败时仍须保留的草稿。');
+  expect(reloads).toBe(0);
+});
+
 test('browser storage: failed recovery markers do not interrupt live replies', async ({ page }) => {
   await page.evaluate(() => {
     const set = Storage.prototype.setItem, remove = Storage.prototype.removeItem;
