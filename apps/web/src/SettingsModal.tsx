@@ -192,7 +192,7 @@ export default function SettingsModal({
               label={t("旁白头像")}
               value={writing.narrator.avatarPath}
               disabled={locked}
-              onChange={(url) => setWriting({ ...writing, narrator: { ...writing.narrator, avatarPath: url } })}
+              onChange={(url) => setWriting(draft => ({ ...draft, narrator: { ...draft.narrator, avatarPath: url } }))}
             />
             <label>{t("Memory / 主角状态模型")}<select value={writing.recordConnectionId ?? ''} onChange={e => setWriting({ ...writing, recordConnectionId: e.target.value || null })}>
                 <option value="">{t("跟随当前模型")}</option>

@@ -982,6 +982,32 @@ test('global send count and fixed message start control the raw prompt range', a
   expect(await preview()).not.toContain('蓝色车票');
 });
 
+test('narrator upload preserves writing edits made while the file is uploading', async ({ page, request }) => {
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let avatar = '';
+  await page.route('**/api/assets/upload', async route => {
+    const response = await route.fetch(); avatar = (await response.json()).url; captured();
+    await waiting; await route.fulfill({ response });
+  });
+  try {
+    await settings.locator('input[type="file"]').setInputFiles({ name: 'narrator.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=', 'base64') });
+    await ready;
+    await settings.getByRole('textbox', { name: '旁白名称', exact: true }).fill('New narrator name');
+    await settings.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('none');
+    release();
+    await expect(settings.locator('.avatar-field-preview img')).toHaveAttribute('src', avatar);
+    await expect(settings.getByRole('textbox', { name: '旁白名称', exact: true })).toHaveValue('New narrator name');
+    await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('none');
+    await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
+    await expect(settings.getByRole('status')).toContainText('写作设置已保存');
+    expect(await (await request.get('/api/settings/general')).json()).toMatchObject({ narrator: { name: 'New narrator name', avatarPath: avatar }, agencyMode: 'none' });
+  } finally { release(); }
+});
+
 test('writing drafts survive saving model settings without reverting them', async ({ page, request }) => {
   const settings = await languageSettings(page);
   await settings.getByRole('button', { name: '写作', exact: true }).click();
