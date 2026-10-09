@@ -140,6 +140,58 @@ test('connection copy opens a separate editable model without exposing its saved
   expect(modelRequests).toBe(0);
 });
 
+test('character copies retain profile fields and edit independently on a narrow English screen', async ({ page, request }, info) => {
+  const source = await (await request.post('/api/characters', { data: {
+    name: 'Profile variant source', description: 'Original description', personality: 'Patient', scenario: 'A quiet library',
+    firstMessage: 'Hello {{user}}', exampleDialogue: 'A short example', systemPrompt: 'Stay in character', postHistoryInstructions: 'Write concisely',
+  } })).json();
+  await request.post('/api/characters', { data: { name: `${source.name} (copy)` } });
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.put(`/api/conversations/${chat.id}`, { data: { ...chat, characterId: source.id } });
+  await page.reload(); await englishInterface(page);
+  await page.locator('.studio-nav button').filter({ hasText: /^Character\s/ }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  const card = page.locator('.character-card').filter({ has: page.getByRole('button', { name: source.name, exact: true }) });
+  const duplicate = card.getByRole('button', { name: 'Duplicate character', exact: true });
+  const box = (await duplicate.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(320);
+  const created = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/api/characters'));
+  await duplicate.click();
+  const copied = await (await created).json();
+  const { id, createdAt, updatedAt, ...profile } = source;
+  expect(copied).toMatchObject({ ...profile, name: `${source.name} (copy 2)` });
+  expect(copied.id).not.toBe(source.id);
+  const editor = page.getByRole('dialog', { name: 'Edit Character', exact: true });
+  await editor.getByRole('textbox', { name: 'Description', exact: true }).fill('Changed in the copy only.');
+  await editor.getByRole('textbox', { name: 'Description', exact: true }).blur();
+  await expect.poll(async () => (await (await request.get(`/api/characters/${copied.id}`)).json()).description).toBe('Changed in the copy only.');
+  expect((await (await request.get(`/api/characters/${source.id}`)).json()).description).toBe(source.description);
+  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).characterId).toBe(source.id);
+});
+
+test('persona copies preserve the starting template without changing the default or story binding', async ({ page, request }, info) => {
+  const source = await (await request.post('/api/personas', { data: { name: '模板主角', description: '原有主角资料', stateTemplate: {
+    occupation: '旅人', current_outfit: '蓝色外套', past_experience_before_story: '从海边长大', skills: [{ skill_name: '航海', skill_level: '熟练' }],
+  } } })).json();
+  const general = await (await request.get('/api/settings/general')).json();
+  await request.put('/api/settings/general', { data: { ...general, defaultPersonaId: source.id } });
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.put(`/api/conversations/${chat.id}`, { data: { ...chat, personaId: source.id } });
+  await page.reload();
+  await page.locator('.studio-nav button').filter({ hasText: /^主角\s/ }).click();
+  const card = page.locator('.character-card').filter({ has: page.getByRole('button', { name: source.name, exact: true }) });
+  const created = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/api/personas'));
+  await card.getByRole('button', { name: '复制主角', exact: true }).click();
+  const copied = await (await created).json();
+  expect(copied.id).not.toBe(source.id);
+  expect(copied).toMatchObject({ name: `${source.name}（副本）`, description: source.description, stateTemplate: source.stateTemplate });
+  await expect(page.getByRole('dialog', { name: '编辑主角', exact: true }).getByRole('textbox', { name: '名称', exact: true })).toHaveValue(copied.name);
+  expect((await (await request.get('/api/settings/general')).json()).defaultPersonaId).toBe(source.id);
+  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).personaId).toBe(source.id);
+});
+
 test('app update waits for the user and retains the composer through reload', async ({ page }) => {
   await enableUpdateNotification(page);
   const input = page.getByRole('textbox', { name: '输入消息', exact: true });

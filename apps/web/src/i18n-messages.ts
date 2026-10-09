@@ -6,6 +6,8 @@ export const english = {
   "清除筛选": "Clear filter",
   "没有匹配的名称或标题。": "No matching names or titles.",
   "复制连接": "Duplicate connection",
+  "复制角色": "Duplicate character",
+  "复制主角": "Duplicate persona",
   "连接已复制，可编辑副本的模型和参数。": "Connection duplicated. You can edit the copy's model and parameters.",
   "（副本）": " (copy)",
   "（副本 {0}）": " (copy {0})",

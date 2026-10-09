@@ -68,6 +68,7 @@ export default function App() {
   const historyRequest = useRef(0);
   const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
+  const [copyingProfile, setCopyingProfile] = useState(false);
   const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
   const [inputDrafts, setInputDrafts] = useState(readComposerDrafts);
   const savedInputDrafts = useRef({ ...inputDrafts });
@@ -628,17 +629,33 @@ export default function App() {
   const edit = (kind: Collection, value: any = defaults[kind]) =>
     setEditor({ kind, value });
 
-  async function copyConnection(source: { id: string; name: string }) {
-    const names = new Set((data.connections ?? []).map(item => item.name));
+  function copyName(kind: 'connections' | 'characters' | 'personas', sourceName: string, maxLength: number) {
+    const names = new Set((data[kind] ?? []).map(item => item.name));
     let name = '', number = 1;
     do {
       const suffix = number === 1 ? t('（副本）') : t('（副本 {0}）', number);
-      name = source.name.slice(0, 100 - suffix.length) + suffix;
+      name = sourceName.slice(0, maxLength - suffix.length) + suffix;
       number++;
     } while (names.has(name));
-    const copied = await api(`/connections/${source.id}/copy`, 'POST', { name });
+    return name;
+  }
+
+  async function copyConnection(source: { id: string; name: string }) {
+    const copied = await api(`/connections/${source.id}/copy`, 'POST', { name: copyName('connections', source.name, 100) });
     updateData(old => ({ ...old, connections: [...(old.connections ?? []), copied] }));
     edit('connections', copied);
+  }
+
+  async function copyProfile(kind: 'characters' | 'personas', sourceId: string) {
+    if (copyingProfile) return;
+    setCopyingProfile(true);
+    try {
+      await flushContentEdits();
+      const { id, createdAt, updatedAt, ...original } = await api(`/${kind}/${sourceId}`);
+      const copied = await api(`/${kind}`, 'POST', { ...original, name: copyName(kind, original.name, 200) });
+      updateData(old => ({ ...old, [kind]: [...(old[kind] ?? []), copied] }));
+      edit(kind, copied);
+    } finally { setCopyingProfile(false); }
   }
 
   async function save(value: any) {
@@ -1244,6 +1261,8 @@ export default function App() {
                               >
                                 {t("开始聊天")}</button>
                             )}
+                            <button disabled={copyingProfile} aria-label={page === 'characters' ? t("复制角色") : t("复制主角")} title={page === 'characters' ? t("复制角色") : t("复制主角")}
+                              onClick={() => act(copyProfile(page, v.id))}><Copy size={14} /></button>
                             <button className="danger" onClick={() => act(remove(page, v))}>{t("删除")}</button>
                           </div>
                         </div>
