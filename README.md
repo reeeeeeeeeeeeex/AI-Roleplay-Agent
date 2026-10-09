@@ -75,6 +75,8 @@ API 密钥保存在本地 SQLite，数据库未加密。公开项目时不要上
 
 更新发布包时，先停止服务并备份数据，再解压新版，将原来的 `apps/server/data/` 和自定义 `.env` 放入新版目录后启动；不要复制旧 `node_modules`。源码开发者更新代码后运行 `pnpm build`。重启服务后刷新或重开应用。
 
+已打开的页面检测到新版时会提示刷新，不会自动打断编辑。点击「刷新应用」会先等待正文保存并保留输入草稿；保存失败时留在当前页面。
+
 ### 开发与贡献
 
 项目采用全 TypeScript monorepo：**React + Vite** 构建界面，**Fastify** 提供 API，**SQLite + Drizzle** 保存数据，独立的 Agent Runtime 负责提示词组装和模型适配。
@@ -155,6 +157,8 @@ Chats and settings are stored locally in `apps/server/data/` by default. Stop th
 API keys are stored in local SQLite; the database is not encrypted. Keep databases, `.env`, and private story data out of public repositories. The server listens on localhost by default. Installing the PWA still requires the local server to run.
 
 To update a release, stop the server and back up your data. Extract the new version, transfer your existing `apps/server/data/` and custom `.env` into it, then start it. Do not copy old `node_modules`. Source users should run `pnpm build` after updating. Refresh or reopen the app after restarting the server.
+
+An open page announces available updates without interrupting editing. **Reload app** waits for content saves and preserves composer drafts; if saving fails, the page stays open.
 
 ### Development and contributions
 

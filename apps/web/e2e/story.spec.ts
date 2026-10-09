@@ -37,6 +37,50 @@ async function englishInterface(page: Page) {
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
 }
 
+async function enableUpdateNotification(page: Page) {
+  // Simulate a controller change without installing a worker in the test browser.
+  await page.addInitScript(() => Object.defineProperty(navigator, 'serviceWorker', {
+    configurable: true,
+    value: Object.assign(new EventTarget(), { controller: {}, register: async () => ({}) }),
+  }));
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
+}
+
+test('app update waits for the user and retains the composer through reload', async ({ page }) => {
+  await enableUpdateNotification(page);
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('刷新后还要继续写的草稿。');
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '提示词', exact: true }).click();
+  await settings.getByRole('textbox', { name: '附加指令', exact: true }).fill('尚未保存的设置，不应被后台更新丢弃。');
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+  await expect(page.locator('.app-update')).toContainText('新版本已就绪');
+  await expect(settings.getByRole('textbox', { name: '附加指令', exact: true })).toHaveValue('尚未保存的设置，不应被后台更新丢弃。');
+  await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+  const reloaded = page.waitForResponse(response => response.url().endsWith('/api/session'));
+  await page.getByRole('button', { name: '刷新应用', exact: true }).click();
+  await reloaded;
+  await expect(input).toHaveValue('刷新后还要继续写的草稿。');
+  await expect(page.locator('.app-update')).toHaveCount(0);
+});
+
+test('app update keeps a failed message edit and does not reload', async ({ page }) => {
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '先保存一条消息。', 2);
+  await enableUpdateNotification(page);
+  await page.route('**/api/messages/*/edit', route => route.fulfill({ status: 500, json: { error: '保存暂时失败' } }));
+  const body = page.getByRole('textbox', { name: '用户消息正文', exact: true });
+  await body.fill('必须保留这份未保存的修改。');
+  let reloads = 0;
+  page.on('request', req => { if (req.url().endsWith('/api/session')) reloads++; });
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+  await page.getByRole('button', { name: '刷新应用', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '内容尚未保存' })).toBeVisible();
+  await expect(body).toHaveValue('必须保留这份未保存的修改。');
+  expect(reloads).toBe(0);
+});
+
 test('browser storage: blocked reads do not prevent opening and writing a story', async ({ page }, info) => {
   await page.addInitScript(() => {
     Storage.prototype.getItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };

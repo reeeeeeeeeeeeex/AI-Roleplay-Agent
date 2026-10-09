@@ -62,6 +62,8 @@ export default function App() {
     try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('story-drafts') ?? '{}')).filter(([, value]) => typeof value === 'string')) as Record<string, string>; }
     catch { return {}; }
   });
+  const inputDraftsRef = useRef(inputDrafts);
+  inputDraftsRef.current = inputDrafts;
   const [voice, setVoice] = useState<UserVoice | 'assistant'>('protagonist');
   const draftKey = chatId ? voice === 'assistant' ? `${chatId}:assistant` : chatId : '';
   const text = inputDrafts[draftKey] ?? '';
@@ -72,6 +74,14 @@ export default function App() {
   const [replyTarget, setReplyTarget] = useState('auto');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [updateReady, setUpdateReady] = useState(false);
+  const [refreshingApp, setRefreshingApp] = useState(false);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+    const ready = () => setUpdateReady(true);
+    navigator.serviceWorker.addEventListener('controllerchange', ready);
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', ready);
+  }, []);
   const [panel, setPanel] = useState(() => window.matchMedia('(min-width: 1121px)').matches);
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -179,6 +189,17 @@ export default function App() {
   function rememberSession(key: 'selected-chat' | 'active-turn', value: string | null) {
     try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }
     catch { setNotice(t('浏览器无法保存本地状态。当前仍可使用，刷新后可能无法自动恢复；关闭前请复制未发送草稿。')); }
+  }
+
+  async function refreshUpdatedApp() {
+    if (turn || choicesBusy || sendPending.current) return;
+    sendPending.current = true; setRefreshingApp(true);
+    try {
+      await flushContentEdits();
+      try { localStorage.setItem('story-drafts', JSON.stringify(inputDraftsRef.current)); }
+      catch { throw new Error(t('无法保留输入草稿，暂未刷新。请先复制草稿，再检查浏览器存储权限。')); }
+      window.location.reload();
+    } finally { sendPending.current = false; setRefreshingApp(false); }
   }
 
   const avatarFor = (message: MessageNode): string | undefined =>
@@ -739,6 +760,10 @@ export default function App() {
           </div>
         </header>
 
+        {updateReady && <div className="banner app-update" role="status">
+          <span>{t('新版本已就绪，可在完成当前编辑后刷新。')}</span>
+          <button disabled={!!turn || sending || choicesBusy || refreshingApp} onClick={() => act(refreshUpdatedApp())}>{refreshingApp ? t('保存中…') : t('刷新应用')}</button>
+        </div>}
         {error && (
           <div className="banner error" role="alert">
             <span>{error}</span>
