@@ -1002,7 +1002,23 @@ describe('branches and records',()=>{
     expect(server.repository.getMessage(last.id)?.content).toBe(last.content);
     expect(settledStoryIds(server.repository, chat)).toHaveLength(1);
   });
-  it('keeps state snapshots scoped to the chosen branch',async()=>{await normal();const b=server.repository.getActiveBranch(chat);const state=blankState();state.global_state[0]!.current_location='room';server.repository.createState(chat,b.at(-1)!.storyTurnId,state);expect(server.repository.latestState(chat)?.tables.global_state[0]?.current_location).toBe('room');server.repository.setHead(chat,b[0]!.id);expect(server.repository.latestState(chat)).toBeNull();});
+  it('keeps the newest applicable state snapshot scoped to the chosen branch', async () => {
+    const repo = server.repository;
+    await normal();
+    const branch = repo.getActiveBranch(chat);
+    const state = blankState(); state.global_state[0]!.current_location = 'room';
+    const later = repo.createState(chat, branch.at(-1)!.storyTurnId, state);
+    repo.setHead(chat, branch[0]!.id);
+    expect(repo.latestState(chat)).toBeNull();
+    state.global_state[0]!.current_location = 'entrance';
+    const earlier = repo.createState(chat, branch[0]!.storyTurnId, state);
+    repo.setHead(chat, branch.at(-1)!.id);
+    expect(repo.latestState(chat)).toEqual(earlier);
+    const restored = repo.createState(chat, later.storyTurnId, later.tables);
+    expect(repo.latestState(chat)).toEqual(restored);
+    repo.setHead(chat, branch[0]!.id);
+    expect((await server.app.inject({ url: `/api/conversations/${chat}/state` })).json()).toEqual(earlier);
+  });
   it('autosaves record edits only on their originating branch and preserves memory edits in archives', async () => {
     const repo = server.repository;
     await normal();

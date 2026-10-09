@@ -494,7 +494,9 @@ export class Repository {
   }
   latestState(conversationId: string): ProtagonistStateSnapshot | null {
     const active = this.checkpointFilter(conversationId);
-    const row = this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().find((item) => active(item.id));
+    // Find the branch's checkpoint before decoding potentially large historical state tables.
+    const selected = this.database.db.select({ id: stateSnapshots.id }).from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().find((item) => active(item.id));
+    const row = selected ? this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.id, selected.id)).get() : null;
     return row ? { ...row, version: row.version as 1 | 2 } : null;
   }
   createState(conversationId: string, storyTurnId: string | null, tables: ProtagonistTables): ProtagonistStateSnapshot {
