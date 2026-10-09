@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Pencil, Square } from 'lucide-react';
 import type { ActionChoiceCache } from '@new-ai-chat/contracts';
 import { api } from './api.js';
-import { flushContentEdits } from './useContentAutosave.js';
+import { flushContentEdits, registerContentEditor } from './useContentAutosave.js';
 import './action-choices.css';
 
 type Edit = { groupId: string; index: number; value: string; previous: string };
@@ -51,9 +51,10 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
   const flushRef = useRef(flushEdit); flushRef.current = flushEdit;
   useEffect(() => {
     mounted.current = true;
+    const unregister = registerContentEditor(() => flushRef.current());
     const flush = () => { void flushRef.current(); };
     window.addEventListener('pagehide', flush);
-    return () => { mounted.current = false; controller.current?.abort(); callbacks.current.onBusy(false); window.removeEventListener('pagehide', flush); flush(); };
+    return () => { mounted.current = false; unregister(); controller.current?.abort(); callbacks.current.onBusy(false); window.removeEventListener('pagehide', flush); flush(); };
   }, []);
   useEffect(() => { if (disabled) { controller.current?.abort(); setOpen(false); } }, [disabled]);
 

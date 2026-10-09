@@ -2,6 +2,10 @@ import { t } from './i18n.js';
 import { useEffect, useRef, useState } from 'react';
 
 const editors = new Set<() => Promise<boolean>>();
+export function registerContentEditor(flush: () => Promise<boolean>): () => void {
+  editors.add(flush);
+  return () => { editors.delete(flush); };
+}
 export async function flushContentEdits() {
   for (const flush of [...editors]) if (!await flush()) throw new Error(t("内容尚未保存，请先处理编辑区的提示。草稿已保留。"));
 }
@@ -83,8 +87,9 @@ export function useContentAutosave<T>({ initial, draftKey, onSave, onError, enab
     mounted.current = true;
     const save = () => flushRef.current();
     const leave = () => { void save(); };
-    if (enabled) { editors.add(save); window.addEventListener('pagehide', leave); }
-    return () => { mounted.current = false; editors.delete(save); window.removeEventListener('pagehide', leave); if (enabled) leave(); };
+    const unregister = enabled ? registerContentEditor(save) : undefined;
+    if (enabled) window.addEventListener('pagehide', leave);
+    return () => { mounted.current = false; unregister?.(); window.removeEventListener('pagehide', leave); if (enabled) leave(); };
   }, [enabled]);
   function discard() {
     if (pending.current) return;
