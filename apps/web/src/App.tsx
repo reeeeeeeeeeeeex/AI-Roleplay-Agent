@@ -1155,7 +1155,7 @@ export default function App() {
                           >
                             {cover ? (
                               <>
-                                <img className="character-card-bg-blur" src={cover} alt="" aria-hidden="true" />
+                                <img className="character-card-bg-blur" src={cover} alt="" aria-hidden="true" loading="lazy" />
                                 <img className="character-card-img" src={cover} alt={c.title} loading="lazy" />
                               </>
                             ) : (
@@ -1197,7 +1197,7 @@ export default function App() {
                           >
                             {v.avatarPath ? (
                               <>
-                                <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
+                                <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" loading="lazy" />
                                 <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
                               </>
                             ) : (
@@ -1242,7 +1242,7 @@ export default function App() {
                         >
                           {v.avatarPath ? (
                             <>
-                              <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
+                              <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" loading="lazy" />
                               <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
                             </>
                           ) : (
