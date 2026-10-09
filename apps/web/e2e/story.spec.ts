@@ -47,6 +47,41 @@ async function enableUpdateNotification(page: Page) {
   await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
 }
 
+test('connection copy opens a separate editable model without exposing its saved key', async ({ page, request }) => {
+  const created = await request.post('/api/connections', { data: {
+    name: 'Copy source', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1',
+    model: 'original-model', apiKey: 'offline-copy-key', headers: { Authorization: 'offline-copy-header' },
+  } });
+  expect(created.ok()).toBe(true);
+  const source = await created.json();
+  const selected = (await (await request.get('/api/settings/general')).json()).connectionId;
+  await page.reload();
+  await englishInterface(page);
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: 'Models', exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  const item = settings.locator('.resource-item').filter({ has: page.getByRole('heading', { name: 'Copy source', exact: true }) });
+  let modelRequests = 0;
+  page.on('request', req => { if (req.method() === 'POST' && (/\/connections\/[^/]+\/test$/.test(req.url()) || req.url().endsWith('/api/turns'))) modelRequests++; });
+  const duplicate = item.getByRole('button', { name: 'Duplicate connection', exact: true });
+  await duplicate.scrollIntoViewIfNeeded();
+  const bounds = (await duplicate.boundingBox())!;
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+  await duplicate.click();
+  const editor = page.getByRole('dialog', { name: /Edit .*connection/i });
+  await expect(editor.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Copy source (copy)');
+  await expect(editor.getByLabel('API key (blank keeps the saved value)', { exact: true })).toHaveValue('');
+  await expect(editor.getByRole('textbox', { name: 'Custom headers JSON', exact: true })).toHaveValue(/\[stored\]/);
+  await editor.getByRole('textbox', { name: 'Model ID', exact: true }).fill('copy-model');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  const connections = await (await request.get('/api/connections')).json();
+  expect(connections.find((item: any) => item.id === source.id).model).toBe('original-model');
+  expect(connections.find((item: any) => item.name === 'Copy source (copy)')).toMatchObject({ model: 'copy-model', hasApiKey: true });
+  expect((await (await request.get('/api/settings/general')).json()).connectionId).toBe(selected);
+  expect(modelRequests).toBe(0);
+});
+
 test('app update waits for the user and retains the composer through reload', async ({ page }) => {
   await enableUpdateNotification(page);
   const input = page.getByRole('textbox', { name: '输入消息', exact: true });

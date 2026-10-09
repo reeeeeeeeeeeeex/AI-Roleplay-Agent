@@ -31,6 +31,8 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 **连接 API，共同写作。** 发送主角行动或用户旁白，让模型接着回应。默认使用普通写作；需要时可选择 Writer Agent 或 Planner＋Writer，使用选人、规划与工具辅助创作。支持 **Chat Completions、Anthropic Messages、OpenAI Responses** 三种协议。
 
+同一服务商使用多个模型时，可以在「设置 → 模型」复制已有连接，再修改副本的模型 ID。地址、参数和已保存的密钥会一并复制；密钥不会返回浏览器，也不会自动切换当前模型。
+
 **手动录入，掌握每一句话。** 开启输入框上方的「单人创作／网页聊天手动输入」，主角、用户旁白和角色发言都只保存消息。可以连续输入同一种身份，无须强制交替。
 
 **使用 AI 网页，再把回复带回来。** 在预览中复制整理好的网页提示词，手动粘贴到 Gemini、ChatGPT、Claude 等网页，再把回复填入「角色」并发送。复制会同步保存尚未发送的 User 草稿，避免历史缺少这一轮输入。复制出的内容是普通文本，不是网页端真正的 System 消息。
@@ -113,6 +115,8 @@ The project follows a **Minimalist** approach: edit content directly, keep every
 ### Write your way
 
 **Connect an API and write together.** Send a protagonist action or user narration, then let the model respond. Plain writing is the default. Writer Agent and Planner＋Writer offer speaker selection, planning, and tool-assisted writing when needed. Supported protocols are **Chat Completions, Anthropic Messages, and OpenAI Responses**.
+
+To use several models from one provider, duplicate a connection in **Settings → Models**, then edit the copy's model ID. The URL, parameters, and saved credentials are copied on the server. Saved secrets are not returned to the browser, and your current model selection stays unchanged.
 
 **Enter every voice manually.** Enable the manual-input switch above the composer to save protagonist, user-narrator, and character messages without generating story text. Any voice can send consecutive messages; alternating roles is optional.
 

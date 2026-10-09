@@ -13,7 +13,7 @@ export type AvatarMode = 'compact' | 'large' | 'full';
 
 export default function SettingsModal({
   onClose, generalSettings, onSaveGeneral, generationActive, connections,
-  onEditConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
+  onEditConnection, onCopyConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
   avatarMode, setAvatarMode,
   messageDisplayLimit, setMessageDisplayLimit, plainThinkingExpanded, setPlainThinkingExpanded,
   readingAppearance, onSaveAppearance,
@@ -24,6 +24,7 @@ export default function SettingsModal({
   generationActive: boolean;
   connections: any[];
   onEditConnection: (connection?: any) => void;
+  onCopyConnection: (connection: any) => Promise<void>;
   onDeleteConnection: (connection: any) => Promise<void>;
   onTestConnection: (id: string) => Promise<void>;
   promptSettings: PromptSettings;
@@ -143,6 +144,7 @@ export default function SettingsModal({
                 <div className="resource-info"><h3>{c.name}</h3><p>{c.model} · {c.baseUrl}</p></div>
                 <div className="resource-actions">
                   <button onClick={() => onEditConnection(c)}>{t("编辑")}</button>
+                  <button disabled={locked} onClick={() => void save(() => onCopyConnection(c), t('连接已复制，可编辑副本的模型和参数。'))}>{t('复制连接')}</button>
                   <button disabled={locked} onClick={() => void save(() => onTestConnection(c.id), t("连接测试通过。"))}>{t("测试连接")}</button>
                   <button className="danger" disabled={locked} onClick={() => void save(() => onDeleteConnection(c), t("连接已删除。"))}>{t("删除")}</button>
                 </div>

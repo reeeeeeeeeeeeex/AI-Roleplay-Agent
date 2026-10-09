@@ -108,6 +108,13 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     idleAll();
     return repo.deletePromptPreset(idOf(req)) ? { deleted: true } : reply.code(404).send({ error: '预设不存在。', errorText: uiText('预设不存在。') });
   });
+  app.post('/api/connections/:id/copy', async (req, reply) => {
+    const { name } = z.object({ name: connectionInputSchema.shape.name }).parse(req.body);
+    const source = repo.getRuntimeConnection(idOf(req));
+    if (!source) return reply.code(404).send({ error: 'Connection not found.', errorText: uiText('Connection not found.') });
+    // Credentials stay on the server; createConnection returns only the public summary.
+    return reply.code(201).send(repo.createConnection(connectionInputSchema.parse({ ...source, name })));
+  });
   app.post('/api/connections/:id/test', async (req) => {
     const connection = repo.getRuntimeConnection(idOf(req)); if (!connection) throw new AppError("Connection not found.");
     return { ...await turns.runtime.testConnection(connection, AbortSignal.timeout(60_000)), streaming: true, tools: true };

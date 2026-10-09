@@ -257,6 +257,21 @@ it('developer Trace retains cancelled partial events and redacts structured secr
   sink.flush();
 });
 
+it('connection copy keeps credentials on the server and remains independent of its source', async () => {
+  const source = server.repository.getRuntimeConnection(connection)!;
+  const settings = server.repository.getGeneralSettings();
+  const response = await server.app.inject({ method: 'POST', url: `/api/connections/${connection}/copy`, payload: { name: '  Copy  ' } });
+  expect(response.statusCode).toBe(201);
+  const copied = response.json();
+  expect(copied).toMatchObject({ name: 'Copy', hasApiKey: true, headers: { Authorization: '[stored]' } });
+  expect(response.body).not.toContain(source.apiKey);
+  expect(response.body).not.toContain(source.headers.Authorization);
+  expect(server.repository.getRuntimeConnection(copied.id)).toEqual({ ...source, id: copied.id });
+  server.repository.updateConnection(copied.id, connectionInputSchema.parse({ ...source, name: 'Edited copy', model: 'another-model', apiKey: 'copy-only-fixture-key' }));
+  expect(server.repository.getRuntimeConnection(connection)).toEqual(source);
+  expect(server.repository.getGeneralSettings()).toEqual(settings);
+});
+
 it('model settings: discovers models with saved credentials without saving the draft', async () => {
   const fetchMock = vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'model-b' }, { id: 'model-a' }, { id: 'model-a' }] }));
   vi.stubGlobal('fetch', fetchMock);

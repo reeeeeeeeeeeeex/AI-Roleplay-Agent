@@ -565,6 +565,19 @@ export default function App() {
   const edit = (kind: Collection, value: any = defaults[kind]) =>
     setEditor({ kind, value });
 
+  async function copyConnection(source: { id: string; name: string }) {
+    const names = new Set((data.connections ?? []).map(item => item.name));
+    let name = '', number = 1;
+    do {
+      const suffix = number === 1 ? t('（副本）') : t('（副本 {0}）', number);
+      name = source.name.slice(0, 100 - suffix.length) + suffix;
+      number++;
+    } while (names.has(name));
+    const copied = await api(`/connections/${source.id}/copy`, 'POST', { name });
+    setData(old => ({ ...old, connections: [...(old.connections ?? []), copied] }));
+    edit('connections', copied);
+  }
+
   async function save(value: any) {
     if (!editor) return;
     const input = { ...value };
@@ -1254,6 +1267,7 @@ export default function App() {
         generationActive={sending || !!turn}
         connections={data.connections ?? []}
         onEditConnection={(conn) => edit('connections', conn ?? defaults.connections)}
+        onCopyConnection={copyConnection}
         onDeleteConnection={(conn) => remove('connections', conn)}
         onTestConnection={async (id) => {
           await api(`/connections/${id}/test`, 'POST', {});

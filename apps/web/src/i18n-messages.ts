@@ -1,5 +1,9 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  "复制连接": "Duplicate connection",
+  "连接已复制，可编辑副本的模型和参数。": "Connection duplicated. You can edit the copy's model and parameters.",
+  "（副本）": " (copy)",
+  "（副本 {0}）": " (copy {0})",
   "新版本已就绪，可在完成当前编辑后刷新。": "An update is ready. Reload when you have finished editing.",
   "刷新应用": "Reload app",
   "无法保留输入草稿，暂未刷新。请先复制草稿，再检查浏览器存储权限。": "The input drafts could not be saved, so the app was not reloaded. Copy your drafts and check browser storage permissions first.",
