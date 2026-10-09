@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS turns (
   story_turn_id TEXT NOT NULL, status TEXT NOT NULL, trigger TEXT NOT NULL, plan TEXT, error TEXT,
   created_at TEXT NOT NULL, completed_at TEXT
 );
+CREATE INDEX IF NOT EXISTS turns_conversation_idx ON turns(conversation_id);
 CREATE TABLE IF NOT EXISTS session_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -88,14 +89,17 @@ CREATE TABLE IF NOT EXISTS turn_traces (
   created_at TEXT NOT NULL, completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS turn_traces_turn_idx ON turn_traces(turn_id, request_index);
+CREATE INDEX IF NOT EXISTS turn_traces_conversation_created_idx ON turn_traces(conversation_id, created_at, request_index);
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   stage INTEGER NOT NULL, story_turn_id TEXT, content TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS memories_conversation_idx ON memories(conversation_id);
 CREATE TABLE IF NOT EXISTS state_snapshots (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   story_turn_id TEXT, version INTEGER NOT NULL DEFAULT 1, tables TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS state_snapshots_conversation_idx ON state_snapshots(conversation_id);
 CREATE TABLE IF NOT EXISTS proposals (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   story_turn_id TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending',
