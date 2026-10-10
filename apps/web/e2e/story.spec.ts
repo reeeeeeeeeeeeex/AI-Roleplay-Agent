@@ -1646,54 +1646,6 @@ test('story filter stays usable in English on a narrow screen and opens the matc
   await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
 });
 
-test('persona picker navigates by keyboard without saving until a choice is accepted', async ({ page, request }, info) => {
-  await request.post('/api/personas', { data: { name: 'Keyboard persona', description: 'Offline profile.' } });
-  const personas = await (await request.get('/api/personas')).json();
-  const lastPersona = personas.at(-1);
-  const chats = await (await request.get('/api/conversations')).json();
-  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
-  await page.reload();
-  await page.getByRole('button', { name: '故事资料', exact: true }).click();
-  const story = page.getByRole('dialog', { name: '编辑故事资料', exact: true });
-  const trigger = story.locator('.persona-picker-trigger');
-  await trigger.focus(); await page.keyboard.press('ArrowDown');
-  const choices = story.getByRole('listbox', { name: '主角身份', exact: true });
-  await expect(choices.getByRole('option').first()).toBeFocused();
-  await page.keyboard.press('End');
-  await expect(choices.getByRole('option', { name: lastPersona.name, exact: true })).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(choices).toHaveCount(0); await expect(trigger).toBeFocused();
-  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).personaId).toBeNull();
-  await page.keyboard.press('Enter'); await page.keyboard.press('End'); await page.keyboard.press('Space');
-  await expect(trigger).toContainText(lastPersona.name); await expect(trigger).toBeFocused();
-  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}`)).json()).personaId).toBe(lastPersona.id);
-  await page.keyboard.press('ArrowUp');
-  await expect(choices.getByRole('option', { name: lastPersona.name, exact: true })).toBeFocused();
-  await page.keyboard.press('Home'); await page.keyboard.press('Enter');
-  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}`)).json()).personaId).toBeNull();
-});
-
-test('persona picker allows keyboard creation and closes when focus leaves', async ({ page }) => {
-  await englishInterface(page);
-  await page.getByRole('button', { name: 'Story details', exact: true }).click();
-  const story = page.getByRole('dialog', { name: 'Edit Story details', exact: true });
-  const trigger = story.locator('.persona-picker-trigger');
-  await trigger.focus(); await page.keyboard.press('Space');
-  const choices = story.getByRole('listbox', { name: 'Protagonist identity', exact: true });
-  await expect(choices.getByRole('option').first()).toBeFocused();
-  await page.keyboard.press('End'); await page.keyboard.press('Tab');
-  const create = story.getByRole('button', { name: 'New protagonist', exact: true });
-  await expect(create).toBeFocused(); await page.keyboard.press('Enter');
-  const persona = page.getByRole('dialog', { name: 'Edit Protagonist', exact: true });
-  await expect(persona).toBeVisible();
-  await persona.getByRole('button', { name: 'Close', exact: true }).last().click();
-  await trigger.focus(); await page.keyboard.press('Enter'); await page.keyboard.press('End');
-  await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
-  await expect(choices).toHaveCount(0);
-  await expect(story.locator('.persona-picker:focus-within')).toHaveCount(0);
-  await expect(story.locator(':focus')).toHaveCount(1);
-});
-
 test('content cards and nested persona creation save on leaving their fields', async ({ page, request }) => {
   await page.locator('.studio-nav').getByRole('button', { name: /^角色 \d/ }).click();
   await page.getByRole('button', { name: 'Sina', exact: true }).click();

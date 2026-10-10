@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import { useState, useRef, useEffect, useId } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, User, Plus, Check } from 'lucide-react';
 import type { Persona } from '@new-ai-chat/contracts';
 
@@ -24,9 +24,6 @@ export default function PersonaPicker({
 }: PersonaPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const focusOnOpen = useRef(false);
-  const listId = useId();
 
   const selectedPersona = personas.find((p) => p.id === value);
   const fallbackPersona = !selectedPersona && defaultPersonaId ? personas.find((p) => p.id === defaultPersonaId) : undefined;
@@ -38,27 +35,21 @@ export default function PersonaPicker({
       }
     }
 
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && isOpen) {
+        setIsOpen(false);
+      }
+    }
+
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen]);
-
-  useEffect(() => {
-    if (disabled) { setIsOpen(false); return; }
-    if (isOpen && focusOnOpen.current) {
-      containerRef.current?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')?.focus();
-    }
-  }, [isOpen, disabled]);
-
-  function select(id: string | null) {
-    if (disabled) return;
-    setIsOpen(false);
-    triggerRef.current?.focus({ preventScroll: true });
-    onChange(id);
-  }
 
   // Display info on the collapsed trigger
   const displayAvatar = selectedPersona?.avatarPath ?? (value === null ? fallbackPersona?.avatarPath : null);
@@ -69,38 +60,14 @@ export default function PersonaPicker({
     : emptyLabel;
 
   return (
-    <div className={`persona-picker ${disabled ? 'disabled' : ''}`} ref={containerRef}
-      onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setIsOpen(false); }}
-      onKeyDown={event => {
-        if (disabled || event.nativeEvent.isComposing) return;
-        if (event.target === triggerRef.current && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
-          event.preventDefault(); focusOnOpen.current = true; setIsOpen(true);
-          containerRef.current?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')?.focus();
-          return;
-        }
-        if (!isOpen) return;
-        if (event.key === 'Escape') {
-          event.preventDefault(); event.stopPropagation(); setIsOpen(false); triggerRef.current?.focus(); return;
-        }
-        const option = (event.target as HTMLElement).closest<HTMLElement>('[role="option"]');
-        if (!option) return;
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); option.click(); return; }
-        const options = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="option"]')];
-        const current = options.indexOf(option);
-        const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
-          : ['ArrowDown', 'ArrowRight'].includes(event.key) ? Math.min(options.length - 1, current + 1)
-          : ['ArrowUp', 'ArrowLeft'].includes(event.key) ? Math.max(0, current - 1) : null;
-        if (next !== null) { event.preventDefault(); options[next]?.focus(); }
-      }}>
+    <div className={`persona-picker ${disabled ? 'disabled' : ''}`} ref={containerRef}>
       <button
-        ref={triggerRef}
         type="button"
         className={`persona-picker-trigger ${isOpen ? 'active' : ''}`}
         disabled={disabled}
-        onClick={event => { focusOnOpen.current = event.detail === 0; setIsOpen(prev => !prev); }}
+        onClick={() => setIsOpen((prev) => !prev)}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        aria-controls={isOpen ? listId : undefined}
       >
         <div className="persona-picker-trigger-thumb">
           {displayAvatar ? (
@@ -118,17 +85,17 @@ export default function PersonaPicker({
       </button>
 
       {isOpen && (
-        <div className="persona-picker-popover">
-          <div className="persona-picker-grid" role="listbox" id={listId} aria-label={t("主角身份")}>
+        <div className="persona-picker-popover" role="listbox">
+          <div className="persona-picker-grid">
             {/* Empty / Default option */}
             <div
               role="option"
-              tabIndex={0}
               aria-selected={!value}
               className={`persona-picker-card empty-card ${!value ? 'selected' : ''}`}
               onClick={(event) => {
                 event.preventDefault(); // Do not let the wrapping label reopen the trigger.
-                select(null);
+                onChange(null);
+                setIsOpen(false);
               }}
             >
               <div className="persona-picker-card-image-wrap empty-wrap">
@@ -160,13 +127,13 @@ export default function PersonaPicker({
                 <div
                   key={p.id}
                   role="option"
-                  tabIndex={0}
                   aria-label={p.name}
                   aria-selected={isSelected}
                   className={`persona-picker-card ${isSelected ? 'selected' : ''}`}
                   onClick={(event) => {
                     event.preventDefault();
-                    select(p.id);
+                    onChange(p.id);
+                    setIsOpen(false);
                   }}
                 >
                   <div className="persona-picker-card-image-wrap">
@@ -193,21 +160,26 @@ export default function PersonaPicker({
               );
             })}
 
+            {/* New Persona shortcut */}
+            {onCreatePersona && (
+              <div
+                role="button"
+                className="persona-picker-card create-card"
+                onClick={(event) => {
+                  event.preventDefault();
+                  setIsOpen(false);
+                  onCreatePersona();
+                }}
+              >
+                <div className="persona-picker-card-image-wrap create-wrap">
+                  <Plus size={26} />
+                </div>
+                <div className="persona-picker-card-info">
+                  <div className="persona-picker-card-name">{t("新建主角")}</div>
+                </div>
+              </div>
+            )}
           </div>
-          {onCreatePersona && (
-            <button
-              type="button"
-              className="persona-picker-create"
-              disabled={disabled}
-              onClick={(event) => {
-                event.preventDefault();
-                setIsOpen(false);
-                onCreatePersona();
-              }}
-            >
-              <Plus size={16} />{t("新建主角")}
-            </button>
-          )}
         </div>
       )}
     </div>

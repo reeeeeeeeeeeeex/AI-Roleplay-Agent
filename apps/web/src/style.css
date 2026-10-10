@@ -1966,13 +1966,6 @@ fieldset label {
   box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(99, 102, 241, 0.3);
 }
 
-.persona-picker-card:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-
-.persona-picker-create { width: 100%; margin-top: 10px; }
-
 .persona-picker-card-image-wrap {
   width: 100%;
   aspect-ratio: 3 / 4;
@@ -1990,6 +1983,25 @@ fieldset label {
 
 .persona-picker-empty-icon {
   color: var(--text-muted);
+}
+
+.persona-picker-card-image-wrap.create-wrap {
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+
+.persona-picker-card.create-card {
+  border-style: dashed;
+  border-color: var(--border-default);
+}
+
+.persona-picker-card.create-card:hover {
+  border-color: var(--accent);
+}
+
+.persona-picker-card.create-card:hover .create-wrap {
+  color: var(--accent);
 }
 
 .persona-picker-card-badge {
