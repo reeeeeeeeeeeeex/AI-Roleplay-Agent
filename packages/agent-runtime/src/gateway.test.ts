@@ -116,10 +116,12 @@ describe('gateway transport contract', () => {
     expect(visibleOnly).toContain('visible history');
     expect(visibleOnly).not.toContain('private-reasoning');
     const webPrompt = formatWebPrompt(visibleOnly, protocol);
-    expect(webPrompt).toContain(`## System · 写作要求\n\n${note.content}`);
+    expect(webPrompt).toContain(`## System\n\n${note.content}`);
+    expect(webPrompt).toContain('## User\n\n');
+    expect(webPrompt).not.toMatch(/^## (?:System|User|Assistant) ·/mu);
     expect(webPrompt).toContain('Go');
     expect(webPrompt).toContain('Final writing control.');
-    expect(webPrompt).toContain('## Assistant · 历史回复与上下文资料\n\nvisible history');
+    expect(webPrompt).toContain('## Assistant\n\nvisible history');
     expect(webPrompt).not.toMatch(/private-reasoning|author-note:|max_tokens|"stream"|"tools"/u);
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => { writes.push(String(chunk)); return true; }) as typeof process.stdout.write);
     for (const streaming of [true, false]) {
