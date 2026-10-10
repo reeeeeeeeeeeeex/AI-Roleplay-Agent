@@ -153,6 +153,7 @@ test('closing records preserves the selected tab and reading position', async ({
   await expect.poll(() => content.evaluate(element => element.scrollTop)).toBe(400);
   await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await expect(page.locator('.records')).toBeHidden();
+  await send(page, 'Continue while the records are closed.', 3);
   await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await expect(page.locator('.records')).toBeVisible();
   await expect(page.locator('.records > nav .active')).toHaveText('主角状态');

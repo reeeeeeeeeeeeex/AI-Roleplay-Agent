@@ -65,8 +65,8 @@ export default function Records({
 
   useEffect(() => { setExpanded(false); }, [chat.id]);
   useLayoutEffect(() => {
-    if (visible && content.current) content.current.scrollTop = scrollTop.current;
-  }, [visible]);
+    if (visible && ready && content.current) content.current.scrollTop = scrollTop.current;
+  }, [visible, ready]);
   useEffect(() => {
     if (!visible || !expanded) return;
     const close = (event: KeyboardEvent) => {
@@ -165,7 +165,7 @@ export default function Records({
             <strong>{tableNames[table] ?? table}</strong><small>{(rows as any[]).length}  {t("条记录")}</small>
           </button>)}
         </nav>}
-      <div ref={content} onScroll={event => { if (visible) scrollTop.current = event.currentTarget.scrollTop; }} className={`records-content${tab === 'planner' ? ' records-agent-content' : ''}`}>
+      <div ref={content} onScroll={event => { if (visible && ready) scrollTop.current = event.currentTarget.scrollTop; }} className={`records-content${tab === 'planner' ? ' records-agent-content' : ''}`}>
         {!ready && loading && <p className="muted" role="status">{t("正在读取记录…")}</p>}
         {ready && tab === 'memory' && (
           <>
