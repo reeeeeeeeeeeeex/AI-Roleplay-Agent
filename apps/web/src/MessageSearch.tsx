@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { ArrowDown, ArrowUp, X } from 'lucide-react';
 import type { MessageNode } from '@new-ai-chat/contracts';
 import { t } from './i18n.js';
+import { searchText } from './search-text.js';
 import './message-search.css';
 
 export default function MessageSearch({ messages, onMatch, onClose, inputRef }: {
@@ -9,10 +10,12 @@ export default function MessageSearch({ messages, onMatch, onClose, inputRef }: 
 }) {
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<string | null>(null);
+  const searchable = useMemo(() => messages.filter(message => message.role !== 'system')
+    .map(message => ({ id: message.id, text: searchText(message.content) })), [messages]);
   const matches = useMemo(() => {
-    const text = query.trim().toLowerCase();
-    return text ? messages.filter(message => message.role !== 'system' && message.content.toLowerCase().includes(text)) : [];
-  }, [messages, query]);
+    const text = searchText(query.trim());
+    return text ? searchable.filter(message => message.text.includes(text)) : [];
+  }, [searchable, query]);
   const index = Math.max(0, matches.findIndex(message => message.id === chosen));
   const current = matches[index]?.id ?? null;
   const notify = useRef(onMatch);

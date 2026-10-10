@@ -25,6 +25,7 @@ import { useBackdropClose } from './useBackdropClose.js';
 import { readAppearance, saveAppearance } from './appearance.js';
 import { copyText } from './clipboard.js';
 import { readComposerDrafts, saveComposerDrafts } from './composer-drafts.js';
+import { searchText } from './search-text.js';
 import { version as appVersion } from '../../../package.json';
 import './branches.css';
 
@@ -60,9 +61,9 @@ export default function App() {
   const resourceFilter = useRef<HTMLInputElement>(null);
   useEffect(() => { setResourceSearch(''); }, [page]);
   const filteredResources = useMemo(() => {
-    const query = resourceSearch.trim().toLowerCase();
+    const query = searchText(resourceSearch.trim());
     const items = data[page] ?? [];
-    return query ? items.filter(item => String(item.name ?? item.title ?? '').toLowerCase().includes(query)) : items;
+    return query ? items.filter(item => searchText(String(item.name ?? item.title ?? '')).includes(query)) : items;
   }, [data, page, resourceSearch]);
   const [branch, setBranch] = useState<MessageNode[]>([]);
   const [nodes, setNodes] = useState<MessageSummary[]>([]);

@@ -109,11 +109,11 @@ test('story search is literal, stays inside a narrow screen and preserves the dr
   await page.setViewportSize({ width: 320, height: 700 });
   await page.addInitScript(() => localStorage.setItem('interface-language', 'en'));
   const messages = await openHistory(page, request, 10);
-  messages[0]!.content = 'Beside the [Northern Gate].';
-  messages[119]!.content = 'Back to the [northern gate].';
+  messages[0]!.content = 'Beside the [Ｎｏｒｔｈｅｒｎ Café].';
+  messages[119]!.content = 'Back to the [northern Cafe\u0301].';
   const chatId = messages[0]!.conversationId;
   await page.route(`**/api/conversations/${chatId}/messages*`, route => route.fulfill({ json: {
-    branch: messages, nodes: [...messages, { ...messages[119], id: 'hidden-version', content: 'A hidden [northern gate] version.' }],
+    branch: messages, nodes: [...messages, { ...messages[119], id: 'hidden-version', content: 'A hidden [Ｎｏｒｔｈｅｒｎ Café] version.' }],
   } }));
   await page.reload();
   const input = page.getByRole('textbox', { name: 'Message input', exact: true });
@@ -123,7 +123,7 @@ test('story search is literal, stays inside a narrow screen and preserves the dr
   const before = (await page.locator('.messages-wrap').boundingBox())!.height;
   await page.getByRole('button', { name: 'Search story', exact: true }).click();
   const search = page.getByRole('searchbox', { name: 'Search this branch' });
-  await search.fill('[NORTHERN');
+  await search.fill('[NORTHERN Café]');
   await expect(page.getByRole('search').getByRole('status')).toHaveText('1 / 2 messages');
   await page.getByRole('button', { name: 'Next matching message' }).click();
   await expect(page.locator('#message-display-119')).toHaveClass(/search-match/);

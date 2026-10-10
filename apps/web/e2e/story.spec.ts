@@ -1604,7 +1604,7 @@ test('inline facts bookmarks scene and rewrite controls stay beside their conten
 
 test('story filter stays usable in English on a narrow screen and opens the matching story', async ({ page, request }) => {
   const characters = await (await request.get('/api/characters')).json();
-  const title = 'Shelved story · 原始标题';
+  const title = 'Ｓｈｅｌｖｅｄ Café · 原始标题';
   expect((await request.post('/api/conversations', { data: { title, kind: 'solo', characterId: characters[0].id } })).status()).toBe(201);
   await page.reload();
   await englishInterface(page);
@@ -1613,7 +1613,7 @@ test('story filter stays usable in English on a narrow screen and opens the matc
   await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
   await page.getByRole('button', { name: /^Story list/ }).click();
   const filter = page.getByRole('searchbox', { name: 'Filter by name or title', exact: true });
-  await filter.fill('sHELVED');
+  await filter.fill('sHELVED Cafe\u0301');
   await expect(page.locator('.management .character-card')).toHaveCount(1);
   for (const control of [filter, page.locator('.management').getByRole('button', { name: 'Start a new story', exact: true })]) {
     const box = (await control.boundingBox())!;

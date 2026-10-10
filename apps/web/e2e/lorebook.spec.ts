@@ -10,7 +10,7 @@ async function openLibrary(page: Page) {
 async function openFixture(page: Page, request: APIRequestContext, name: string) {
   const result = await request.post('/api/lorebooks', { data: { name, description: '测试世界', legacyPayload: { original: true }, entries: [
     { title: '灯塔', keys: ['海岸'], secondaryKeys: ['夜晚'], content: '灯塔的旧正文。', order: 10, position: 'after', depth: 3, legacyPayload: { comment: '旧标题', probability: 75 } },
-    { title: '森林', keys: ['树木'], content: '森林的旧正文。', order: 20 },
+    { title: '森林', keys: ['树木', 'Ｃａｆé'], content: '森林的旧正文。', order: 20 },
   ] } });
   expect(result.ok()).toBeTruthy();
   const book = await result.json();
@@ -51,7 +51,7 @@ test('lorebook search and collapsing keep hidden drafts in the saved book', asyn
   await editor.getByRole('button', { name: '全部展开', exact: true }).click();
   await entries(page).first().getByRole('textbox', { name: '正文', exact: true }).fill('灯塔的新正文。');
   await editor.getByRole('button', { name: '全部收起', exact: true }).click();
-  await editor.getByRole('searchbox', { name: '搜索条目' }).fill('树木');
+  await editor.getByRole('searchbox', { name: '搜索条目' }).fill('Cafe\u0301');
   await expect(entries(page)).toHaveCount(1);
   await entries(page).first().locator('.lore-entry-toggle').click();
   await entries(page).first().getByRole('textbox', { name: '正文', exact: true }).fill('森林的新正文。');

@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Copy, Plus, Trash2 } from 'lucide-react';
 import './lorebook-editor.css';
 import { useContentAutosave } from './useContentAutosave';
 import { useBackdropClose } from './useBackdropClose';
+import { searchText } from './search-text.js';
 
 type Entry = Omit<LoreEntry, 'id' | 'lorebookId'>;
 type DraftEntry = Entry & { localId: string; keyInput: string; secondaryInput: string; orderInput: string };
@@ -87,8 +88,8 @@ export default function LorebookEditor({ initial, onSave, onClose, zIndex }: {
   }
   async function close() { if (await autosave.flush()) onClose(); }
   const backdrop = useBackdropClose(close);
-  const search = query.trim().toLocaleLowerCase();
-  const visible = entries.filter(entry => [entry.title, entry.content, ...entry.keys, ...entry.secondaryKeys, entry.keyInput, entry.secondaryInput].some(value => value.toLocaleLowerCase().includes(search)));
+  const search = searchText(query.trim());
+  const visible = search ? entries.filter(entry => [entry.title, entry.content, ...entry.keys, ...entry.secondaryKeys, entry.keyInput, entry.secondaryInput].some(value => searchText(value).includes(search))) : entries;
 
   return <div className="modal-shade" style={{ zIndex }} {...backdrop}>
     <section className="modal lorebook-modal" role="dialog" aria-modal="true" aria-label={t("编辑世界书")}>
