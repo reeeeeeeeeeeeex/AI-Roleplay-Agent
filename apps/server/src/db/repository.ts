@@ -25,6 +25,7 @@ import type {
 } from '@new-ai-chat/contracts';
 import type { RuntimeConnection } from '@new-ai-chat/agent-runtime';
 import type { AppDatabase } from './database.js';
+import { projectMemoryStages } from '../memory-stages.js';
 import {
   characters,
   connections,
@@ -545,6 +546,9 @@ export class Repository {
   createMemory(input: Omit<MemoryEntry, 'id' | 'createdAt'>): MemoryEntry {
     const row = { ...input, coverage: input.coverage ?? null, id: id(), createdAt: now() }; this.database.db.insert(memories).values(row).run();
     this.addEvent(input.conversationId, null, 'checkpoint', { id: row.id, head: this.getConversation(input.conversationId)?.headMessageId ?? null }); return row;
+  }
+  listMemoryStages(conversationId: string) {
+    return projectMemoryStages(this.listMemories(conversationId, Infinity));
   }
   latestState(conversationId: string): ProtagonistStateSnapshot | null {
     const active = this.checkpointFilter(conversationId);

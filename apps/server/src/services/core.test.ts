@@ -1089,12 +1089,15 @@ describe('branches and records',()=>{
     const repo = server.repository;
     await normal();
     const firstHead = repo.getConversation(chat)!.headMessageId;
-    const memory = repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: '原来的记忆' });
+    const memory = repo.createMemory({ conversationId: chat, stage: 8, storyTurnId: null, source: 'imported', content: '[Stage 1]: 原来的记忆\n\n[Stage 2]: 保留第二阶段' });
+    const stage = repo.listMemoryStages(chat)[1]!;
     await normal();
     const head = repo.getConversation(chat)!.headMessageId;
-    const edit = { content: '修订的记忆', previous: memory.content, head };
-    expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBe(200);
-    expect(repo.listMemories(chat, 1)[0]).toMatchObject({ ...memory, content: edit.content });
+    const edit = { content: '修订的记忆', previous: stage.content, head };
+    const url = `/api/conversations/${chat}/memory/${stage.id}`;
+    expect((await server.app.inject({ method: 'PATCH', url, payload: { ...edit, content: '[Stage 3]: 不能添加标题' } })).statusCode).toBe(400);
+    expect((await server.app.inject({ method: 'PATCH', url, payload: edit })).statusCode).toBe(200);
+    expect(repo.listMemoryStages(chat).map(item => item.content)).toEqual(['保留第二阶段', edit.content]);
     const cell = { head, table: 'global_state', rowId: 1, column: 'current_location', previous: '', content: '书店' };
     expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: cell })).statusCode).toBe(200);
     const stale = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: { ...cell, content: '旧输入' } });
@@ -1103,11 +1106,11 @@ describe('branches and records',()=>{
     const archive = (await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).json();
     const imported = await server.app.inject({ method: 'POST', url: '/api/imports/story/execute', payload: archive });
     expect(imported.statusCode, imported.body).toBe(201);
-    expect(repo.listMemories(imported.json().id)[0]?.content).toBe(edit.content);
+    expect(repo.listMemoryStages(imported.json().id).map(item => item.content)).toEqual(['保留第二阶段', edit.content]);
     repo.setHead(chat, firstHead);
     expect(repo.listMemories(chat)[0]?.content).toBe(memory.content);
     expect(repo.latestState(chat)).toBeNull();
-    expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await server.app.inject({ method: 'PATCH', url, payload: edit })).statusCode).toBeGreaterThanOrEqual(400);
   });
   it('loads state checkpoint summaries and details only from the current branch', async () => {
     const repo = server.repository;
@@ -1258,11 +1261,48 @@ describe('record truth and logical-turn safeguards', () => {
     server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'continue', targetMessageId: last.id })); await server.turns.idle(chat);
     expect(settledStoryIds(server.repository, chat)).toHaveLength(1);
   });
-  it('treats cumulative imported memories and empty manual baselines correctly', () => {
-    for (const [stage, source, content] of [[1,'imported','old'],[2,'imported','cumulative'],[3,'generated','new']] as const) server.repository.createMemory({ conversationId: chat, stage, source, content, storyTurnId: null });
-    expect(new StoryContext(server.repository, chat).memory.map(m => m.content)).toEqual(['cumulative', 'new']);
-    server.repository.createMemory({ conversationId: chat, stage: 4, source: 'manual', content: '', storyTurnId: null });
-    expect(new StoryContext(server.repository, chat).memory).toEqual([]); expect(server.repository.listMemories(chat)).toHaveLength(4);
+  it('treats cumulative imported memories and empty manual baselines correctly', async () => {
+    const repo = server.repository;
+    for (const [stage, source, content] of [[1,'imported','[Stage 1]: old'],[8,'imported','[Stage 1]: revised\n\n[Stage 2]: second'],[9,'generated','new']] as const) repo.createMemory({ conversationId: chat, stage, source, content, storyTurnId: null });
+    expect(new StoryContext(repo, chat).memory.map(m => [m.title, m.content])).toEqual([['Stage 1', 'revised'], ['Stage 2', 'second'], ['Stage 3', 'new']]);
+    const displayed = (await server.app.inject({ url: `/api/conversations/${chat}/memory` })).json();
+    expect(displayed.map((m: any) => m.stage)).toEqual([3, 2, 1]);
+    expect(displayed[1].coverage).toBeNull();
+    expect(repo.listMemories(chat).map(m => m.stage)).toEqual([9, 8, 1]);
+    repo.createMemory({ conversationId: chat, stage: 10, source: 'manual', content: '', storyTurnId: null });
+    expect(new StoryContext(repo, chat).memory).toEqual([]);
+    expect(repo.listMemoryStages(chat)[0]?.stage).toBe(4);
+    expect(repo.listMemories(chat)).toHaveLength(4);
+  });
+  it('keeps ambiguous legacy stage prefixes intact instead of guessing', () => {
+    const repo = server.repository;
+    const content = '[Stage 1]: first\n\n[Stage 1]: ambiguous repeat';
+    repo.createMemory({ conversationId: chat, stage: 5, source: 'imported', content, storyTurnId: null });
+    expect(repo.listMemoryStages(chat)).toEqual(repo.listMemories(chat));
+    expect(new StoryContext(repo, chat).memory[0]?.content).toBe(content);
+  });
+  it('sends all effective Memory stages in order in preview and the real Gateway body', async () => {
+    const repo = server.repository;
+    repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false, memoryTurnInterval: 0, stateTurnInterval: 0 });
+    repo.updateConnection(connection, connectionInputSchema.parse({ name: 'Offline', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1', model: 'test', apiKey: 'offline', reasoning: 'off' }));
+    const markers = Array.from({ length: 7 }, (_, i) => `memory-marker-${i + 1}`);
+    repo.createMemory({ conversationId: chat, stage: 9, source: 'imported', storyTurnId: null, content: markers.slice(0, 6).map((m, i) => `[Stage ${i + 1}]: ${m}`).join('\n\n') });
+    repo.createMemory({ conversationId: chat, stage: 10, source: 'generated', storyTurnId: null, content: markers[6]! });
+    const bodies: string[] = [];
+    const network = vi.fn<typeof fetch>(async (_url, options) => {
+      bodies.push(String(options?.body));
+      return new Response(JSON.stringify({ id: 'offline', object: 'chat.completion', model: 'test', choices: [{ index: 0, message: { role: 'assistant', content: 'Offline reply.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 } }), { headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', network);
+    const input = turnRequestSchema.parse({ conversationId: chat, input: { voice: 'protagonist', text: 'An unrelated action.' } });
+    const preview = await server.turns.preview(input, new AbortController().signal);
+    expect(network).not.toHaveBeenCalled();
+    const pi = new PiAgentRuntime(); runtime.writeTurn = pi.writeTurn.bind(pi);
+    const turn = server.turns.start(input); await server.turns.idle(chat);
+    expect(repo.getTurn(turn.id)?.status).toBe('completed');
+    expect(bodies).toHaveLength(1);
+    for (const body of [preview.requestBody, preview.webPrompt, bodies[0]!]) expect(body.match(/memory-marker-\d+/g)).toEqual(markers);
+    expect(preview.contextReport.items.filter(item => item.source === 'memory' && !item.included)).toEqual([]);
   });
   it('keeps pending world proposals out of truth, applies them, then supports safe undo', async () => {
     const turn = await normal(); const repo = server.repository;
@@ -1293,11 +1333,13 @@ describe('record truth and logical-turn safeguards', () => {
   });
   it('blocks preview and model requests when selected Memory exceeds the budget', async () => {
     await normal(); const repo = server.repository;
+    repo.updateConnection(connection, connectionInputSchema.parse({ name: 'Small offline context', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'test', apiKey: 'offline', contextWindow: 8192, maxTokens: 512 }));
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false });
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), historyMessageLimit: 1 });
     repo.savePinnedFact(chat, '灯塔属于路易斯'); repo.createState(chat, null, blankState());
-    repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'oversized-memory '.repeat(20_000) });
+    repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'oversized-memory '.repeat(4_000) });
     repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: null, source: 'generated', content: '昨夜拜访灯塔' });
+    repo.createMemory({ conversationId: chat, stage: 3, storyTurnId: null, source: 'generated', content: 'Then a new morning.' });
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
     const input = turnRequestSchema.parse({ conversationId: chat, input: { voice: 'protagonist', text: '走向灯塔。' } });

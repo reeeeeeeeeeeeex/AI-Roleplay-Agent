@@ -1,5 +1,6 @@
 // Application diagnostics only; never translate provider payloads or model instructions.
 export const diagnosticMessages = {
+  '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。': { original: '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。', zh: '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。', en: 'Edit the stage content without adding stage headers.' },
   '{0} was not called with a valid plan.': { original: '{0} was not called with a valid plan.', zh: '{0} 未返回有效计划。', en: '{0} was not called with a valid plan.' },
   'Generation failed.': { original: 'Generation failed.', zh: '生成失败。', en: 'Generation failed.' },
   'Writer Agent did not call select_output_voices with a valid selection.': { original: 'Writer Agent did not call select_output_voices with a valid selection.', zh: 'Writer Agent 未通过 select_output_voices 选择有效发言者。', en: 'Writer Agent did not call select_output_voices with a valid selection.' },

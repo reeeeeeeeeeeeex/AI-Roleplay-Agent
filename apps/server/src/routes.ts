@@ -17,6 +17,7 @@ import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
 import type { ActionChoiceService } from './services/action-choices.js';
 import { forkStory, deleteStoryFrom } from './services/story-branches.js';
+import { projectMemoryStages, splitMemoryStages } from './memory-stages.js';
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
@@ -214,14 +215,26 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const row = repo.database.sqlite.prepare('SELECT id FROM turns WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1').get(idOf(req)) as { id: string } | undefined;
     return row ? repo.getTurn(row.id) : null;
   });
-  app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));
+  app.get('/api/conversations/:id/memory', async (req) => repo.listMemoryStages(idOf(req)));
   app.patch('/api/conversations/:id/memory/:memoryId', async (req) => {
     const { id: chat, memoryId } = z.object({ id: z.string(), memoryId: z.string() }).parse(req.params);
     turns.assertIdle(chat);
     const value = z.object({ content: z.string().max(200_000), previous: z.string(), head: z.string().nullable() }).parse(req.body);
-    const entry = repo.listMemories(chat, 1000).find(item => item.id === memoryId);
+    const raw = repo.listMemories(chat, Infinity);
+    const entry = projectMemoryStages(raw).find(item => item.id === memoryId) ?? raw.find(item => item.id === memoryId);
     if (!entry || repo.getConversation(chat)?.headMessageId !== value.head || entry.content !== value.previous) throw new AppError("记忆或分支已变化，请刷新后重试。未覆盖现有内容。");
-    if (entry.content !== value.content) repo.addEvent(chat, null, 'memory.edited', { id: memoryId, head: value.head, content: value.content });
+    if (entry.content !== value.content) {
+      let content = value.content, id = memoryId;
+      if ('snapshotId' in entry && entry.snapshotId) {
+        const snapshot = raw.find(item => item.id === entry.snapshotId)!;
+        const part = splitMemoryStages(snapshot.content)!.find(item => item.stage === entry.stage)!;
+        if (/^\s*\[Stage\s+\d+\]\s*[:：]/im.test(content)) throw new AppError('阶段正文不能包含阶段标题，请直接编辑该阶段的内容。');
+        content = snapshot.content.slice(0, part.start) + content.trimEnd()
+          + (part.end < snapshot.content.length ? '\n\n' + snapshot.content.slice(part.end).trimStart() : '');
+        id = snapshot.id;
+      }
+      repo.addEvent(chat, null, 'memory.edited', { id, head: value.head, content });
+    }
     return { ...entry, content: value.content };
   });
   app.get('/api/conversations/:id/facts', async req => repo.listPinnedFacts(idOf(req)));

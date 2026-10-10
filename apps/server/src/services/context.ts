@@ -32,11 +32,8 @@ export class StoryContext implements StoryContextSource {
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
       .map(({ id, name, description, personality, scenario, exampleDialogue, systemPrompt, postHistoryInstructions }) => ({ id, name, description, personality, scenario: group || chat.scenario ? '' : scenario, exampleDialogue, systemPrompt, postHistoryInstructions }));
     this.state = settings.sendProtagonistState || options.maintenance === 'state' ? repository.latestState(conversationId) : null;
-    const memories = settings.sendMemory || options.maintenance === 'memory' ? repository.listMemories(conversationId, 1000) : [];
-    // Imported ST summaries are cumulative snapshots, not separate chronology stages.
-    // A manual replacement (including an empty string) is an explicit new baseline.
-    const baseline = memories.findIndex((m) => m.source === 'imported' || m.source === 'manual');
-    this.memory = (baseline < 0 ? memories : memories.slice(0, baseline + 1)).reverse().filter((m) => m.content.trim()).map((m) => ({ source: 'memory', title: `Stage ${m.stage}`, content: m.content, priority: 100 + m.stage / 1_000_000, sourceId: m.id, messageIds: m.coverage ? [m.coverage.startMessageId, m.coverage.endMessageId] : [] }));
+    const memories = settings.sendMemory || options.maintenance === 'memory' ? repository.listMemoryStages(conversationId) : [];
+    this.memory = memories.reverse().filter((m) => m.content.trim()).map((m) => ({ source: 'memory', title: `Stage ${m.stage}`, content: m.content, priority: 100 + m.stage / 1_000_000, sourceId: m.id, messageIds: m.coverage ? [m.coverage.startMessageId, m.coverage.endMessageId] : [] }));
     this.facts = repository.listPinnedFacts(chat.id).map(fact => ({ source: 'memory', title: 'Pinned Fact', content: fact.content, priority: 2000, required: true, sourceId: fact.id, messageIds: fact.sourceMessageId ? [fact.sourceMessageId] : [] }));
     this.lore = chat.lorebookIds.flatMap((id) => { const book = repository.getLorebook(id); return book?.entries.filter((e) => e.enabled).map((e) => ({ ...e, title: book.name })) ?? []; });
     const scenario = chat.scenario || group?.scenario;
@@ -65,11 +62,9 @@ export class StoryContext implements StoryContextSource {
   async readCast() { return this.cast; }
   stableLore(): RetrievedContext[] { return this.lore.filter((e) => e.constant).sort((a, b) => a.order - b.order).map((e) => ({ source: 'lore', title: e.title, content: e.content, priority: 1000 - e.order, sourceId: e.id })); }
   async dynamic(query: string): Promise<RetrievedContext[]> {
-    const recent = this.memory.slice(-2);
-    const older = (await this.searchMemory(query, this.memory.length)).filter(item => !recent.includes(item)).slice(0, 3);
     const lore = await this.searchLore(query, 12);
-    const excluded: RetrievedContext[] = [...this.memory.filter(item => !recent.includes(item) && !older.includes(item)), ...this.lore.filter(item => !item.constant && !lore.some(match => match.sourceId === item.id)).map(item => ({ source: 'lore' as const, title: item.title, content: item.content, sourceId: item.id, priority: 0 }))];
-    this.contextReport.items.push(...excluded.map(item => ({ id: item.sourceId!, source: item.source, title: item.title, titleText: item.source === 'memory' ? uiText('Stage {0}', item.title.replace(/^Stage /, '')) : undefined, role: 'assistant' as const, included: false, reason: item.source === 'memory' ? '非最近两阶段，且未进入相关旧记忆前三项' : '未匹配 Lore 关键词或超过检索上限', reasonText: (item.source === 'memory' ? uiText("非最近两阶段，且未进入相关旧记忆前三项") : uiText("未匹配 Lore 关键词或超过检索上限")), estimatedTokens: estimateTokens(item.content) + estimateTokens(item.title) })));
-    return [...this.facts, ...lore, ...recent, ...older, ...(this.world.length ? [{ source: 'lore' as const, title: 'Applied world facts', content: JSON.stringify(this.world), priority: 1100 }] : []), ...(this.state ? [{ source: 'state' as const, title: 'Current state', content: JSON.stringify({ tables: this.state.tables, column_labels: stateColumnLabels }), priority: 500, sourceId: this.state.id }] : [])];
+    const excluded = this.lore.filter(item => !item.constant && !lore.some(match => match.sourceId === item.id));
+    this.contextReport.items.push(...excluded.map(item => ({ id: item.id, source: 'lore' as const, title: item.title, role: 'assistant' as const, included: false, reason: '未匹配 Lore 关键词或超过检索上限', reasonText: uiText("未匹配 Lore 关键词或超过检索上限"), estimatedTokens: estimateTokens(item.content) + estimateTokens(item.title) })));
+    return [...this.facts, ...lore, ...this.memory, ...(this.world.length ? [{ source: 'lore' as const, title: 'Applied world facts', content: JSON.stringify(this.world), priority: 1100 }] : []), ...(this.state ? [{ source: 'state' as const, title: 'Current state', content: JSON.stringify({ tables: this.state.tables, column_labels: stateColumnLabels }), priority: 500, sourceId: this.state.id }] : [])];
   }
 }
