@@ -66,6 +66,55 @@ async function insideViewport(page: Page, locator: Locator) {
   expect(rect!.y + rect!.height).toBeLessThanOrEqual(size.height + 1);
 }
 
+test('compact chat header opens character and story details separately', async ({ page, request }) => {
+  await readingStory(page, request);
+  const characters = await (await request.get('/api/characters')).json();
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText(characters[0].name);
+  await heading.getByRole('button').click();
+  const character = page.getByRole('dialog', { name: '编辑角色', exact: true });
+  await expect(character.getByRole('textbox', { name: '名称', exact: true })).toHaveValue(characters[0].name);
+  await character.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await page.getByRole('button', { name: '故事资料', exact: true }).click();
+  const story = page.getByRole('dialog', { name: '编辑故事资料', exact: true });
+  await expect(story.getByRole('textbox', { name: '故事标题', exact: true })).toHaveValue('Reading appearance fixture');
+  await story.getByRole('button', { name: '关闭', exact: true }).last().click();
+  const top = (await page.locator('.topbar').boundingBox())!;
+  const navigation = page.locator('.story-navigation');
+  expect((await navigation.boundingBox())!.y).toBeCloseTo(top.y + top.height, 0);
+  await expect(navigation.locator('summary')).toContainText('主角保护');
+  await navigation.locator('summary').click();
+  await expect(navigation.getByRole('textbox', { name: '当前场景', exact: true })).toBeVisible();
+  await expect(page.locator('.top-actions').getByText('角色资料', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '搜索正文', exact: true })).toBeVisible();
+});
+
+test('compact group header remains usable on a narrow English screen', async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  const characters = await (await request.get('/api/characters')).json();
+  const group = await (await request.post('/api/groups', { data: { name: 'A very long group name for a narrow screen', memberIds: [characters[0].id] } })).json();
+  const chat = await (await request.post('/api/conversations', { data: { title: 'Independent group story title', kind: 'group', groupId: group.id } })).json();
+  await page.addInitScript(id => { localStorage.setItem('selected-chat', id); localStorage.setItem('interface-language', 'en'); }, chat.id);
+  await page.goto('/');
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText(group.name);
+  const name = heading.getByRole('button');
+  expect((await name.boundingBox())!.width).toBeGreaterThan(16);
+  await insideViewport(page, name);
+  await insideViewport(page, page.locator('.top-actions'));
+  const summary = page.locator('.story-navigation summary');
+  const badge = summary.locator('small');
+  await expect(badge).toHaveText('Protagonist protected');
+  await insideViewport(page, summary);
+  const labelBox = (await summary.locator('span').boundingBox())!;
+  const badgeBox = (await badge.boundingBox())!;
+  expect(badgeBox.y).toBeLessThan(labelBox.y + labelBox.height);
+  expect(badgeBox.x).toBeGreaterThan(labelBox.x + labelBox.width);
+  await name.click();
+  const editor = page.getByRole('dialog', { name: 'Edit Group', exact: true });
+  await expect(editor.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(group.name);
+});
+
 test('story search reveals older messages and navigates saved prose only', async ({ page, request }) => {
   await openHistory(page, request, 10);
   await expect(page.locator('#message-display-0')).toHaveCount(0);

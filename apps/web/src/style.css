@@ -468,6 +468,18 @@ main {
   white-space: nowrap;
 }
 
+.chat-name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
 .top-actions {
   display: flex;
   align-items: center;
@@ -493,49 +505,6 @@ main {
   background: var(--bg-hover);
   color: var(--text-primary);
   border-color: var(--border-default);
-}
-
-/* Cast Strip: slim 32px bar under topbar */
-.cast-strip {
-  height: 32px;
-  min-height: 32px;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border-subtle);
-  overflow-x: auto;
-  white-space: nowrap;
-}
-
-.cast-strip > span {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-secondary);
-}
-
-.cast-strip small {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--text-dim);
-  background: var(--bg-elevated);
-  padding: 1px 6px;
-  border-radius: var(--radius-xs);
-}
-
-.dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--dot-character);
-}
-
-.dot.narrator {
-  background: var(--dot-narrator);
 }
 
 /* Banners */
@@ -598,6 +567,15 @@ main {
 
 /* Messages Stream */
 .story-navigation { padding: 6px 24px; border-bottom: 1px solid var(--border); max-height: 220px; overflow: auto; }
+.story-navigation summary small {
+  float: right;
+  margin-left: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+}
 .story-navigation button { margin: 4px; }
 .context-report { margin: 10px 0; }
 .context-report ol { max-height: 360px; overflow: auto; padding-left: 24px; }

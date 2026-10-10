@@ -266,7 +266,7 @@ for (const phase of ['start', 'history'] as const) test(`late turn ${phase} resp
     await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('Delayed reply input.');
     await page.getByRole('button', { name: '发送', exact: true }).click(); await ready;
     await page.locator('.story-list button').filter({ hasText: other.title }).click();
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(other.title);
+    await expect(page.locator('.story-list button.selected')).toContainText(other.title);
     release();
     await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled();
     expect(cancelled).toBe(1); expect(followed).toBe(0);
@@ -292,7 +292,7 @@ test('late manual save updates its original story head after switching away', as
     await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('First manual input.');
     await page.getByRole('button', { name: '发送', exact: true }).click(); await ready;
     await page.locator('.story-list button').filter({ hasText: other.title }).click();
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(other.title);
+    await expect(page.locator('.story-list button.selected')).toContainText(other.title);
     release(); await expect(toggle).toBeEnabled();
     await page.locator('.story-list button').filter({ hasText: chat.title }).click();
     await expect(page.locator('article.message')).toHaveCount(1);
@@ -937,7 +937,7 @@ test('returning to a story ignores an older history response that arrives last',
     await page.reload();
     await ready;
     await page.locator('.story-list button').filter({ hasText: other.title }).click();
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(other.title);
+    await expect(page.locator('.story-list button.selected')).toContainText(other.title);
     const appended = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: first.message.id, input: { voice: 'narrator', text: '之后保存的新正文。' } } });
     expect(appended.status()).toBe(201);
     await page.locator('.story-list button').filter({ hasText: chat.title }).click();
@@ -1081,11 +1081,11 @@ test('prompt presets load drafts and only apply after saving, preserving failed 
   await expect(additional).toHaveValue('修改后要应用的内容');
 });
 
-test('independent branches appear in both story list and branch switcher', async ({ page }) => {
-  const originalTitle = await page.getByRole('heading', { level: 1 }).textContent();
+test('independent branches appear in both story list and branch switcher', async ({ page }, info) => {
+  const originalTitle = `Browser ${info.title}`;
   await send(page, '第一条选择', 3);
   await page.locator('article.message').first().getByRole('button', { name: '从此处分支', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(`${originalTitle} · 分支 2`);
+  await expect(page.locator('.story-list button.selected')).toContainText(`${originalTitle} · 分支 2`);
   await expect(page.locator('article.message')).toHaveCount(1);
   await expect(page.locator('.story-list').getByRole('button').filter({ hasText: `${originalTitle} · 分支 2` })).toBeVisible();
   await page.getByRole('button', { name: '故事分支', exact: true }).click();
@@ -1642,7 +1642,8 @@ test('story filter stays usable in English on a narrow screen and opens the matc
     expect(box.x + box.width).toBeLessThanOrEqual(320);
   }
   await page.getByRole('button', { name: 'Open story', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(characters[0].name);
+  await expect(page.locator('.story-list button.selected')).toContainText(title);
   await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
 });
 

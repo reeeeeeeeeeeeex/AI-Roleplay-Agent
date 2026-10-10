@@ -2,7 +2,7 @@ import { countLabel, generationLabel, phaseLabel } from './ui-labels.js';
 import { t, formatDate, formatNumber, diagnosticText, type MessageKey } from './i18n.js';
 import { useLanguage } from './LanguageProvider.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine, Search, Copy } from 'lucide-react';
+import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, FilePenLine, Search, Copy } from 'lucide-react';
 import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex } from '@new-ai-chat/contracts/client';
 import type { GeneralSettings, Conversation, MessageNode, MessageSummary, SpeakerRef, ImportPreview, PromptSettings, TurnRecord, TurnRequest, UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
@@ -181,6 +181,9 @@ export default function App() {
   }, [branch]);
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
+  const chatProfile = chat?.kind === 'group'
+    ? data.groups?.find(group => group.id === chat.groupId)
+    : data.characters?.find(character => character.id === chat?.characterId);
   useEffect(() => {
     if (page !== 'chat' || !chat) return;
     const find = (event: KeyboardEvent) => {
@@ -821,7 +824,10 @@ export default function App() {
               </button>
             )}
             <button className="mobile-only" aria-label={t("打开导航")} onClick={() => setMobileNav(true)}>☰</button>
-            <h1>{page === 'chat' ? chat?.title ?? t("新故事") : page === 'import' ? t("导入故事") : page === 'conversations' ? t("故事列表") : titles[page]}</h1>
+            <h1>{page === 'chat' && chat ? <button className="chat-name" title={t(chat.kind === 'group' ? "编辑当前群聊" : "编辑当前角色")}
+              disabled={!chatProfile} onClick={() => edit(chat.kind === 'group' ? 'groups' : 'characters', chatProfile)}>
+              {chatProfile?.name ?? t(chat.kind === 'group' ? "群组" : "角色")}
+            </button> : page === 'chat' ? t("新故事") : page === 'import' ? t("导入故事") : page === 'conversations' ? t("故事列表") : titles[page]}</h1>
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
@@ -830,31 +836,6 @@ export default function App() {
                   <FilePenLine size={14} />
                   <span>{t("作者注释")}</span>
                 </button>
-                {chat.kind === 'group' ? (
-                  <button
-                    title={t("编辑当前群聊")}
-                    aria-label={t("编辑当前群聊")}
-                    onClick={() => {
-                      const grp = data.groups?.find((g) => g.id === chat.groupId);
-                      if (grp) edit('groups', grp);
-                    }}
-                  >
-                    <Users size={14} />
-                    <span>{t("群聊资料")}</span>
-                  </button>
-                ) : (
-                  <button
-                    title={t("编辑当前角色")}
-                    aria-label={t("编辑当前角色")}
-                    onClick={() => {
-                      const char = data.characters?.find((c) => c.id === chat.characterId);
-                      if (char) edit('characters', char);
-                    }}
-                  >
-                    <UserCog size={14} />
-                    <span>{t("角色资料")}</span>
-                  </button>
-                )}
                 <button title={t("故事分支")} aria-label={t("故事分支")} onClick={() => setShowBranches(true)}>
                   <GitFork size={14} />
                   <span>{t("故事分支")}</span>
@@ -906,15 +887,9 @@ export default function App() {
 
         {page === 'chat' && chat && (
           <>
-            <div className="cast-strip">
-              <span><i className="dot narrator" />{generalSettings.narrator.name}</span>
-              {cast.map((id: string) => (
-                <button className="content-link" key={id} onClick={() => edit('characters', data.characters?.find(c => c.id === id))}><i className="dot" />{data.characters?.find((c) => c.id === id)?.name}</button>
-              ))}
-              <small>{{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}</small>
-            </div>
-
-            <StoryNavigation key={chat.id} chatId={chat.id} title={chat.title} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
+            <StoryNavigation key={chat.id} chatId={chat.id} title={chat.title} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending}
+              agencyLabel={{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}
+              onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
             {showSearch && <MessageSearch key={chat.id} inputRef={searchInput} messages={branch} onClose={closeSearch}
               onMatch={(id, query) => { setSearchMatchId(id); setSearchQuery(query); if (id) scrollToMessage(id); }} />}
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">

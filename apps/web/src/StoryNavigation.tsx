@@ -5,8 +5,8 @@ import { api } from './api.js';
 import AutoSaveField from './AutoSaveField.js';
 import { flushContentEdits } from './useContentAutosave.js';
 
-export default function StoryNavigation({ chatId, title, head, version, disabled, onJump, onChanged, onError }: {
-  chatId: string; title: string; head: string | null; version: number; disabled: boolean;
+export default function StoryNavigation({ chatId, title, head, version, disabled, agencyLabel, onJump, onChanged, onError }: {
+  chatId: string; title: string; head: string | null; version: number; disabled: boolean; agencyLabel: string;
   onJump: (id: string) => Promise<void>; onChanged: () => void; onError: (message: string) => void;
 }) {
   const [data, setData] = useState<Navigation | null>(null);
@@ -30,7 +30,7 @@ export default function StoryNavigation({ chatId, title, head, version, disabled
     } catch (error) { onError((error as Error).message); }
   }
   return <details className="story-navigation">
-    <summary>{t("场景与书签")}</summary>
+    <summary><span>{t("场景与书签")}</span><small>{agencyLabel}</small></summary>
     <div><button disabled={disabled} onClick={() => void download('markdown')}>{t("导出当前分支 Markdown")}</button><button disabled={disabled} onClick={() => void download('native')}>{t("导出完整故事包")}</button></div>
     {data && <>
       <AutoSaveField draftKey={`${chatId}:scene`} initial={data.scene.scenario} label={t("当前场景")} placeholder={t("场景未记录")} disabled={disabled} onError={onError} onSave={async (scenario, previous) => {
