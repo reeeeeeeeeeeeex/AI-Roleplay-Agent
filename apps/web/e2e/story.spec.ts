@@ -1150,6 +1150,35 @@ test('writing settings preserve agency prompts in none mode and omit control fro
   await expect(raw).not.toContainText('Wait for User to choose.');
 });
 
+test('structured Memory localizes labels without rewriting content and saves fields together', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const original = { timeSpan: '清晨到午后', location: '旧书店', chronicle: '两人找到信件。\n保留 timeSpan 原文。', dialogue: ['“明天见。”\n他点点头。', '“一言为定。”'], overview: '发现信件' };
+  const raw = JSON.stringify(original);
+  const endpoint = `/api/conversations/${chat.id}/memory`;
+  await request.post(endpoint, { data: { content: raw } });
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method())) writes++; });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  const fields = page.locator('.memory-fields');
+  await expect(fields.locator('dt')).toHaveText(['时间跨度', '地点', '纪要', '重要对话', '概览']);
+  await fields.getByRole('textbox', { name: '阶段 1 纪要', exact: true }).evaluate(element => element.setAttribute('data-retained', 'yes'));
+  await englishInterface(page);
+  await expect(fields.locator('dt')).toHaveText(['Time span', 'Location', 'Chronicle', 'Important Dialogue', 'Overview']);
+  const chronicle = fields.getByRole('textbox', { name: 'Stage 1 Chronicle', exact: true });
+  await expect(chronicle).toHaveAttribute('data-retained', 'yes');
+  await expect(chronicle).toHaveValue(original.chronicle);
+  expect((await (await request.get(endpoint)).json())[0].content).toBe(raw);
+  expect(writes).toBe(0);
+  await chronicle.fill('修订后的中文纪要');
+  await fields.getByRole('textbox', { name: 'Stage 1 Important Dialogue 2', exact: true }).fill('“下次再来。”');
+  expect(writes).toBe(0);
+  await page.getByRole('heading', { name: 'Story records', exact: true }).click();
+  await expect.poll(async () => JSON.parse((await (await request.get(endpoint)).json())[0].content)).toEqual({ ...original, chronicle: '修订后的中文纪要', dialogue: [original.dialogue[0], '“下次再来。”'] });
+  expect(writes).toBe(1);
+});
+
 test('record fields save directly on blur and when the drawer closes', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
@@ -1165,7 +1194,7 @@ test('record fields save directly on blur and when the drawer closes', async ({ 
   await page.getByRole('textbox', { name: '全局状态 1 当前地点', exact: true }).fill('旧书店');
   await page.getByRole('textbox', { name: '全局状态 1 当前时间', exact: true }).fill('午夜');
   await page.getByRole('button', { name: '关闭记录面板' }).click();
-  await expect(page.locator('.records')).toHaveCount(0);
+  await expect(page.locator('.records')).toBeHidden();
   await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0]).toMatchObject({ current_location: '旧书店', current_time: '午夜' });
   await page.reload();
   await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
@@ -1235,23 +1264,33 @@ test('collection row save failure retains the whole draft for retry', async ({ p
 for (const closeBy of ['panel', 'toolbar'] as const) test(`failed record autosave keeps the drawer open when closing from its ${closeBy}`, async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
-  await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: '旧内容' } });
+  const original = closeBy === 'panel' ? JSON.stringify({ timeSpan: '清晨', location: '书店', chronicle: '旧内容', dialogue: [], overview: '旧概览' }) : '旧内容';
+  await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: original } });
   await page.reload();
   await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   let fail = true;
   await page.route('**/api/conversations/*/memory/*', route => fail ? route.fulfill({ status: 500, json: { error: '测试保存失败' } }) : route.continue());
-  const memory = page.getByRole('textbox', { name: '阶段 1', exact: true });
-  const close = page.getByRole('button', { name: closeBy === 'panel' ? '关闭记录面板' : '记录面板', exact: true });
+  let memory = page.getByRole('textbox', { name: closeBy === 'panel' ? '阶段 1 纪要' : '阶段 1', exact: true });
+  let close = page.getByRole('button', { name: closeBy === 'panel' ? '关闭记录面板' : '记录面板', exact: true });
   await memory.fill('仍然保留的草稿');
   await close.click();
   await expect(page.locator('.records').getByRole('alert')).toContainText('测试保存失败');
   await expect(memory).toHaveValue('仍然保留的草稿');
-  expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('旧内容');
+  expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe(original);
+  if (closeBy === 'panel') {
+    await englishInterface(page);
+    memory = page.getByRole('textbox', { name: 'Stage 1 Chronicle', exact: true });
+    close = page.getByRole('button', { name: 'Close records panel', exact: true });
+    await expect(memory).toHaveValue('仍然保留的草稿');
+  }
   fail = false;
   await close.click();
-  await expect(page.locator('.records')).toHaveCount(0);
-  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('仍然保留的草稿');
+  await expect(page.locator('.records')).toBeHidden();
+  await expect.poll(async () => {
+    const content = (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content;
+    return closeBy === 'panel' ? JSON.parse(content).chronicle : content;
+  }).toBe('仍然保留的草稿');
 });
 
 test('story author note and global additional instruction persist into raw System prompts', async ({ page, request }) => {

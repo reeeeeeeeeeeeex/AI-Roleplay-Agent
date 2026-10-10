@@ -1385,11 +1385,11 @@ main {
   margin-bottom: 4px;
 }
 
-.memory-entry pre {
-  font-family: inherit;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
+.memory-fields { margin: 8px 0 0; }
+.memory-fields > div + div { margin-top: 8px; }
+.memory-fields dt { font-size: 10px; color: var(--text-dim); }
+.memory-fields dd { margin: 2px 0 0; }
+.memory-fields textarea + textarea { margin-top: 4px; }
 
 .records-content details {
   margin-top: 14px;

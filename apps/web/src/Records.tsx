@@ -9,6 +9,7 @@ import { api } from './api.js';
 import RecordHistory from './RecordHistory.js';
 import AgentTrace from './AgentTrace.js';
 import AutoSaveField from './AutoSaveField.js';
+import MemoryContent, { memoryPreview } from './MemoryContent.js';
 import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
 
@@ -155,7 +156,7 @@ export default function Records({
         {expanded && ready && tab === 'memory' && <nav className="records-section-nav" aria-label={t("Memory 记录导航")}>
           <button className={selectedMemory === 'facts' ? 'selected' : ''} onClick={() => setMemorySection('facts')}><strong>{t("固定事实")}</strong><small>{t("仅由你维护 ·")} {facts.length}  {t("条")}</small></button>
           {[...memory].reverse().map(entry => <button key={entry.id} className={selectedMemory === entry.id ? 'selected' : ''} onClick={() => setMemorySection(entry.id)}>
-            <strong>{t("阶段 {0}", entry.stage)}</strong><small>{String(entry.content).trim().slice(0, 60) || t("空记忆标记")}</small>
+            <strong>{t("阶段 {0}", entry.stage)}</strong><small>{memoryPreview(entry.content ?? '') || t("空记忆标记")}</small>
           </button>)}
           {!memory.length && <p className="muted">{t("尚无 Memory 记录。")}</p>}
           <button className={selectedMemory === 'new' ? 'selected' : ''} onClick={() => setMemorySection('new')}>{t("手动添加记录")}</button>
@@ -191,10 +192,10 @@ export default function Records({
                 <div className="memory-stage">{t("阶段 {0}", entry.stage)}</div>
                 <small className="muted">{entry.coverage ? t("覆盖 {0} 个完整回合", entry.coverage.storyTurnIds.length) : t("覆盖范围：历史记录未提供")}</small>
                 {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>{t("起点")}</button><button onClick={() => onSource(entry.coverage.endMessageId)}>{t("终点")}</button></div>}
-                <AutoSaveField key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content} label={t("阶段 {0}", entry.stage)} placeholder={t("（空记忆标记）")} disabled={disabled || busy} onError={onError}
+                <MemoryContent key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content ?? ''} label={t("阶段 {0}", entry.stage)} disabled={disabled || busy} onError={onError}
                   onSave={async (content, previous) => {
                     const saved = await api(`/conversations/${chat.id}/memory/${entry.id}`, 'PATCH', { content, previous, head: chat.headMessageId }, { keepalive: true });
-                    setMemory(items => items.map(item => item.id === entry.id ? saved : item)); onChanged();
+                    setMemory(items => items.map(item => item.id === entry.id ? saved : item)); onChanged(); return saved.content;
                   }} />
               </article>
             ))}
