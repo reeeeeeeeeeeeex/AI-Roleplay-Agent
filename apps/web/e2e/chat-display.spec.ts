@@ -125,12 +125,22 @@ test('story search is literal, stays inside a narrow screen and preserves the dr
   const search = page.getByRole('searchbox', { name: 'Search this branch' });
   await search.fill('[NORTHERN Café]');
   await expect(page.getByRole('search').getByRole('status')).toHaveText('1 / 2 messages');
+  const original = page.locator('#message-display-0');
+  await expect(original.locator('mark')).toHaveText('[Ｎｏｒｔｈｅｒｎ Café]');
+  const body = original.getByRole('textbox', { name: 'User message text', exact: true });
+  await body.focus();
+  await expect(original.locator('.search-highlights')).toBeHidden();
+  await expect(body).toHaveValue(messages[0]!.content);
+  await search.focus();
+  await expect(original.locator('mark')).toBeVisible();
   await page.getByRole('button', { name: 'Next matching message' }).click();
   await expect(page.locator('#message-display-119')).toHaveClass(/search-match/);
+  await expect(page.locator('#message-display-119 mark')).toHaveText('[northern Cafe\u0301]');
   await insideViewport(page, page.getByRole('search'));
   await insideViewport(page, page.getByRole('button', { name: 'Send', exact: true }));
   await search.press('Escape');
   await expect(page.getByRole('search')).toHaveCount(0);
+  await expect(page.locator('.search-highlights')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Search story', exact: true })).toBeFocused();
   await expect(input).toHaveValue('Keep this unsent draft.');
   // Restore the same reading position, so the existing back-to-latest control is hidden.

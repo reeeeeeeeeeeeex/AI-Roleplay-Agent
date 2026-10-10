@@ -128,6 +128,7 @@ export default function App() {
   const [showAuthorNote, setShowAuthorNote] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchMatchId, setSearchMatchId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const searchButton = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   useEffect(() => { setShowSearch(false); setSearchMatchId(null); }, [chatId]);
@@ -915,7 +916,7 @@ export default function App() {
 
             <StoryNavigation key={chat.id} chatId={chat.id} title={chat.title} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
             {showSearch && <MessageSearch key={chat.id} inputRef={searchInput} messages={branch} onClose={closeSearch}
-              onMatch={id => { setSearchMatchId(id); if (id) scrollToMessage(id); }} />}
+              onMatch={(id, query) => { setSearchMatchId(id); setSearchQuery(query); if (id) scrollToMessage(id); }} />}
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">
               <span>{historyStartPosition < 0 ? t("固定发送起点不在当前分支，请重新选择或取消。") : t("已固定发送起点 · 从此处起 {0} 条消息，后续持续追加", branch.slice(historyStartPosition).filter(message => message.role !== 'system').length)}</span>
               {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>{t("查看起点")}</button>}
@@ -976,7 +977,7 @@ export default function App() {
                         <summary>{t("模型思考")}</summary>
                         <pre>{info.thinking || t("模型未返回可见思考内容。")}</pre>
                       </details>}
-                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError} layoutKey={`${readingAppearance.font}:${readingAppearance.fontSize}`}
+                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError} layoutKey={`${readingAppearance.font}:${readingAppearance.fontSize}`} highlight={showSearch && m.role !== 'system' ? searchQuery : ''}
                         onSave={async (content, previous) => {
                           const saved = await api<MessageNode>(`/messages/${m.id}/edit`, 'POST', { content, previous, head: chat.headMessageId }, { keepalive: true });
                           if (saved.id !== m.id) editedMessageIds.current.set(m.id, saved.id);

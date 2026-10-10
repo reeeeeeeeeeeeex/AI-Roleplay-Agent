@@ -6,7 +6,7 @@ import { searchText } from './search-text.js';
 import './message-search.css';
 
 export default function MessageSearch({ messages, onMatch, onClose, inputRef }: {
-  messages: MessageNode[]; onMatch: (id: string | null) => void; onClose: () => void; inputRef: Ref<HTMLInputElement>;
+  messages: MessageNode[]; onMatch: (id: string | null, query: string) => void; onClose: () => void; inputRef: Ref<HTMLInputElement>;
 }) {
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<string | null>(null);
@@ -20,13 +20,13 @@ export default function MessageSearch({ messages, onMatch, onClose, inputRef }: 
   const current = matches[index]?.id ?? null;
   const notify = useRef(onMatch);
   notify.current = onMatch;
-  useEffect(() => { notify.current(current); }, [current, query]);
+  useEffect(() => { notify.current(current, query); }, [current, query]);
 
   function step(direction: number) {
     const next = matches[(index + direction + matches.length) % matches.length];
     if (!next) return;
     setChosen(next.id);
-    if (next.id === current) notify.current(next.id);
+    if (next.id === current) notify.current(next.id, query);
   }
 
   return <div className="message-search" role="search" aria-label={t('搜索正文')} onKeyDown={event => {
