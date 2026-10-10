@@ -29,6 +29,73 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
 
+it('resource references: renaming a legacy story removes only its missing lorebook links', async () => {
+  const repo = server.repository;
+  const book = repo.createLorebook(lorebookInputSchema.parse({ name: 'Existing lore' }));
+  const original = repo.updateConversation(chat, { ...repo.getConversation(chat)!, lorebookIds: ['old-missing-book', book.id] })!;
+  const response = await server.app.inject({ method: 'PUT', url: `/api/conversations/${chat}`, payload: { ...original, title: 'Renamed story', expectedUpdatedAt: original.updatedAt } });
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({ title: 'Renamed story', lorebookIds: [book.id], characterId: character });
+  expect(repo.getConversation(chat)?.lorebookIds).toEqual([book.id]);
+  const stale = await server.app.inject({ method: 'PUT', url: `/api/conversations/${chat}`, payload: { ...original, title: 'Stale rename', expectedUpdatedAt: 'old-version' } });
+  expect(stale.statusCode).toBe(400);
+  expect(repo.getConversation(chat)?.title).toBe('Renamed story');
+});
+
+it('resource references: new missing lorebook links remain invalid on create and update', async () => {
+  const original = server.repository.getConversation(chat)!;
+  const payload = { ...original, title: 'Invalid rename', lorebookIds: ['new-missing-book'] };
+  const update = await server.app.inject({ method: 'PUT', url: `/api/conversations/${chat}`, payload });
+  const create = await server.app.inject({ method: 'POST', url: '/api/conversations', payload });
+  expect(update.statusCode).toBe(400);
+  expect(create.statusCode).toBe(400);
+  expect(update.json().error).toBe('Lorebook not found.');
+  expect(server.repository.getConversation(chat)).toEqual(original);
+});
+
+it('resource references: deleting a lorebook unlinks stories without removing their messages', async () => {
+  const repo = server.repository;
+  const removed = repo.createLorebook(lorebookInputSchema.parse({ name: 'Removed lore' }));
+  const kept = repo.createLorebook(lorebookInputSchema.parse({ name: 'Kept lore' }));
+  repo.updateConversation(chat, { ...repo.getConversation(chat)!, lorebookIds: [removed.id, kept.id] });
+  const parallel = repo.createConversation(conversationInputSchema.parse({ title: 'Parallel story', kind: 'solo', characterId: character, lorebookIds: [removed.id] }));
+  const message = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: 'Keep this story.', providerState: null, legacyPayload: null });
+  repo.setHead(chat, message.id);
+  const response = await server.app.inject({ method: 'DELETE', url: `/api/lorebooks/${removed.id}` });
+  expect(response.json()).toEqual({ deleted: true });
+  expect(repo.getConversation(chat)).toMatchObject({ lorebookIds: [kept.id], headMessageId: message.id });
+  expect(repo.getConversation(parallel.id)?.lorebookIds).toEqual([]);
+  expect(repo.getMessage(message.id)).toEqual(message);
+  expect(repo.getLorebook(kept.id)).not.toBeNull();
+});
+
+it('resource references: group edits repair legacy missing members but reject invalid selections', async () => {
+  const repo = server.repository;
+  const group = repo.createGroup({ name: 'Legacy group', memberIds: ['old-missing-character', character], scenario: '' });
+  const renamed = await server.app.inject({ method: 'PUT', url: `/api/groups/${group.id}`, payload: { ...group, name: 'Renamed group' } });
+  expect(renamed.statusCode).toBe(200);
+  expect(renamed.json().memberIds).toEqual([character]);
+  const invalid = await server.app.inject({ method: 'PUT', url: `/api/groups/${group.id}`, payload: { ...repo.getGroup(group.id)!, memberIds: [character, 'new-missing-character'] } });
+  expect(invalid.statusCode).toBe(400);
+  const empty = repo.createGroup({ name: 'Missing members', memberIds: ['old-missing-character'], scenario: '' });
+  const noMembers = await server.app.inject({ method: 'PUT', url: `/api/groups/${empty.id}`, payload: { ...empty, name: 'Still missing members' } });
+  expect(noMembers.statusCode).toBe(400);
+  expect(noMembers.json().error).toBe('群组至少需要一个有效角色，请重新选择。');
+  expect(repo.getGroup(empty.id)?.name).toBe('Missing members');
+});
+
+it('resource references: deleting a character also unlinks its group memberships', async () => {
+  const repo = server.repository;
+  const kept = repo.createCharacter(characterInputSchema.parse({ name: 'Remaining character' }));
+  const group = repo.createGroup({ name: 'Group', memberIds: [character, kept.id], scenario: '' });
+  const response = await server.app.inject({ method: 'DELETE', url: `/api/characters/${character}` });
+  expect(response.json()).toEqual({ deleted: true });
+  expect(repo.getGroup(group.id)?.memberIds).toEqual([kept.id]);
+  expect(repo.getConversation(chat)?.characterId).toBeNull();
+  const renamed = await server.app.inject({ method: 'PUT', url: `/api/groups/${group.id}`, payload: { ...repo.getGroup(group.id)!, name: 'Still usable' } });
+  expect(renamed.statusCode).toBe(200);
+});
+
 it('duplicate startup leaves the active server generation and record updates intact', async () => {
   await server.listen();
   const port = (server.app.server.address() as { port: number }).port;

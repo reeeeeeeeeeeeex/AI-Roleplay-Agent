@@ -73,7 +73,7 @@ export default function Editor({
     onSave: async draft => {
       if (!String(draft.name ?? draft.title ?? '').trim()) throw new Error(t("请填写名称。"));
       record.current = await onSave({ ...draft, id: record.current?.id ?? draft.id, expectedUpdatedAt: record.current?.updatedAt ?? draft.updatedAt });
-      return { saved: { ...draft, id: record.current.id, updatedAt: record.current.updatedAt } };
+      return { saved: { ...draft, ...record.current } };
     },
   });
   const value = autosave.value;

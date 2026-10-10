@@ -38,13 +38,26 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       return repo.getConversation(chat.id);
     })(), update: (id,v) => repo.updateConversation(id,v), remove: (id) => repo.deleteConversation(id) },
   ];
-  function refs(path: string, input: any) {
-    if (path === 'groups' && (new Set(input.memberIds).size !== input.memberIds.length || input.memberIds.some((id: string) => !repo.getCharacter(id)))) throw new AppError("Invalid or duplicate group member.");
+  function refs(path: string, input: any, previous?: { memberIds?: string[]; lorebookIds?: string[] } | null) {
+    if (path === 'groups') {
+      if (new Set(input.memberIds).size !== input.memberIds.length) throw new AppError("Invalid or duplicate group member.");
+      input.memberIds = input.memberIds.filter((id: string) => {
+        if (repo.getCharacter(id)) return true;
+        if (previous?.memberIds?.includes(id)) return false;
+        throw new AppError("Invalid or duplicate group member.");
+      });
+      if (!input.memberIds.length) throw new AppError("群组至少需要一个有效角色，请重新选择。");
+    }
     if (path !== 'conversations') return;
     if (input.characterId && !repo.getCharacter(input.characterId)) throw new AppError("Character not found.");
     if (input.groupId && !repo.getGroup(input.groupId)) throw new AppError("Group not found.");
     if (input.personaId && !repo.getPersona(input.personaId)) throw new AppError("Persona not found.");
-    if (input.lorebookIds.some((id: string) => !repo.getLorebook(id))) throw new AppError("Lorebook not found.");
+    input.lorebookIds = input.lorebookIds.filter((id: string) => {
+      if (repo.getLorebook(id)) return true;
+      // Old dangling links must not block unrelated edits; new invalid links still fail.
+      if (previous?.lorebookIds?.includes(id)) return false;
+      throw new AppError("Lorebook not found.");
+    });
   }
   for (const collection of collections) {
     const base = `/api/${collection.path}`;
@@ -53,12 +66,15 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     app.post(base, async (req, reply) => { const value = collection.schema.parse(req.body); refs(collection.path, value); return reply.code(201).send(collection.create(value)); });
     app.put(`${base}/:id`, async (req, reply) => {
       idleAll();
-      const { expectedUpdatedAt: expected, expectedScenario } = z.object({ expectedUpdatedAt: z.string().optional(), expectedScenario: z.string().optional() }).parse(req.body);
-      const existing = collection.get(idOf(req)) as { updatedAt?: string } | null;
-      if (expected && existing?.updatedAt !== expected) throw new AppError("内容已在别处修改，草稿已保留，请重新打开后核对。");
-      if (collection.path === 'conversations' && expectedScenario !== undefined && repo.navigation(idOf(req)).scene.scenario !== expectedScenario) throw new AppError("场景已在别处修改，未覆盖现有内容。");
-      const value = collection.schema.parse(req.body); refs(collection.path, value);
-      return collection.update(idOf(req), value) ?? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') });
+      const saved = repo.database.sqlite.transaction(() => {
+        const { expectedUpdatedAt: expected, expectedScenario } = z.object({ expectedUpdatedAt: z.string().optional(), expectedScenario: z.string().optional() }).parse(req.body);
+        const existing = collection.get(idOf(req)) as { updatedAt?: string; memberIds?: string[]; lorebookIds?: string[] } | null;
+        if (expected && existing?.updatedAt !== expected) throw new AppError("内容已在别处修改，草稿已保留，请重新打开后核对。");
+        if (collection.path === 'conversations' && expectedScenario !== undefined && repo.navigation(idOf(req)).scene.scenario !== expectedScenario) throw new AppError("场景已在别处修改，未覆盖现有内容。");
+        const value = collection.schema.parse(req.body); refs(collection.path, value, existing);
+        return collection.update(idOf(req), value);
+      })();
+      return saved ?? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') });
     });
     app.delete(`${base}/:id`, async (req) => { idleAll(); return { deleted: Boolean(collection.remove(idOf(req))) }; });
   }

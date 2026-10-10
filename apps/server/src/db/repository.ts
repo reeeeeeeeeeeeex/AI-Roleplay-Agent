@@ -281,7 +281,15 @@ export class Repository {
     return this.getCharacter(characterId);
   }
   deleteCharacter(characterId: string): boolean {
-    return this.database.db.delete(characters).where(eq(characters.id, characterId)).run().changes > 0;
+    return this.database.sqlite.transaction(() => {
+      const deleted = this.database.db.delete(characters).where(eq(characters.id, characterId)).run().changes > 0;
+      if (!deleted) return false;
+      for (const group of this.listGroups()) {
+        if (group.memberIds.includes(characterId)) this.database.db.update(groups)
+          .set({ memberIds: group.memberIds.filter(id => id !== characterId), updatedAt: now() }).where(eq(groups.id, group.id)).run();
+      }
+      return true;
+    })();
   }
 
   listPersonas(): Persona[] { return this.database.db.select().from(personas).orderBy(asc(personas.name)).all().map(row => ({ ...row, stateTemplate: personaStateTemplateSchema.parse(row.stateTemplate) })) as Persona[]; }
@@ -350,7 +358,17 @@ export class Repository {
     });
     transaction(); return this.getLorebook(lorebookId);
   }
-  deleteLorebook(lorebookId: string): boolean { return this.database.db.delete(lorebooks).where(eq(lorebooks.id, lorebookId)).run().changes > 0; }
+  deleteLorebook(lorebookId: string): boolean {
+    return this.database.sqlite.transaction(() => {
+      const deleted = this.database.db.delete(lorebooks).where(eq(lorebooks.id, lorebookId)).run().changes > 0;
+      if (!deleted) return false;
+      for (const chat of this.listConversations()) {
+        if (chat.lorebookIds.includes(lorebookId)) this.database.db.update(conversations)
+          .set({ lorebookIds: chat.lorebookIds.filter(id => id !== lorebookId), updatedAt: now() }).where(eq(conversations.id, chat.id)).run();
+      }
+      return true;
+    })();
+  }
 
   listConversations(): Conversation[] { return this.database.db.select().from(conversations).orderBy(desc(conversations.updatedAt)).all().map(mapConversation); }
   getConversation(conversationId: string): Conversation | null {

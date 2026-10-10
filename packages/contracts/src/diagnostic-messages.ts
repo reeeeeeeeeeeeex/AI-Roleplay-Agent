@@ -155,6 +155,11 @@ export const diagnosticMessages = {
     "zh": "群组成员无效或重复。",
     "en": "Invalid or duplicate group member."
   },
+  "群组至少需要一个有效角色，请重新选择。": {
+    original: "群组至少需要一个有效角色，请重新选择。",
+    zh: "群组至少需要一个有效角色，请重新选择。",
+    en: "Select at least one existing character for this group."
+  },
   "Character not found.": {
     "original": "Character not found.",
     "zh": "角色不存在。",
