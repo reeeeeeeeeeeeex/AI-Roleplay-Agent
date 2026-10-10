@@ -143,19 +143,20 @@ it('local image caching preserves pairing and no-store responses for private API
 
 it('compact chat history keeps full current prose and only summaries of older versions', async () => {
   const repo = server.repository;
-  const user = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: 'turn', role: 'user', authorKind: 'protagonist', speaker: null, content: 'Open the door.', providerState: null, legacyPayload: null });
+  const empty = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'system', authorKind: 'narrator', speaker: null, content: '', providerState: null, legacyPayload: null });
+  const user = repo.createMessage({ conversationId: chat, parentId: empty.id, storyTurnId: 'turn', role: 'user', authorKind: 'protagonist', speaker: null, content: 'Open the door.', providerState: null, legacyPayload: null });
   const original = repo.createMessage({ conversationId: chat, parentId: user.id, storyTurnId: 'turn', role: 'assistant', authorKind: 'character', speaker: { kind: 'character', characterId: character }, content: 'Original 🐉 story.\u0000 原文。'.repeat(300), providerState: { private: 'provider-state' }, legacyPayload: { private: 'legacy-content' }, generationInfo: { mode: 'plain', model: 'offline', streaming: true, thinking: 'Visible thinking. '.repeat(300), usage: null, timing: null, requestCount: 1 } });
   const active = repo.createMessage({ ...original, content: 'Current story. '.repeat(300) });
   repo.setHead(chat, active.id);
-  expect(repo.getActiveBranch(chat)).toEqual([user, active]);
-  expect(repo.getActiveBranch(chat, original.id)).toEqual([user, original]);
+  expect(repo.getActiveBranch(chat)).toEqual([empty, user, active]);
+  expect(repo.getActiveBranch(chat, original.id)).toEqual([empty, user, original]);
   const full = await server.app.inject({ url: `/api/conversations/${chat}/messages` });
   expect(full.statusCode).toBe(200);
-  expect(full.json().nodes[1]).toMatchObject({ content: original.content, generationInfo: original.generationInfo, providerState: null, legacyPayload: null });
+  expect(full.json().nodes[2]).toMatchObject({ content: original.content, generationInfo: original.generationInfo, providerState: null, legacyPayload: null });
   const compact = await server.app.inject({ url: `/api/conversations/${chat}/messages?view=chat` });
   expect(compact.statusCode).toBe(200);
   expect(compact.json().branch).toEqual(full.json().branch);
-  expect(compact.json().nodes).toEqual([user, original, active].map(m => ({ id: m.id, parentId: m.parentId, role: m.role, speaker: m.speaker, content: m.content.slice(0, 100) })));
+  expect(compact.json().nodes).toEqual([empty, user, original, active].map(m => ({ id: m.id, parentId: m.parentId, role: m.role, speaker: m.speaker, content: m.content.slice(0, 100) })));
   expect(compact.body).not.toContain('provider-state');
   expect(compact.body).not.toContain('legacy-content');
   expect(compact.rawPayload.length).toBeLessThan(full.rawPayload.length / 2);
