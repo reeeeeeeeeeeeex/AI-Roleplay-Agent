@@ -1,0 +1,38 @@
+# 后端与共享代码性能改动备忘
+
+日期：2026-10-10。分支：`codex/continuous-improvements`，对比主分支基线 `3957e8c`。
+
+**当前决定：全部暂时保留，不执行撤销。** 本文记录此前讨论的 14 项改动，供以后逐项决定；列入本文不代表已经确认它有 bug。编号沿用 [分支验收清单](BRANCH_REVIEW.md)。
+
+## 提交清单
+
+| 编号 | Commit 与原始名称 | 具体改变 | 影响与撤销时的注意点 |
+| --- | --- | --- | --- |
+| 06 | `1222ebe` — `perf: privately cache immutable local images` | 服务端为本地图片成功响应增加浏览器私有长期缓存头。 | 影响图片下载和缓存，不参与故事保存校验。撤销会增加重复下载；图片路径和权限校验应保留。 |
+| 09 | `1a25247` — `perf: avoid duplicating complete message bodies in chat navigation` | 增加 `messages?view=chat`：当前分支返回完整正文，版本导航只返回短摘要；前端及共享类型配套调整。 | 影响聊天加载接口和前端数据结构。若撤销，必须同步处理前端调用与第 46 项，不能只退后端。 |
+| 15 | `b42f5ab` — `perf: avoid full trace readbacks during recording` | 更新 Trace 后不再读回整份请求/响应；需要时只取元数据。 | 影响 Trace 写入后的读取和统计，撤销时同步恢复调用方。 |
+| 17 | `4c50e7a` — `perf: read only new events when resuming streams` | 流式重连由 SQL 只查询游标后的事件，结束判断单独检查终止事件。 | 影响 SSE 重连和结束判断；撤销后恢复原来的读取后过滤，保留取消与关闭保护。 |
+| 19 | `b996d19` — `perf: query only relevant story record events` | 记录事件支持按类型查询；Memory、固定事实、Planner 等调用方改为提前筛选，并增加事件索引。 | 影响多个记录读取入口；撤销需同步恢复调用方，不能只删查询参数。 |
+| 23 | `e4b8dc9` — `perf: load only the selected message ancestry` | 使用递归 SQL 找到当前消息的祖先链，避免读取其他版本的完整正文。 | 影响当前分支读取；与第 48 项共用消息关系查询，必须一起核对。 |
+| 26 | `8622808` — `perf: decode only the current state checkpoint` | 先确定当前分支适用的状态检查点，再读取该检查点的完整状态表。 | 影响当前状态读取，减少历史状态解码；撤销不应改变检查点归属和顺序。 |
+| 28 | `9ac727d` — `perf: fetch state checkpoint details on demand` | 状态历史先返回简短列表，展开后再请求详情；新增单项详情接口，并调整恢复检查点入口。 | 同时涉及后端接口和记录面板。若撤销，保留后来修复的面板页签、展开和滚动位置行为。 |
+| 32 | `21127ae` — `perf: read only selected memory bodies` | 先按当前分支和数量筛选 Memory ID，再读取选中记录正文并应用修改事件。 | 影响 Memory 读取；不是缩短模型上下文。撤销后仍须保留原来的分支投影规则。 |
+| 33 | `143ae37` — `perf: index per-story record and trace reads` | 为回合、Trace、Memory 和状态检查点增加按会话查询的非唯一索引。 | 影响数据库查询计划，不修改故事正文。撤销创建代码不会自动移除旧库已有索引；如另行批准删除索引，只能处理本分支新增的索引。 |
+| 37 | `4ee7905` — `perf: keep API validators out of the browser bundle` | 把共享默认值和状态字段拆入 `contracts/client`，前端不再随这些常量加载服务端校验器。 | 目标是减小前端包，但调整了前后端共用模块的导出。若撤销，需同步恢复所有导入；保留服务端输入校验与原默认值。 |
+| 44 | `17b5765` — `perf: batch lorebook entries when listing resources` | 世界书列表从逐本读取改为读取书籍、条目后按书籍 ID 分组。 | 影响世界书列表加载；没有改动单本读取、删除或故事保存时的世界书存在性校验。 |
+| 46 | `1895cba` — `perf: read compact message versions directly from SQLite` | 导航摘要在 SQLite 中先截取有限字节，再在应用中限制摘要长度。 | 曾使空正文变成 `null` 并导致 `.slice()` 报错，已由 `fac4d2c` 修复。若取消摘要路径，应连同第 09 项及其修复一起处理，避免单独回退修复而重新引入故障。 |
+| 48 | `7a3b0c5` — `perf: resolve record branches without loading story prose` | 判断固定事实、Memory、状态与事件归属时，只读取消息 ID 和父子关系。 | 影响记录的分支判定；与第 23 项相关。无论是否撤销，保留循环检测和当前分支校验。 |
+
+第 19、33 项新增的索引为 `session_events_conversation_type_idx`、`turns_conversation_idx`、`turn_traces_conversation_created_idx`、`memories_conversation_idx`、`state_snapshots_conversation_idx`。本文不授权删除索引或其他数据库内容。
+
+## 已知问题与区分
+
+- **旧聊天空正文报错**：已确认与第 46 项有关，修复提交为 `fac4d2c`（`fix: preserve empty messages in compact chat history`）。真实聊天正文没有因此被修改。
+- **改故事名称后提示“世界书不存在”**：离线复现表明，改名提交整份故事资料时，旧的失效世界书关联被校验拦截。不编辑时没有保存请求，因此看起来正常。世界书删除未同步解除聊天关联；这些保存与删除行为在主分支基线也存在。目前没有证据把它归因于第 44 项或其他性能改动。
+- 这些优化通常减少重复读取、传输或解析，长聊天可能受益；不保证具体提速比例，也不直接提高模型生成速度或降低 token 费用。
+
+## 后续处理边界
+
+先修复故事资料保存及同类失效关联问题，再决定是否需要撤销性能改动。任何撤销须再次获得用户批准，按相互依赖的功能处理，不整体重置分支，不删除聊天、Memory、状态或用户批注。
+
+纯前端图片延迟加载（第 41 项，`e8a4a8a`）不在本表。搜索、高亮、草稿保护、复制、导出、服务正常关闭与取消保护等功能也不属于本次候选撤销范围。第 36 项键盘扩展已经另行撤回，不受本文影响。
