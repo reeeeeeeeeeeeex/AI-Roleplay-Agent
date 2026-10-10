@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { turnPlanSchema, turnRequestSchema } from './index.js';
+import { turnPlanSchema, turnRequestSchema, generalSettingsSchema, actionChoiceSettingsSchema, promptSettingsSchema } from './index.js';
+import { defaultGeneralSettings, defaultActionChoiceSettings, defaultPromptSettings } from './client.js';
+
+it('browser defaults match the server defaults for settings and prompts', () => {
+  expect({ general: defaultGeneralSettings, choices: defaultActionChoiceSettings, prompts: defaultPromptSettings })
+    .toEqual({ general: generalSettingsSchema.parse({}), choices: actionChoiceSettingsSchema.parse({}), prompts: promptSettingsSchema.parse({}) });
+});
 
 describe('turn contracts', () => {
   it('limits a plan to two visible outputs', () => {

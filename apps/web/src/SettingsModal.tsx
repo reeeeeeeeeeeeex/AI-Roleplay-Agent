@@ -1,7 +1,8 @@
 import { t } from './i18n.js';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { X, Plus } from 'lucide-react';
-import { defaultAgencyPrompts, defaultPromptSettings, type GeneralSettings, type PromptSettings, type PromptPreset } from '@new-ai-chat/contracts';
+import { defaultAgencyPrompts, defaultPromptSettings } from '@new-ai-chat/contracts/client';
+import type { GeneralSettings, PromptSettings, PromptPreset } from '@new-ai-chat/contracts';
 import { api } from './api';
 import AvatarField from './AvatarField';
 import ActionChoiceSettings from './ActionChoiceSettings';
@@ -13,7 +14,7 @@ export type AvatarMode = 'compact' | 'large' | 'full';
 
 export default function SettingsModal({
   onClose, generalSettings, onSaveGeneral, generationActive, connections,
-  onEditConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
+  onEditConnection, onCopyConnection, onDeleteConnection, onTestConnection, promptSettings, onSavePrompts,
   avatarMode, setAvatarMode,
   messageDisplayLimit, setMessageDisplayLimit, plainThinkingExpanded, setPlainThinkingExpanded,
   readingAppearance, onSaveAppearance,
@@ -24,6 +25,7 @@ export default function SettingsModal({
   generationActive: boolean;
   connections: any[];
   onEditConnection: (connection?: any) => void;
+  onCopyConnection: (connection: any) => Promise<void>;
   onDeleteConnection: (connection: any) => Promise<void>;
   onTestConnection: (id: string) => Promise<void>;
   promptSettings: PromptSettings;
@@ -41,6 +43,7 @@ export default function SettingsModal({
   const [languageDraft, setLanguageDraft] = useState(locale);
   const [tab, setTab] = useState('language');
   const [writing, setWriting] = useState(generalSettings);
+  const writingBaseline = useRef(generalSettings);
   const [prompts, setPrompts] = useState(promptSettings);
   const [promptBaseline, setPromptBaseline] = useState(promptSettings);
   const [presets, setPresets] = useState<PromptPreset[] | null>(null);
@@ -51,7 +54,13 @@ export default function SettingsModal({
   const [notice, setNotice] = useState('');
   const [displayLimitDraft, setDisplayLimitDraft] = useState(String(messageDisplayLimit));
   const [readingDraft, setReadingDraft] = useState(readingAppearance);
-  useEffect(() => { setWriting(generalSettings); }, [generalSettings]);
+  useEffect(() => {
+    const previous = writingBaseline.current;
+    writingBaseline.current = generalSettings;
+    // Immediate model controls must not replace unsaved writing edits.
+    setWriting(draft => ({ ...generalSettings, ...Object.fromEntries(Object.entries(draft)
+      .filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(previous[key as keyof GeneralSettings]))) }));
+  }, [generalSettings]);
   useEffect(() => {
     if (tab !== 'prompts') return;
     let active = true;
@@ -61,6 +70,12 @@ export default function SettingsModal({
     return () => { active = false; };
   }, [tab]);
   const locked = busy || generationActive;
+
+  function saveDisplay(action: () => void) {
+    setNotice('');
+    try { action(); setError(''); }
+    catch { setError(t('无法保存显示设置，当前设置未改变。请检查浏览器存储权限后重试。')); }
+  }
 
   function selectPreset(presetId: string) {
     const dirty = (Object.keys(promptBaseline) as Array<keyof PromptSettings>).some(key => prompts[key] !== promptBaseline[key]);
@@ -137,6 +152,7 @@ export default function SettingsModal({
                 <div className="resource-info"><h3>{c.name}</h3><p>{c.model} · {c.baseUrl}</p></div>
                 <div className="resource-actions">
                   <button onClick={() => onEditConnection(c)}>{t("编辑")}</button>
+                  <button disabled={locked} onClick={() => void save(() => onCopyConnection(c), t('连接已复制，可编辑副本的模型和参数。'))}>{t('复制连接')}</button>
                   <button disabled={locked} onClick={() => void save(() => onTestConnection(c.id), t("连接测试通过。"))}>{t("测试连接")}</button>
                   <button className="danger" disabled={locked} onClick={() => void save(() => onDeleteConnection(c), t("连接已删除。"))}>{t("删除")}</button>
                 </div>
@@ -176,7 +192,7 @@ export default function SettingsModal({
               label={t("旁白头像")}
               value={writing.narrator.avatarPath}
               disabled={locked}
-              onChange={(url) => setWriting({ ...writing, narrator: { ...writing.narrator, avatarPath: url } })}
+              onChange={(url) => setWriting(draft => ({ ...draft, narrator: { ...draft.narrator, avatarPath: url } }))}
             />
             <label>{t("Memory / 主角状态模型")}<select value={writing.recordConnectionId ?? ''} onChange={e => setWriting({ ...writing, recordConnectionId: e.target.value || null })}>
                 <option value="">{t("跟随当前模型")}</option>
@@ -275,15 +291,15 @@ export default function SettingsModal({
                   if (!Number.isInteger(value) || value < 1 || value > 1000) {
                     setDisplayLimitDraft(String(messageDisplayLimit)); setError(t("聊天显示条数请填写 1–1000 的整数。")); return;
                   }
-                  setError(''); setMessageDisplayLimit(value);
+                  saveDisplay(() => setMessageDisplayLimit(value));
                 }} />
             </label>
             <p className="muted">{t("默认 100 条，可设置 1–1000；向上滚动继续加载，仅影响页面显示，不影响发送给模型的条数。")}</p>
             <label className="checkbox-row">
-              <input type="checkbox" checked={plainThinkingExpanded} onChange={event => setPlainThinkingExpanded(event.target.checked)} />
+              <input type="checkbox" checked={plainThinkingExpanded} onChange={event => saveDisplay(() => setPlainThinkingExpanded(event.target.checked))} />
               {t("普通模式默认展开思考（CoT）")}</label>
             <label>{t("头像尺寸")}<select value={avatarMode} onChange={e => {
-                setAvatarMode(e.target.value as AvatarMode); localStorage.setItem('avatar-mode', e.target.value);
+                saveDisplay(() => setAvatarMode(e.target.value as AvatarMode));
               }}>
                 <option value="compact">{t("紧凑标准")}</option>
                 <option value="large">{t("大图立绘")}</option>

@@ -1,10 +1,9 @@
 import { createApp } from './app.js';
 import { spawn } from 'node:child_process';
 
-const {app,config}=await createApp();
-await app.listen({host:config.host,port:config.port});
-const hostname=config.host.includes(':') ? `[${config.host}]` : config.host;
-const url=`http://${hostname}:${config.port}`;
+const server=await createApp();
+const {app,config}=server;
+const url=await server.listen();
 console.log(`AI Roleplay Agent: ${url}${config.fakeModel?' (offline demo)':''}`);
 if (process.env.OPEN_BROWSER === '1') {
   const command=process.platform==='win32'?'explorer.exe':process.platform==='darwin'?'open':'xdg-open';

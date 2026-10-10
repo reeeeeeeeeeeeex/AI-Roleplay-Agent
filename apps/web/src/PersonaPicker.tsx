@@ -139,7 +139,7 @@ export default function PersonaPicker({
                   <div className="persona-picker-card-image-wrap">
                     {p.avatarPath ? (
                       <>
-                        <img className="character-card-bg-blur" src={p.avatarPath} alt="" aria-hidden="true" />
+                        <img className="character-card-bg-blur" src={p.avatarPath} alt="" aria-hidden="true" loading="lazy" />
                         <img className="character-card-img" src={p.avatarPath} alt={p.name} loading="lazy" />
                       </>
                     ) : (

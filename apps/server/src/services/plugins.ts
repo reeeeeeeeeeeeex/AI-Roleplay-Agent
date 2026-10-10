@@ -22,7 +22,7 @@ export class InternalPluginHost {
     })) };
   }
   async settled(chat: string): Promise<void> {
-    const event = this.repository.events(chat).filter((item) => item.type === 'story.settled').at(-1);
+    const event = this.repository.events(chat, ['story.settled']).at(-1);
     if (!event) return;
     for (const [index, hook] of this.registry.turnHooks.entries()) {
       try { await hook(structuredClone(event)); }

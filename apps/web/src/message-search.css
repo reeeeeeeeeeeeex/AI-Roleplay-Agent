@@ -1,0 +1,13 @@
+.message-search { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--border-default); flex-shrink: 0; }
+.message-search input { flex: 1; min-width: 0; }
+.message-search small { color: var(--text-muted); white-space: nowrap; font-size: 11px; }
+.message-search button { display: grid; place-items: center; padding: 6px; flex-shrink: 0; }
+.message.search-match { outline: 2px solid var(--border-focus); outline-offset: 4px; border-radius: var(--radius-sm); }
+.search-highlights { position: absolute; inset: 0; z-index: 1; pointer-events: none; color: transparent; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: inherit; }
+.search-highlights mark { color: var(--warning-bg); background: var(--warning); border-radius: 2px; }
+.record-field:focus-within .search-highlights { visibility: hidden; }
+@container chat-pane (max-width: 400px) {
+  .message-search { flex-wrap: wrap; padding: 6px 10px; }
+  .message-search input { flex-basis: 100%; }
+  .message-search small { flex: 1; }
+}

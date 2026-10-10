@@ -29,6 +29,215 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
 
+it('resource references: renaming a legacy story removes only its missing lorebook links', async () => {
+  const repo = server.repository;
+  const book = repo.createLorebook(lorebookInputSchema.parse({ name: 'Existing lore' }));
+  const original = repo.updateConversation(chat, { ...repo.getConversation(chat)!, lorebookIds: ['old-missing-book', book.id] })!;
+  const response = await server.app.inject({ method: 'PUT', url: `/api/conversations/${chat}`, payload: { ...original, title: 'Renamed story', expectedUpdatedAt: original.updatedAt } });
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({ title: 'Renamed story', lorebookIds: [book.id], characterId: character });
+  expect(repo.getConversation(chat)?.lorebookIds).toEqual([book.id]);
+  const stale = await server.app.inject({ method: 'PUT', url: `/api/conversations/${chat}`, payload: { ...original, title: 'Stale rename', expectedUpdatedAt: 'old-version' } });
+  expect(stale.statusCode).toBe(400);
+  expect(repo.getConversation(chat)?.title).toBe('Renamed story');
+});
+
+it('resource references: new missing lorebook links remain invalid on create and update', async () => {
+  const original = server.repository.getConversation(chat)!;
+  const payload = { ...original, title: 'Invalid rename', lorebookIds: ['new-missing-book'] };
+  const update = await server.app.inject({ method: 'PUT', url: `/api/conversations/${chat}`, payload });
+  const create = await server.app.inject({ method: 'POST', url: '/api/conversations', payload });
+  expect(update.statusCode).toBe(400);
+  expect(create.statusCode).toBe(400);
+  expect(update.json().error).toBe('Lorebook not found.');
+  expect(server.repository.getConversation(chat)).toEqual(original);
+});
+
+it('resource references: deleting a lorebook unlinks stories without removing their messages', async () => {
+  const repo = server.repository;
+  const removed = repo.createLorebook(lorebookInputSchema.parse({ name: 'Removed lore' }));
+  const kept = repo.createLorebook(lorebookInputSchema.parse({ name: 'Kept lore' }));
+  repo.updateConversation(chat, { ...repo.getConversation(chat)!, lorebookIds: [removed.id, kept.id] });
+  const parallel = repo.createConversation(conversationInputSchema.parse({ title: 'Parallel story', kind: 'solo', characterId: character, lorebookIds: [removed.id] }));
+  const message = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: 'Keep this story.', providerState: null, legacyPayload: null });
+  repo.setHead(chat, message.id);
+  const response = await server.app.inject({ method: 'DELETE', url: `/api/lorebooks/${removed.id}` });
+  expect(response.json()).toEqual({ deleted: true });
+  expect(repo.getConversation(chat)).toMatchObject({ lorebookIds: [kept.id], headMessageId: message.id });
+  expect(repo.getConversation(parallel.id)?.lorebookIds).toEqual([]);
+  expect(repo.getMessage(message.id)).toEqual(message);
+  expect(repo.getLorebook(kept.id)).not.toBeNull();
+});
+
+it('resource references: group edits repair legacy missing members but reject invalid selections', async () => {
+  const repo = server.repository;
+  const group = repo.createGroup({ name: 'Legacy group', memberIds: ['old-missing-character', character], scenario: '' });
+  const renamed = await server.app.inject({ method: 'PUT', url: `/api/groups/${group.id}`, payload: { ...group, name: 'Renamed group' } });
+  expect(renamed.statusCode).toBe(200);
+  expect(renamed.json().memberIds).toEqual([character]);
+  const invalid = await server.app.inject({ method: 'PUT', url: `/api/groups/${group.id}`, payload: { ...repo.getGroup(group.id)!, memberIds: [character, 'new-missing-character'] } });
+  expect(invalid.statusCode).toBe(400);
+  const empty = repo.createGroup({ name: 'Missing members', memberIds: ['old-missing-character'], scenario: '' });
+  const noMembers = await server.app.inject({ method: 'PUT', url: `/api/groups/${empty.id}`, payload: { ...empty, name: 'Still missing members' } });
+  expect(noMembers.statusCode).toBe(400);
+  expect(noMembers.json().error).toBe('群组至少需要一个有效角色，请重新选择。');
+  expect(repo.getGroup(empty.id)?.name).toBe('Missing members');
+});
+
+it('resource references: deleting a character also unlinks its group memberships', async () => {
+  const repo = server.repository;
+  const kept = repo.createCharacter(characterInputSchema.parse({ name: 'Remaining character' }));
+  const group = repo.createGroup({ name: 'Group', memberIds: [character, kept.id], scenario: '' });
+  const response = await server.app.inject({ method: 'DELETE', url: `/api/characters/${character}` });
+  expect(response.json()).toEqual({ deleted: true });
+  expect(repo.getGroup(group.id)?.memberIds).toEqual([kept.id]);
+  expect(repo.getConversation(chat)?.characterId).toBeNull();
+  const renamed = await server.app.inject({ method: 'PUT', url: `/api/groups/${group.id}`, payload: { ...repo.getGroup(group.id)!, name: 'Still usable' } });
+  expect(renamed.statusCode).toBe(200);
+});
+
+it('duplicate startup leaves the active server generation and record updates intact', async () => {
+  await server.listen();
+  const port = (server.app.server.address() as { port: number }).port;
+  const turn = server.repository.createTurn(chat, 'active-story-turn', 'normal');
+  server.repository.updateTurn(turn.id, { status: 'running', recordsStatus: 'running' });
+  const duplicate = await createApp({ ...server.config, port }, new InspectRuntime());
+  await expect(duplicate.listen()).rejects.toMatchObject({ code: 'EADDRINUSE' });
+  expect(server.repository.getTurn(turn.id)).toMatchObject({ status: 'running', recordsStatus: 'running', error: null });
+  expect(server.repository.eventsForTurn(turn.id)).toEqual([]);
+});
+
+it('successful startup recovers interrupted generation after acquiring the port', async () => {
+  const turn = server.repository.createTurn(chat, 'interrupted-story-turn', 'normal');
+  server.repository.updateTurn(turn.id, { status: 'running', recordsStatus: 'running' });
+  const config = server.config;
+  await server.app.close();
+  server = await createApp(config, new InspectRuntime());
+  expect(server.repository.getTurn(turn.id)?.status).toBe('running');
+  await server.listen();
+  expect(server.repository.getTurn(turn.id)).toMatchObject({ status: 'failed', recordsStatus: 'cancelled', error: 'Server restarted during generation.' });
+});
+
+it('shutdown aborts active generation before waiting for its open SSE connection', async () => {
+  let started!: () => void, aborted = false;
+  const running = new Promise<void>(resolve => { started = resolve; });
+  runtime.writeTurn = async request => {
+    started();
+    return new Promise<never>((_resolve, reject) => request.signal.addEventListener('abort', () => {
+      aborted = true; reject(request.signal.reason);
+    }, { once: true }));
+  };
+  const address = await server.listen();
+  const turn = server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'normal', input: { voice: 'protagonist', text: 'Wait for shutdown.' } }));
+  await running;
+  const subscription = new AbortController();
+  let closing: Promise<void> | undefined, transcript: Promise<string | null> | undefined;
+  try {
+    const response = await fetch(`${address}/api/turns/${turn.id}/events`, { signal: subscription.signal });
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    transcript = response.text().catch(() => null);
+    closing = server.app.close();
+    await vi.waitFor(() => expect(aborted).toBe(true), { timeout: 800 });
+    expect(await transcript).toContain('turn.cancelled');
+    await closing;
+    expect(server.app.server.listening).toBe(false);
+  } finally {
+    subscription.abort(); server.turns.cancel(turn.id);
+    await (closing ?? server.app.close());
+    await transcript;
+  }
+});
+
+it('shutdown cancels manual record requests and discards late model results', async () => {
+  let started!: () => void, finish!: () => void, aborted = false;
+  const running = new Promise<void>(resolve => { started = resolve; });
+  runtime.maintain = async request => new Promise<string>(resolve => {
+    finish = () => resolve(JSON.stringify([{ op: 'updateRow', table: 'global_state', rowId: 1, cells: { current_location: 'Late result' } }]));
+    request.signal.addEventListener('abort', () => { aborted = true; finish(); }, { once: true });
+    started();
+  });
+  const address = await server.listen();
+  const response = fetch(`${address}/api/conversations/${chat}/state/generate`, { method: 'POST', headers: { connection: 'close' } });
+  let closing: Promise<void> | undefined;
+  try {
+    await running;
+    closing = server.app.close();
+    await vi.waitFor(() => expect(aborted).toBe(true), { timeout: 800 });
+    expect((await response).status).toBeGreaterThanOrEqual(400);
+    await closing;
+    expect(server.app.server.listening).toBe(false);
+    server = await createApp(server.config, runtime);
+    expect(server.repository.latestState(chat)).toBeNull();
+  } finally {
+    finish?.();
+    await response;
+    await (closing ?? server.app.close());
+  }
+});
+
+it('local image caching keeps uploaded replacements at distinct URLs', async () => {
+  const original = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('original-image-fixture')]);
+  const upload = await server.app.inject({ method: 'POST', url: '/api/assets/upload', headers: { 'content-type': 'application/octet-stream' }, payload: original });
+  expect(upload.statusCode).toBe(200);
+  const firstUrl = upload.json().url;
+  const first = await server.app.inject({ url: firstUrl });
+  expect(first.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+  expect(first.rawPayload).toEqual(original);
+  const replacement = Buffer.concat([original, Buffer.from('-replacement')]);
+  const replaced = await server.app.inject({ method: 'POST', url: '/api/assets/upload', headers: { 'content-type': 'application/octet-stream' }, payload: replacement });
+  expect(replaced.json().url).not.toBe(firstUrl);
+  expect((await server.app.inject({ url: replaced.json().url })).rawPayload).toEqual(replacement);
+  expect((await server.app.inject({ url: firstUrl })).rawPayload).toEqual(original);
+});
+
+it('local image caching preserves pairing and no-store responses for private APIs and errors', async () => {
+  const config = server.config;
+  await server.app.close();
+  const token = 'offline-pairing-fixture-token';
+  server = await createApp({ ...config, pairingToken: token }, runtime);
+  const name = 'b'.repeat(64) + '.png';
+  writeFileSync(join(work, 'assets', name), Buffer.from('image-fixture'));
+  const denied = await server.app.inject({ url: `/api/assets/${name}` });
+  expect(denied.statusCode).toBe(401);
+  expect(denied.headers['cache-control']).toBe('no-store');
+  const headers = { authorization: `Bearer ${token}` };
+  expect((await server.app.inject({ url: `/api/assets/${name}`, headers })).headers['cache-control']).toContain('private');
+  expect((await server.app.inject({ url: '/api/settings/general', headers })).headers['cache-control']).toBe('no-store');
+  const missing = await server.app.inject({ url: `/api/assets/${'c'.repeat(64)}.png`, headers });
+  expect(missing.statusCode).toBe(404);
+  expect(missing.headers['cache-control']).toBe('no-store');
+});
+
+it('compact chat history keeps full current prose and only summaries of older versions', async () => {
+  const repo = server.repository;
+  const empty = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'system', authorKind: 'narrator', speaker: null, content: '', providerState: null, legacyPayload: null });
+  const user = repo.createMessage({ conversationId: chat, parentId: empty.id, storyTurnId: 'turn', role: 'user', authorKind: 'protagonist', speaker: null, content: 'Open the door.', providerState: null, legacyPayload: null });
+  const original = repo.createMessage({ conversationId: chat, parentId: user.id, storyTurnId: 'turn', role: 'assistant', authorKind: 'character', speaker: { kind: 'character', characterId: character }, content: 'Original 🐉 story.\u0000 原文。'.repeat(300), providerState: { private: 'provider-state' }, legacyPayload: { private: 'legacy-content' }, generationInfo: { mode: 'plain', model: 'offline', streaming: true, thinking: 'Visible thinking. '.repeat(300), usage: null, timing: null, requestCount: 1 } });
+  const active = repo.createMessage({ ...original, content: 'Current story. '.repeat(300) });
+  repo.setHead(chat, active.id);
+  expect(repo.getActiveBranch(chat)).toEqual([empty, user, active]);
+  expect(repo.getActiveBranch(chat, original.id)).toEqual([empty, user, original]);
+  const full = await server.app.inject({ url: `/api/conversations/${chat}/messages` });
+  expect(full.statusCode).toBe(200);
+  expect(full.json().nodes[2]).toMatchObject({ content: original.content, generationInfo: original.generationInfo, providerState: null, legacyPayload: null });
+  const compact = await server.app.inject({ url: `/api/conversations/${chat}/messages?view=chat` });
+  expect(compact.statusCode).toBe(200);
+  expect(compact.json().branch).toEqual(full.json().branch);
+  expect(compact.json().nodes).toEqual([empty, user, original, active].map(m => ({ id: m.id, parentId: m.parentId, role: m.role, speaker: m.speaker, content: m.content.slice(0, 100) })));
+  expect(compact.body).not.toContain('provider-state');
+  expect(compact.body).not.toContain('legacy-content');
+  expect(compact.rawPayload.length).toBeLessThan(full.rawPayload.length / 2);
+});
+
+it('active history and records reject cyclic message parents', () => {
+  const repo = server.repository;
+  const message = repo.createMessage({ conversationId: chat, parentId: null, storyTurnId: null, role: 'user', authorKind: 'protagonist', speaker: null, content: 'Offline cycle guard', providerState: null, legacyPayload: null });
+  repo.database.sqlite.prepare('UPDATE messages SET parent_id = ? WHERE id = ?').run(message.id, message.id);
+  repo.setHead(chat, message.id);
+  expect(() => repo.getActiveBranch(chat, message.id)).toThrow('Cycle in message branch.');
+  expect(() => repo.listPinnedFacts(chat)).toThrow('Cycle in message branch.');
+});
+
 it('web copy previews plain prose and saves one User at the expected head without generation', async () => {
   const network = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', network);
   const input = { voice: 'narrator', text: '网页写作本轮输入' };
@@ -200,6 +409,21 @@ it('developer Trace retains cancelled partial events and redacts structured secr
   expect(restored.status).toBe('cancelled');
   expect((await server.app.inject({ method: 'GET', url: `/api/traces/${id}` })).json().events).toEqual(restored.events);
   sink.flush();
+});
+
+it('connection copy keeps credentials on the server and remains independent of its source', async () => {
+  const source = server.repository.getRuntimeConnection(connection)!;
+  const settings = server.repository.getGeneralSettings();
+  const response = await server.app.inject({ method: 'POST', url: `/api/connections/${connection}/copy`, payload: { name: '  Copy  ' } });
+  expect(response.statusCode).toBe(201);
+  const copied = response.json();
+  expect(copied).toMatchObject({ name: 'Copy', hasApiKey: true, headers: { Authorization: '[stored]' } });
+  expect(response.body).not.toContain(source.apiKey);
+  expect(response.body).not.toContain(source.headers.Authorization);
+  expect(server.repository.getRuntimeConnection(copied.id)).toEqual({ ...source, id: copied.id });
+  server.repository.updateConnection(copied.id, connectionInputSchema.parse({ ...source, name: 'Edited copy', model: 'another-model', apiKey: 'copy-only-fixture-key' }));
+  expect(server.repository.getRuntimeConnection(connection)).toEqual(source);
+  expect(server.repository.getGeneralSettings()).toEqual(settings);
 });
 
 it('model settings: discovers models with saved credentials without saving the draft', async () => {
@@ -844,17 +1068,36 @@ describe('branches and records',()=>{
     expect(server.repository.getMessage(last.id)?.content).toBe(last.content);
     expect(settledStoryIds(server.repository, chat)).toHaveLength(1);
   });
-  it('keeps state snapshots scoped to the chosen branch',async()=>{await normal();const b=server.repository.getActiveBranch(chat);const state=blankState();state.global_state[0]!.current_location='room';server.repository.createState(chat,b.at(-1)!.storyTurnId,state);expect(server.repository.latestState(chat)?.tables.global_state[0]?.current_location).toBe('room');server.repository.setHead(chat,b[0]!.id);expect(server.repository.latestState(chat)).toBeNull();});
+  it('keeps the newest applicable state snapshot scoped to the chosen branch', async () => {
+    const repo = server.repository;
+    await normal();
+    const branch = repo.getActiveBranch(chat);
+    const state = blankState(); state.global_state[0]!.current_location = 'room';
+    const later = repo.createState(chat, branch.at(-1)!.storyTurnId, state);
+    repo.setHead(chat, branch[0]!.id);
+    expect(repo.latestState(chat)).toBeNull();
+    state.global_state[0]!.current_location = 'entrance';
+    const earlier = repo.createState(chat, branch[0]!.storyTurnId, state);
+    repo.setHead(chat, branch.at(-1)!.id);
+    expect(repo.latestState(chat)).toEqual(earlier);
+    const restored = repo.createState(chat, later.storyTurnId, later.tables);
+    expect(repo.latestState(chat)).toEqual(restored);
+    repo.setHead(chat, branch[0]!.id);
+    expect((await server.app.inject({ url: `/api/conversations/${chat}/state` })).json()).toEqual(earlier);
+  });
   it('autosaves record edits only on their originating branch and preserves memory edits in archives', async () => {
     const repo = server.repository;
     await normal();
     const firstHead = repo.getConversation(chat)!.headMessageId;
-    const memory = repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: '原来的记忆' });
+    const memory = repo.createMemory({ conversationId: chat, stage: 8, storyTurnId: null, source: 'imported', content: '[Stage 1]: 原来的记忆\n\n[Stage 2]: 保留第二阶段' });
+    const stage = repo.listMemoryStages(chat)[1]!;
     await normal();
     const head = repo.getConversation(chat)!.headMessageId;
-    const edit = { content: '修订的记忆', previous: memory.content, head };
-    expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBe(200);
-    expect(repo.listMemories(chat)[0]).toMatchObject({ ...memory, content: edit.content });
+    const edit = { content: '修订的记忆', previous: stage.content, head };
+    const url = `/api/conversations/${chat}/memory/${stage.id}`;
+    expect((await server.app.inject({ method: 'PATCH', url, payload: { ...edit, content: '[Stage 3]: 不能添加标题' } })).statusCode).toBe(400);
+    expect((await server.app.inject({ method: 'PATCH', url, payload: edit })).statusCode).toBe(200);
+    expect(repo.listMemoryStages(chat).map(item => item.content)).toEqual(['保留第二阶段', edit.content]);
     const cell = { head, table: 'global_state', rowId: 1, column: 'current_location', previous: '', content: '书店' };
     expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: cell })).statusCode).toBe(200);
     const stale = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/state/cell`, payload: { ...cell, content: '旧输入' } });
@@ -863,11 +1106,28 @@ describe('branches and records',()=>{
     const archive = (await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).json();
     const imported = await server.app.inject({ method: 'POST', url: '/api/imports/story/execute', payload: archive });
     expect(imported.statusCode, imported.body).toBe(201);
-    expect(repo.listMemories(imported.json().id)[0]?.content).toBe(edit.content);
+    expect(repo.listMemoryStages(imported.json().id).map(item => item.content)).toEqual(['保留第二阶段', edit.content]);
     repo.setHead(chat, firstHead);
     expect(repo.listMemories(chat)[0]?.content).toBe(memory.content);
     expect(repo.latestState(chat)).toBeNull();
-    expect((await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: edit })).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await server.app.inject({ method: 'PATCH', url, payload: edit })).statusCode).toBeGreaterThanOrEqual(400);
+  });
+  it('loads state checkpoint summaries and details only from the current branch', async () => {
+    const repo = server.repository;
+    await normal();
+    const head = repo.getConversation(chat)!.headMessageId;
+    const earlier = repo.createState(chat, null, blankState());
+    await normal();
+    const later = repo.createState(chat, null, blankState());
+    repo.setHead(chat, head);
+    const base = `/api/conversations/${chat}/state/history`;
+    expect((await server.app.inject({ url: `${base}?view=summary` })).json()).toEqual([{ id: earlier.id, createdAt: earlier.createdAt }]);
+    expect((await server.app.inject({ url: base })).json()).toEqual([earlier]);
+    expect((await server.app.inject({ url: `${base}/${earlier.id}` })).json()).toEqual(earlier);
+    expect((await server.app.inject({ url: `${base}/${later.id}` })).statusCode).toBe(404);
+    const other = repo.createConversation(conversationInputSchema.parse({ title: 'Other checkpoint story', kind: 'solo', characterId: character }));
+    expect((await server.app.inject({ url: `/api/conversations/${other.id}/state/history/${earlier.id}` })).statusCode).toBe(404);
+    expect((await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/state/restore`, payload: { snapshotId: later.id } })).statusCode).toBeGreaterThanOrEqual(400);
   });
   it('v0.2 memory coverage and pinned facts follow the branch without resummarizing covered turns', async () => {
     const repo = server.repository;
@@ -881,10 +1141,14 @@ describe('branches and records',()=>{
     await server.records.generate(chat, 'memory', new AbortController().signal);
     expect(maintain.mock.calls[1]![0].history.every(message => message.storyTurnId === second.storyTurnId)).toBe(true);
     expect(repo.listMemories(chat)[0]?.coverage?.storyTurnIds).toEqual([second.storyTurnId]);
+    const stages = repo.listMemories(chat);
+    expect(stages).toHaveLength(2);
+    expect(repo.listMemories(chat, 1)).toEqual(stages.slice(0, 1));
     repo.removePinnedFact(chat, fact.id);
     repo.setHead(chat, firstBranch.at(-1)!.id);
     expect(repo.listPinnedFacts(chat)).toEqual([fact]);
     expect(repo.listMemories(chat)).toHaveLength(1);
+    expect(repo.listMemories(chat, 1)[0]?.coverage?.storyTurnIds).toEqual([first.storyTurnId]);
     const context = new StoryContext(repo, chat);
     const match = await context.searchMemory('灯塔', 3);
     expect(match[0]?.sourceId).toBe(repo.listMemories(chat)[0]?.id);
@@ -921,7 +1185,22 @@ describe('HTTP boundary',()=>{
   it('does not return API keys or custom header values',async()=>{const response=await server.app.inject({method:'GET',url:'/api/connections'});expect(response.statusCode).toBe(200);expect(response.body).not.toContain('secret-do-not-return');expect(response.body).not.toContain('header-secret');});
   it.each(['https://evil.example','null','http://127.0.0.1.evil.example'])('rejects untrusted origin %s',async(origin)=>{const r=await server.app.inject({method:'POST',url:'/api/turns',headers:{origin},payload:{}});expect(r.statusCode).toBe(403);});
   it('rejects DNS rebinding hostnames',async()=>{expect((await server.app.inject({url:'/api/connections',headers:{host:'evil.example'}})).statusCode).toBe(403);});
-  it('replays durable SSE events in increasing order',async()=>{const turn=await normal();const r=await server.app.inject({url:`/api/turns/${turn.id}/events`});expect(r.statusCode).toBe(200);const events=r.body.split('\n\n').filter((line)=>line.includes('data:')).map((line)=>JSON.parse(line.split('data: ')[1]!));expect(events.at(-1).type).toBe('turn.completed');expect(events.map((e:any)=>e.id)).toEqual([...events.map((e:any)=>e.id)].sort((a,b)=>a-b));const after=events[2].id;const resumed=await server.app.inject({url:`/api/turns/${turn.id}/events?after=${after}`});expect(resumed.body).not.toContain(`id: ${after}\n`);});
+  it('replays only SSE events after the cursor and closes completed streams', async () => {
+    const turn = await normal();
+    const url = `/api/turns/${turn.id}/events`;
+    const parse = (body: string) => [...body.matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]!));
+    const response = await server.app.inject({ url });
+    expect(response.statusCode).toBe(200);
+    const events = parse(response.body);
+    expect(events.at(-1).type).toBe('turn.completed');
+    expect(events.map(event => event.id)).toEqual(events.map(event => event.id).sort((a, b) => a - b));
+    const resumed = await server.app.inject({ url: `${url}?after=${events[2].id}` });
+    expect(resumed.statusCode).toBe(200);
+    expect(parse(resumed.body)).toEqual(events.slice(3));
+    const completed = await server.app.inject({ url, headers: { 'last-event-id': String(events.at(-1).id) } });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.body).toBe('');
+  });
   it('does not expose provider reasoning as chat prose',async()=>{await normal();const r=await server.app.inject({url:`/api/conversations/${chat}/messages`});expect(r.json().branch.every((m:any)=>m.providerState===null)).toBe(true);});
   it('validates explicit narrator identity',async()=>{const r=await server.app.inject({method:'POST',url:'/api/turns',payload:{conversationId:chat,input:{text:'hi',voice:'narrator'},replyTarget:{mode:'explicit',speaker:{kind:'narrator'}}}});expect(r.statusCode).toBe(202);await server.turns.idle(chat);});
 });
@@ -982,11 +1261,57 @@ describe('record truth and logical-turn safeguards', () => {
     server.turns.start(turnRequestSchema.parse({ conversationId: chat, trigger: 'continue', targetMessageId: last.id })); await server.turns.idle(chat);
     expect(settledStoryIds(server.repository, chat)).toHaveLength(1);
   });
-  it('treats cumulative imported memories and empty manual baselines correctly', () => {
-    for (const [stage, source, content] of [[1,'imported','old'],[2,'imported','cumulative'],[3,'generated','new']] as const) server.repository.createMemory({ conversationId: chat, stage, source, content, storyTurnId: null });
-    expect(new StoryContext(server.repository, chat).memory.map(m => m.content)).toEqual(['cumulative', 'new']);
-    server.repository.createMemory({ conversationId: chat, stage: 4, source: 'manual', content: '', storyTurnId: null });
-    expect(new StoryContext(server.repository, chat).memory).toEqual([]); expect(server.repository.listMemories(chat)).toHaveLength(4);
+  it('treats cumulative imported memories and empty manual baselines correctly', async () => {
+    const repo = server.repository;
+    for (const [stage, source, content] of [[1,'imported','[Stage 1]: old'],[8,'imported','[Stage 1]: revised\n\n[Stage 2]: second'],[9,'generated','new']] as const) repo.createMemory({ conversationId: chat, stage, source, content, storyTurnId: null });
+    expect(new StoryContext(repo, chat).memory.map(m => [m.title, m.content])).toEqual([['Stage 1', 'revised'], ['Stage 2', 'second'], ['Stage 3', 'new']]);
+    const displayed = (await server.app.inject({ url: `/api/conversations/${chat}/memory` })).json();
+    expect(displayed.map((m: any) => m.stage)).toEqual([3, 2, 1]);
+    expect(displayed[1].coverage).toBeNull();
+    expect(repo.listMemories(chat).map(m => m.stage)).toEqual([9, 8, 1]);
+    repo.createMemory({ conversationId: chat, stage: 10, source: 'manual', content: '', storyTurnId: null });
+    expect(new StoryContext(repo, chat).memory).toEqual([]);
+    expect(repo.listMemoryStages(chat)[0]?.stage).toBe(4);
+    expect(repo.listMemories(chat)).toHaveLength(4);
+  });
+  it('keeps ambiguous legacy stage prefixes intact instead of guessing', () => {
+    const repo = server.repository;
+    const content = '[Stage 1]: first\n\n[Stage 1]: ambiguous repeat';
+    repo.createMemory({ conversationId: chat, stage: 5, source: 'imported', content, storyTurnId: null });
+    expect(repo.listMemoryStages(chat)).toEqual(repo.listMemories(chat));
+    expect(new StoryContext(repo, chat).memory[0]?.content).toBe(content);
+  });
+  it('sends all effective Memory stages in order in preview and the real Gateway body', async () => {
+    const repo = server.repository;
+    repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false, memoryTurnInterval: 0, stateTurnInterval: 0 });
+    repo.updateConnection(connection, connectionInputSchema.parse({ name: 'Offline', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1', model: 'test', apiKey: 'offline', reasoning: 'off' }));
+    const markers = Array.from({ length: 7 }, (_, i) => `memory-marker-${i + 1}`);
+    repo.createMemory({ conversationId: chat, stage: 9, source: 'imported', storyTurnId: null, content: markers.slice(0, 6).map((m, i) => `[Stage ${i + 1}]: ${m}`).join('\n\n') });
+    const generated = JSON.stringify({ timeSpan: '清晨', location: '书店', chronicle: markers[6], dialogue: ['“明天见。”'], overview: '发现信件' }, null, 2);
+    repo.createMemory({ conversationId: chat, stage: 10, source: 'generated', storyTurnId: null, content: generated });
+    repo.createState(chat, null, blankState());
+    const bodies: string[] = [];
+    const network = vi.fn<typeof fetch>(async (_url, options) => {
+      bodies.push(String(options?.body));
+      return new Response(JSON.stringify({ id: 'offline', object: 'chat.completion', model: 'test', choices: [{ index: 0, message: { role: 'assistant', content: 'Offline reply.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 } }), { headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', network);
+    const input = turnRequestSchema.parse({ conversationId: chat, input: { voice: 'protagonist', text: 'An unrelated action.' } });
+    const preview = await server.turns.preview(input, new AbortController().signal);
+    expect(network).not.toHaveBeenCalled();
+    const pi = new PiAgentRuntime(); runtime.writeTurn = pi.writeTurn.bind(pi);
+    const turn = server.turns.start(input); await server.turns.idle(chat);
+    expect(repo.getTurn(turn.id)?.status).toBe('completed');
+    expect(bodies).toHaveLength(1);
+    for (const body of [preview.requestBody, preview.webPrompt, bodies[0]!]) expect(body.match(/memory-marker-\d+/g)).toEqual(markers);
+    for (const raw of [preview.requestBody, bodies[0]!]) {
+      const messages = JSON.parse(raw).messages as Array<{ role: string; content: string }>;
+      const memory = messages.filter(message => message.content.startsWith('[Memory:'));
+      expect(memory[0]!.content).toContain(`\n\n${markers[0]}`);
+      expect(memory.at(-1)!.content).toContain(generated);
+      expect(messages.findIndex(message => message.content.startsWith('[User State]'))).toBeGreaterThan(messages.indexOf(memory.at(-1)!));
+    }
+    expect(preview.contextReport.items.filter(item => item.source === 'memory' && !item.included)).toEqual([]);
   });
   it('keeps pending world proposals out of truth, applies them, then supports safe undo', async () => {
     const turn = await normal(); const repo = server.repository;
@@ -1017,11 +1342,13 @@ describe('record truth and logical-turn safeguards', () => {
   });
   it('blocks preview and model requests when selected Memory exceeds the budget', async () => {
     await normal(); const repo = server.repository;
+    repo.updateConnection(connection, connectionInputSchema.parse({ name: 'Small offline context', protocol: 'openai-responses', baseUrl: 'https://example.invalid', model: 'test', apiKey: 'offline', contextWindow: 8192, maxTokens: 512 }));
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false });
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), historyMessageLimit: 1 });
     repo.savePinnedFact(chat, '灯塔属于路易斯'); repo.createState(chat, null, blankState());
-    repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'oversized-memory '.repeat(20_000) });
+    repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'oversized-memory '.repeat(4_000) });
     repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: null, source: 'generated', content: '昨夜拜访灯塔' });
+    repo.createMemory({ conversationId: chat, stage: 3, storyTurnId: null, source: 'generated', content: 'Then a new morning.' });
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
     const input = turnRequestSchema.parse({ conversationId: chat, input: { voice: 'protagonist', text: '走向灯塔。' } });

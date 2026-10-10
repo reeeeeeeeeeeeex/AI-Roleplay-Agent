@@ -1,17 +1,10 @@
 import { AppError } from './diagnostics.js';
 import { z } from 'zod';
+import { stateColumns } from './client.js';
+export { stateColumns } from './client.js';
 import type { Persona, ProtagonistTables, StateRow, StateTableName } from './index.js';
 const stateTableNames = ['global_state', 'protagonist_info', 'important_characters', 'protagonist_skills', 'inventory', 'quests_events'] as const;
 
-// Public data columns retained for interoperable snapshots; executor is implemented independently.
-export const stateColumns: Record<StateTableName, string[]> = {
-  global_state: ['current_location', 'current_time', 'previous_scene_time', 'elapsed_time'],
-  protagonist_info: ['character_name', 'gender_age', 'appearance', 'occupation', 'personality', 'current_outfit', 'past_experience_before_story', 'past_experience_in_story'],
-  important_characters: ['name', 'gender_age', 'brief_introduction', 'appearance', 'key_items', 'is_dead', 'past_experience'],
-  protagonist_skills: ['skill_name', 'skill_type', 'skill_level', 'effect_description'],
-  inventory: ['item_name', 'quantity', 'description', 'category'],
-  quests_events: ['quest_name', 'quest_type', 'issuer', 'detail_description', 'current_progress', 'time_limit', 'reward', 'penalty'],
-};
 export const stateColumnLabels: Partial<Record<StateTableName, Record<string, string>>> = {
   global_state: { previous_scene_time: 'Previous Scene Time / 上一个场景的时间', elapsed_time: 'Elapsed Scene Time / 经过的时间' },
   protagonist_info: { occupation: 'Occupation / 身份与地位', current_outfit: 'Current Outfit / 当前穿搭', past_experience_before_story: 'Past Experience Before Story / 故事前经历', past_experience_in_story: 'Past Experience in Story / 故事中经历' },

@@ -3,6 +3,39 @@ import { defaultGeneralSettings } from '@new-ai-chat/contracts';
 
 test.use({ serviceWorkers: 'block' });
 
+test('failed action edits block composer sending until the draft saves', async ({ page, request }) => {
+  const characters = await (await request.get('/api/characters')).json();
+  const connections = await (await request.get('/api/connections')).json();
+  await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, connectionId: connections[0].id } });
+  const chat = await (await request.post('/api/conversations', { data: { title: 'Action draft save barrier', kind: 'solo', characterId: characters[0].id } })).json();
+  await page.addInitScript(id => localStorage.setItem('selected-chat', id), chat.id);
+  let rejectEdit = true, turns = 0;
+  await page.route(`**/api/conversations/${chat.id}/action-choices`, route => route.request().method() === 'PATCH' && rejectEdit
+    ? route.fulfill({ status: 503, json: { error: '选项暂时无法保存' } }) : route.continue());
+  page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/api/turns')) turns++; });
+  await page.goto('/');
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('正文也需要等待保存。');
+  const panel = page.getByRole('region', { name: '行动选项' });
+  await panel.getByRole('button', { name: '行动选项', exact: true }).click();
+  await panel.getByRole('button', { name: '编辑选项 1', exact: true }).click();
+  const edit = panel.getByRole('textbox', { name: '编辑选项 1', exact: true });
+  await edit.fill('保留这个修改后的选项。');
+  await input.click();
+  await expect(panel.getByRole('alert')).toContainText('选项暂时无法保存');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '内容尚未保存' })).toBeVisible();
+  await expect(edit).toHaveValue('保留这个修改后的选项。');
+  await expect(input).toHaveValue('正文也需要等待保存。');
+  expect(turns).toBe(0);
+  rejectEdit = false;
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.locator('article.message:not(.streaming)')).toHaveCount(2);
+  expect(turns).toBe(1);
+  const cache = await (await request.get(`/api/conversations/${chat.id}/action-choices?head=`)).json();
+  expect(cache.groups[0].choices[0]).toBe('保留这个修改后的选项。');
+});
+
 test('action bubbles reuse saved groups, edit on blur, and send without replacing the input draft', async ({ page, request }) => {
   const characters = await (await request.get('/api/characters')).json();
   const connections = await (await request.get('/api/connections')).json();

@@ -2,6 +2,7 @@ import { t, formatDate, formatNumber } from './i18n.js';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { TraceSummary, TurnTrace } from '@new-ai-chat/contracts';
 import { api } from './api.js';
+import { copyText } from './clipboard.js';
 import ContextReport from './ContextReport.js';
 import './trace.css';
 
@@ -17,7 +18,7 @@ function RawBlock({ title, value, onError }: { title: string; value: unknown; on
   return <details className="trace-raw" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>{title}</summary>
     {open && <>
-      <button disabled={value == null} onClick={() => void navigator.clipboard.writeText(format(value) ?? '').then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? t("已复制") : t("复制原文")}</button>
+      <button disabled={value == null} onClick={() => void copyText(format(value) ?? '').then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? t("已复制") : t("复制原文")}</button>
       <pre>{value == null ? t("尚未捕获；旧 Trace 可能没有记录此项。") : format(value)}</pre>
     </>}
   </details>;
@@ -161,7 +162,7 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError, exp
         <strong>Agent Trace</strong>
         <div>
           <button className={follow ? 'active' : ''} onClick={() => { setSelected(selectedId ?? null); setFollow(!follow); }}>{t("跟随最新")}{follow ? ' ✓' : ''}</button>
-          <button disabled={!selectedId} onClick={() => void api(`/traces/${selectedId}`).then(value => navigator.clipboard.writeText(JSON.stringify(value, null, 2))).then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? t("已复制") : t("复制 Trace")}</button>
+          <button disabled={!selectedId} onClick={() => void api(`/traces/${selectedId}`).then(value => copyText(JSON.stringify(value, null, 2))).then(() => setCopied(true)).catch(error => onError(error.message))}>{copied ? t("已复制") : t("复制 Trace")}</button>
         </div>
       </header>
       <div className="trace-layout">

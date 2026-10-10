@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Context } from '@earendil-works/pi-ai';
 import { PiModelGateway } from './pi-gateway.js';
 import { formatWebPrompt } from './web-prompt.js';
+import { buildWriterContext } from './prompt.js';
+import type { WriterRequest } from './types.js';
 import type { RuntimeConnection } from './types.js';
 
 const context: Context = { systemPrompt: 'Test', messages: [{ role: 'user', content: 'Go', timestamp: 1 }] };
@@ -13,7 +15,8 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
       : protocol === 'anthropic-messages'
         ? { id: 'msg-1', model: 'test', content: [{ type: 'thinking', thinking: 'think', signature: 'hidden' }, { type: 'text', text: 'OK' }], stop_reason: 'end_turn', usage: { input_tokens: 10, cache_read_input_tokens: 4, output_tokens: 3 } }
         : { id: 'resp-1', model: 'test', status: 'completed', output: [{ id: 'r1', type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] }, { id: 'm1', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'OK', annotations: [] }] }], usage: { input_tokens: 10, input_tokens_details: { cached_tokens: 4 }, output_tokens: 3, output_tokens_details: { reasoning_tokens: 1 }, total_tokens: 13 } };
-    return Response.json(body);
+    // Some compatible gateways mislabel valid JSON as HTML; inspect the body before diagnosing it.
+    return Response.json(body, protocol === 'openai-chat-completions' ? { headers: { 'content-type': 'text/html' } } : undefined);
   }
   if (protocol === 'openai-chat-completions') return new Response([
     'data: {"id":"chat-1","object":"chat.completion.chunk","model":"test","choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}',
@@ -45,6 +48,33 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
 }
 
 describe('gateway transport contract', () => {
+  it.each(['openai-chat-completions', 'anthropic-messages', 'openai-responses'] as const)('%s keeps Memory before changing state at the fetch boundary', async protocol => {
+    const request: WriterRequest = {
+      connection: { id: 'test', protocol, baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'offline', headers: {}, temperature: 1, maxTokens: 1000, reasoning: 'off' },
+      conversationId: 'chat', storyTurnId: 'turn', conversationKind: 'solo', streaming: false,
+      agencyMode: 'none', narrator: { name: 'Narrator', style: '' }, characters: [], persona: null,
+      history: [], stableLore: [], dynamicContext: [
+        { source: 'state', title: 'Current state', content: 'state-before-change', priority: 500 },
+        { source: 'memory', title: 'Stage 2', content: '{"chronicle":"新记忆"}', priority: 100.000002 },
+        { source: 'memory', title: 'Stage 1', content: '旧记忆原文。', priority: 100.000001 },
+      ],
+      latestUserText: 'Continue.', latestUserIsNarration: false, speaker: { kind: 'narrator' }, mode: 'plain', brief: '', outputIndex: 0,
+      source: {} as never, signal: new AbortController().signal,
+    };
+    const sent: string[] = [];
+    const gateway = new PiModelGateway(async (_url, init) => { sent.push(String(init?.body)); return response(protocol, false); });
+    const original = buildWriterContext(request);
+    const options = { streaming: false, replayReasoning: false };
+    const preview = await gateway.captureRequestBody(request.connection, original, options);
+    for await (const _event of gateway.stream(request.connection, original, options)) { /* Capture transport without a paid request. */ }
+    expect(sent).toEqual([preview]);
+    expect(preview.indexOf('旧记忆原文。')).toBeLessThan(preview.indexOf('新记忆'));
+    expect(preview.indexOf('新记忆')).toBeLessThan(preview.indexOf('[User State]'));
+    const changed = buildWriterContext({ ...request, dynamicContext: request.dynamicContext.map(item => item.source === 'state' ? { ...item, content: 'state-after-change' } : item) });
+    const changedBody = await gateway.captureRequestBody(request.connection, changed, options);
+    expect(changedBody.split('state-after-change')[0]).toBe(preview.split('state-before-change')[0]);
+  });
+
   it('context budget excludes internal reports from a plain rewrite request', async () => {
     const connection: RuntimeConnection = { id: 'budget', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 1, maxTokens: 1000, contextWindow: 8000, reasoning: 'off' };
     const rewritten: Context & { contextReport: unknown } = {
@@ -115,10 +145,12 @@ describe('gateway transport contract', () => {
     expect(visibleOnly).toContain('visible history');
     expect(visibleOnly).not.toContain('private-reasoning');
     const webPrompt = formatWebPrompt(visibleOnly, protocol);
-    expect(webPrompt).toContain(`## System · 写作要求\n\n${note.content}`);
+    expect(webPrompt).toContain(`## System\n\n${note.content}`);
+    expect(webPrompt).toContain('## User\n\n');
+    expect(webPrompt).not.toMatch(/^## (?:System|User|Assistant) ·/mu);
     expect(webPrompt).toContain('Go');
     expect(webPrompt).toContain('Final writing control.');
-    expect(webPrompt).toContain('## Assistant · 历史回复与上下文资料\n\nvisible history');
+    expect(webPrompt).toContain('## Assistant\n\nvisible history');
     expect(webPrompt).not.toMatch(/private-reasoning|author-note:|max_tokens|"stream"|"tools"/u);
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => { writes.push(String(chunk)); return true; }) as typeof process.stdout.write);
     for (const streaming of [true, false]) {

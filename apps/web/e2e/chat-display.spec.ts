@@ -19,7 +19,7 @@ async function openHistory(page: Page, request: APIRequestContext, limit?: numbe
     generationInfo: index % 2 && !avatar ? { mode: 'plain', model: 'offline-fixture', streaming: true, requestCount: 1, thinking: '模型返回的可见思考。', usage: null, timing: null } : null,
     providerState: null, legacyPayload: null, createdAt: '2026-09-29T12:00:00.000Z',
   }));
-  await page.route(`**/api/conversations/${chat.id}/messages`, route => route.fulfill({ json: { branch: messages, nodes: messages } }));
+  await page.route(`**/api/conversations/${chat.id}/messages*`, route => route.fulfill({ json: { branch: messages, nodes: messages } }));
   await page.addInitScript(({ chatId, initialLimit }) => {
     localStorage.setItem('selected-chat', chatId);
     if (initialLimit && !localStorage.getItem('chat-message-display-limit')) localStorage.setItem('chat-message-display-limit', String(initialLimit));
@@ -65,6 +65,139 @@ async function insideViewport(page: Page, locator: Locator) {
   expect(rect!.x + rect!.width).toBeLessThanOrEqual(size.width + 1);
   expect(rect!.y + rect!.height).toBeLessThanOrEqual(size.height + 1);
 }
+
+test('compact chat header opens character and story details separately', async ({ page, request }) => {
+  await readingStory(page, request);
+  const characters = await (await request.get('/api/characters')).json();
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText(characters[0].name);
+  await heading.getByRole('button').click();
+  const character = page.getByRole('dialog', { name: '编辑角色', exact: true });
+  await expect(character.getByRole('textbox', { name: '名称', exact: true })).toHaveValue(characters[0].name);
+  await character.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await page.getByRole('button', { name: '故事资料', exact: true }).click();
+  const story = page.getByRole('dialog', { name: '编辑故事资料', exact: true });
+  await expect(story.getByRole('textbox', { name: '故事标题', exact: true })).toHaveValue('Reading appearance fixture');
+  await story.getByRole('button', { name: '关闭', exact: true }).last().click();
+  const top = (await page.locator('.topbar').boundingBox())!;
+  const navigation = page.locator('.story-navigation');
+  expect((await navigation.boundingBox())!.y).toBeCloseTo(top.y + top.height, 0);
+  await expect(navigation.locator('summary')).toContainText('主角保护');
+  await navigation.locator('summary').click();
+  await expect(navigation.getByRole('textbox', { name: '当前场景', exact: true })).toBeVisible();
+  await expect(page.locator('.top-actions').getByText('角色资料', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '搜索正文', exact: true })).toBeVisible();
+});
+
+test('compact group header remains usable on a narrow English screen', async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  const characters = await (await request.get('/api/characters')).json();
+  const group = await (await request.post('/api/groups', { data: { name: 'A very long group name for a narrow screen', memberIds: [characters[0].id] } })).json();
+  const chat = await (await request.post('/api/conversations', { data: { title: 'Independent group story title', kind: 'group', groupId: group.id } })).json();
+  await page.addInitScript(id => { localStorage.setItem('selected-chat', id); localStorage.setItem('interface-language', 'en'); }, chat.id);
+  await page.goto('/');
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText(group.name);
+  const name = heading.getByRole('button');
+  expect((await name.boundingBox())!.width).toBeGreaterThan(16);
+  await insideViewport(page, name);
+  await insideViewport(page, page.locator('.top-actions'));
+  const summary = page.locator('.story-navigation summary');
+  const badge = summary.locator('small');
+  await expect(badge).toHaveText('Protagonist protected');
+  await insideViewport(page, summary);
+  const labelBox = (await summary.locator('span').boundingBox())!;
+  const badgeBox = (await badge.boundingBox())!;
+  expect(badgeBox.y).toBeLessThan(labelBox.y + labelBox.height);
+  expect(badgeBox.x).toBeGreaterThan(labelBox.x + labelBox.width);
+  await name.click();
+  const editor = page.getByRole('dialog', { name: 'Edit Group', exact: true });
+  await expect(editor.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(group.name);
+});
+
+test('story search reveals older messages and navigates saved prose only', async ({ page, request }) => {
+  await openHistory(page, request, 10);
+  await expect(page.locator('#message-display-0')).toHaveCount(0);
+  await page.keyboard.press('Control+f');
+  const search = page.getByRole('searchbox', { name: '搜索当前分支正文' });
+  await expect(search).toBeFocused();
+  await search.fill('用户消息');
+  await page.getByRole('textbox', { name: '输入消息', exact: true }).focus();
+  await page.keyboard.press('Control+f');
+  await expect(search).toBeFocused();
+  expect(await search.evaluate(input => [(input as HTMLInputElement).selectionStart, (input as HTMLInputElement).selectionEnd])).toEqual([0, 4]);
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('1 / 60 条消息');
+  await expect(page.locator('#message-display-0')).toHaveClass(/search-match/);
+  await expect.poll(() => page.locator('#message-display-0').evaluate(element => Math.abs(element.getBoundingClientRect().top - document.querySelector('.messages')!.getBoundingClientRect().top - 12))).toBeLessThan(2);
+  await search.press('Enter');
+  await expect(page.locator('#message-display-2')).toHaveClass(/search-match/);
+  await search.press('Shift+Enter');
+  await expect(page.locator('#message-display-0')).toHaveClass(/search-match/);
+  await page.getByRole('button', { name: '上一条匹配消息' }).click();
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('60 / 60 条消息');
+  await search.fill('模型返回的可见思考。');
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('0 / 0 条消息');
+  await expect(page.getByRole('button', { name: '下一条匹配消息' })).toBeDisabled();
+  await expect(page.locator('.search-match')).toHaveCount(0);
+});
+
+test('story search shortcut leaves modal Find behavior available', async ({ page, request }) => {
+  await openHistory(page, request, 10);
+  await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();
+  const prevented = await page.evaluate(() => {
+    const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    document.activeElement!.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(prevented).toBe(false);
+  await expect(page.getByRole('dialog', { name: '设置 / Settings', exact: true })).toBeVisible();
+  await expect(page.getByRole('search')).toHaveCount(0);
+});
+
+test('story search is literal, stays inside a narrow screen and preserves the draft', async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.addInitScript(() => localStorage.setItem('interface-language', 'en'));
+  const messages = await openHistory(page, request, 10);
+  messages[0]!.content = 'Beside the [Ｎｏｒｔｈｅｒｎ Café].';
+  messages[119]!.content = 'Back to the [northern Cafe\u0301].';
+  const chatId = messages[0]!.conversationId;
+  await page.route(`**/api/conversations/${chatId}/messages*`, route => route.fulfill({ json: {
+    branch: messages, nodes: [...messages, { ...messages[119], id: 'hidden-version', content: 'A hidden [Ｎｏｒｔｈｅｒｎ Café] version.' }],
+  } }));
+  await page.reload();
+  const input = page.getByRole('textbox', { name: 'Message input', exact: true });
+  await input.fill('Keep this unsent draft.');
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && req.method() !== 'GET') writes++; });
+  const before = (await page.locator('.messages-wrap').boundingBox())!.height;
+  await page.getByRole('button', { name: 'Search story', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: 'Search this branch' });
+  await search.fill('[NORTHERN Café]');
+  await expect(page.getByRole('search').getByRole('status')).toHaveText('1 / 2 messages');
+  const original = page.locator('#message-display-0');
+  await expect(original.locator('mark')).toHaveText('[Ｎｏｒｔｈｅｒｎ Café]');
+  const body = original.getByRole('textbox', { name: 'User message text', exact: true });
+  await body.focus();
+  await expect(original.locator('.search-highlights')).toBeHidden();
+  await expect(body).toHaveValue(messages[0]!.content);
+  await search.focus();
+  await expect(original.locator('mark')).toBeVisible();
+  await page.getByRole('button', { name: 'Next matching message' }).click();
+  await expect(page.locator('#message-display-119')).toHaveClass(/search-match/);
+  await expect(page.locator('#message-display-119 mark')).toHaveText('[northern Cafe\u0301]');
+  await insideViewport(page, page.getByRole('search'));
+  await insideViewport(page, page.getByRole('button', { name: 'Send', exact: true }));
+  await search.press('Escape');
+  await expect(page.getByRole('search')).toHaveCount(0);
+  await expect(page.locator('.search-highlights')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Search story', exact: true })).toBeFocused();
+  await expect(input).toHaveValue('Keep this unsent draft.');
+  // Restore the same reading position, so the existing back-to-latest control is hidden.
+  await page.getByRole('button', { name: 'Back to latest ↓' }).click();
+  await expect(page.getByRole('button', { name: 'Back to latest ↓' })).toHaveCount(0);
+  expect((await page.locator('.messages-wrap').boundingBox())!.height).toBeCloseTo(before, 0);
+  expect(writes).toBe(0);
+});
 
 test('reading: saved colors and typography survive reload without changing content', async ({ page, request }, info) => {
   const body = await readingStory(page, request);
@@ -303,7 +436,7 @@ test('opening and reentering a conversation starts at its latest message', async
     await route.fulfill({ response });
   });
   // History can arrive before the conversation data mounts the scroll container.
-  const historyResponse = page.waitForResponse(/\/api\/conversations\/[^/]+\/messages$/);
+  const historyResponse = page.waitForResponse(/\/api\/conversations\/[^/]+\/messages(?:\?|$)/);
   const opening = openHistory(page, request, 20);
   await (await historyResponse).finished();
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));

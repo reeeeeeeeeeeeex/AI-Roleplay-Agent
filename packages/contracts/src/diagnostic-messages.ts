@@ -1,5 +1,6 @@
 // Application diagnostics only; never translate provider payloads or model instructions.
 export const diagnosticMessages = {
+  '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。': { original: '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。', zh: '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。', en: 'Edit the stage content without adding stage headers.' },
   '{0} was not called with a valid plan.': { original: '{0} was not called with a valid plan.', zh: '{0} 未返回有效计划。', en: '{0} was not called with a valid plan.' },
   'Generation failed.': { original: 'Generation failed.', zh: '生成失败。', en: 'Generation failed.' },
   'Writer Agent did not call select_output_voices with a valid selection.': { original: 'Writer Agent did not call select_output_voices with a valid selection.', zh: 'Writer Agent 未通过 select_output_voices 选择有效发言者。', en: 'Writer Agent did not call select_output_voices with a valid selection.' },
@@ -9,6 +10,7 @@ export const diagnosticMessages = {
   '行动选项返回空内容。': { original: '行动选项返回空内容。', zh: '行动选项返回空内容。', en: 'The action choices response was empty.' },
   'Record generation returned no text.': { original: 'Record generation returned no text.', zh: '记录生成未返回正文。', en: 'Record generation returned no text.' },
   'Connection test failed.': { original: 'Connection test failed.', zh: '连接测试失败。', en: 'Connection test failed.' },
+  'connection.htmlResponse': { original: '接口返回了 HTML 网页（HTTP {0}），未收到模型响应。请检查 Base URL 是否为 API 地址（服务商可能要求 /v1），以及中转站是否正常。', zh: '接口返回了 HTML 网页（HTTP {0}），未收到模型响应。请检查 Base URL 是否为 API 地址（服务商可能要求 /v1），以及中转站是否正常。', en: 'The endpoint returned an HTML page (HTTP {0}) instead of a model response. Check that the Base URL is an API address (your provider may require /v1) and that the proxy is working.' },
   'Current state': { original: 'Current state', zh: '当前主角状态', en: 'Current state' },
   'Pinned Fact': { original: 'Pinned Fact', zh: '固定事实', en: 'Pinned fact' },
   'Applied world facts': { original: 'Applied world facts', zh: '已应用的世界事实', en: 'Applied world facts' },
@@ -153,6 +155,11 @@ export const diagnosticMessages = {
     "original": "Invalid or duplicate group member.",
     "zh": "群组成员无效或重复。",
     "en": "Invalid or duplicate group member."
+  },
+  "群组至少需要一个有效角色，请重新选择。": {
+    original: "群组至少需要一个有效角色，请重新选择。",
+    zh: "群组至少需要一个有效角色，请重新选择。",
+    en: "Select at least one existing character for this group."
   },
   "Character not found.": {
     "original": "Character not found.",

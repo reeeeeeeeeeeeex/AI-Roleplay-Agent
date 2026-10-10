@@ -2,8 +2,9 @@ import { countLabel, generationLabel, phaseLabel } from './ui-labels.js';
 import { t, formatDate, formatNumber, diagnosticText, type MessageKey } from './i18n.js';
 import { useLanguage } from './LanguageProvider.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, UserCog, FilePenLine } from 'lucide-react';
-import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex, type GeneralSettings, type Conversation, type MessageNode, type SpeakerRef, type ImportPreview, type PromptSettings, type TurnRecord, type TurnRequest, type UserVoice } from '@new-ai-chat/contracts';
+import { MessageSquare, PanelRightClose, PanelRightOpen, Plus, Send, Settings2, Square, Upload, Users, ChevronLeft, ChevronRight, RotateCw, GitFork, PanelLeftClose, PanelLeft, Library, BookOpen, FilePenLine, Search, Copy } from 'lucide-react';
+import { defaultGeneralSettings, defaultPromptSettings, historyStartIndex } from '@new-ai-chat/contracts/client';
+import type { GeneralSettings, Conversation, MessageNode, MessageSummary, SpeakerRef, ImportPreview, PromptSettings, TurnRecord, TurnRequest, UserVoice } from '@new-ai-chat/contracts';
 import { api, ApiError, streamTurn } from './api.js';
 import Editor, { defaults, titles, type Collection } from './Editor.js';
 import PersonaPicker from './PersonaPicker.js';
@@ -14,6 +15,7 @@ import StoryImport from './StoryImport.js';
 import InlineEdit from './InlineEdit.js';
 import SettingsModal, { type AvatarMode } from './SettingsModal.js';
 import MessageNavigation from './MessageNavigation.js';
+import MessageSearch from './MessageSearch.js';
 import { useChatWindow } from './useChatWindow.js';
 import ActionChoices from './ActionChoices.js';
 import AutoSaveField from './AutoSaveField.js';
@@ -21,10 +23,19 @@ import AuthorNoteEditor from './AuthorNoteEditor.js';
 import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
 import { readAppearance, saveAppearance } from './appearance.js';
+import { copyText } from './clipboard.js';
+import { readComposerDrafts, saveComposerDrafts } from './composer-drafts.js';
+import { searchText } from './search-text.js';
+import { version as appVersion } from '../../../package.json';
 import './branches.css';
 
 const collections: Collection[] = ['conversations', 'characters', 'personas', 'groups', 'lorebooks', 'connections'];
 const studioCollections: Collection[] = ['characters', 'personas', 'groups', 'lorebooks'];
+
+function storedValue(key: string): string | null {
+  try { return localStorage.getItem(key); }
+  catch { return null; }
+}
 
 function formatTime(isoString?: string) {
   if (!isoString) return '';
@@ -40,20 +51,31 @@ function formatTime(isoString?: string) {
 export default function App() {
   useLanguage(); // Re-render labels without replacing the story/editor component tree.
   const [data, setData] = useState<Record<string, any[]>>({});
-  const [chatId, setChatId] = useState<string | null>(() => localStorage.getItem('selected-chat'));
+  const refreshVersions = useRef({ data: 0, general: 0, prompts: 0 });
+  const [chatId, setChatId] = useState<string | null>(() => storedValue('selected-chat'));
   const chatRef = useRef(chatId);
   chatRef.current = chatId;
 
   const [page, setPage] = useState<'chat' | Collection | 'import'>('chat');
+  const [resourceSearch, setResourceSearch] = useState('');
+  const resourceFilter = useRef<HTMLInputElement>(null);
+  useEffect(() => { setResourceSearch(''); }, [page]);
+  const filteredResources = useMemo(() => {
+    const query = searchText(resourceSearch.trim());
+    const items = data[page] ?? [];
+    return query ? items.filter(item => searchText(String(item.name ?? item.title ?? '')).includes(query)) : items;
+  }, [data, page, resourceSearch]);
   const [branch, setBranch] = useState<MessageNode[]>([]);
-  const [nodes, setNodes] = useState<MessageNode[]>([]);
+  const [nodes, setNodes] = useState<MessageSummary[]>([]);
+  const historyRequest = useRef(0);
   const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
+  const [copyingProfile, setCopyingProfile] = useState(false);
   const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
-  const [inputDrafts, setInputDrafts] = useState<Record<string, string>>(() => {
-    try { return Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem('story-drafts') ?? '{}')).filter(([, value]) => typeof value === 'string')) as Record<string, string>; }
-    catch { return {}; }
-  });
+  const [inputDrafts, setInputDrafts] = useState(readComposerDrafts);
+  const savedInputDrafts = useRef({ ...inputDrafts });
+  const inputDraftsRef = useRef(inputDrafts);
+  inputDraftsRef.current = inputDrafts;
   const [voice, setVoice] = useState<UserVoice | 'assistant'>('protagonist');
   const draftKey = chatId ? voice === 'assistant' ? `${chatId}:assistant` : chatId : '';
   const text = inputDrafts[draftKey] ?? '';
@@ -64,6 +86,14 @@ export default function App() {
   const [replyTarget, setReplyTarget] = useState('auto');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [updateReady, setUpdateReady] = useState(false);
+  const [refreshingApp, setRefreshingApp] = useState(false);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+    const ready = () => setUpdateReady(true);
+    navigator.serviceWorker.addEventListener('controllerchange', ready);
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', ready);
+  }, []);
   const [panel, setPanel] = useState(() => window.matchMedia('(min-width: 1121px)').matches);
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -96,15 +126,27 @@ export default function App() {
   const [personaCreateTarget, setPersonaCreateTarget] = useState<'global' | 'chat' | null>(null);
   const [showBranches, setShowBranches] = useState(false);
   const [showAuthorNote, setShowAuthorNote] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchMatchId, setSearchMatchId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => { setShowSearch(false); setSearchMatchId(null); }, [chatId]);
+  function closeSearch() {
+    setShowSearch(false); setSearchMatchId(null); searchButton.current?.focus();
+  }
 
   // Appearance preferences are local to this browser.
   const [readingAppearance, setReadingAppearance] = useState(readAppearance);
-  const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => (localStorage.getItem('avatar-mode') as AvatarMode) || 'large');
+  const [avatarMode, setAvatarMode] = useState<AvatarMode>(() => {
+    const saved = storedValue('avatar-mode');
+    return saved === 'compact' || saved === 'full' ? saved : 'large';
+  });
   const [messageDisplayLimit, setMessageDisplayLimit] = useState(() => {
-    const value = Number(localStorage.getItem('chat-message-display-limit'));
+    const value = Number(storedValue('chat-message-display-limit'));
     return Number.isInteger(value) && value >= 1 && value <= 1000 ? value : 100;
   });
-  const [plainThinkingExpanded, setPlainThinkingExpanded] = useState(() => localStorage.getItem('plain-thinking-expanded') !== 'false');
+  const [plainThinkingExpanded, setPlainThinkingExpanded] = useState(() => storedValue('plain-thinking-expanded') !== 'false');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const { container: messageContainer, bottom, visibleMessages, userMarkers, activeUserId, awayFromBottom,
@@ -120,7 +162,7 @@ export default function App() {
   };
 
   const messageIndex = useMemo(() => {
-    const siblings = new Map<string, MessageNode[]>();
+    const siblings = new Map<string, MessageSummary[]>();
     const parents = new Set(nodes.map(node => node.parentId));
     for (const node of nodes) {
       const key = `${node.parentId}:${node.role}`;
@@ -139,6 +181,22 @@ export default function App() {
   }, [branch]);
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
+  const chatProfile = chat?.kind === 'group'
+    ? data.groups?.find(group => group.id === chat.groupId)
+    : data.characters?.find(character => character.id === chat?.characterId);
+  useEffect(() => {
+    if (page !== 'chat' || !chat) return;
+    const find = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.key.toLowerCase() !== 'f' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      // Keep browser Find available in settings, previews, and record editors.
+      if (document.querySelector('[aria-modal="true"]') || document.activeElement?.closest('.records')) return;
+      event.preventDefault();
+      setShowSearch(true);
+      searchInput.current?.focus(); searchInput.current?.select();
+    };
+    window.addEventListener('keydown', find);
+    return () => window.removeEventListener('keydown', find);
+  }, [page, chat?.id]);
   const relatedBranches = (data.conversations ?? []).filter(item => item.id === chatId || (chat?.branchGroupId && item.branchGroupId === chat.branchGroupId));
   const historyStart = nodes.find(message => message.id === chat?.historyStartMessageId);
   const historyStartPosition = historyStart ? historyStartIndex(branch, historyStart) : -1;
@@ -158,6 +216,22 @@ export default function App() {
     void promise.catch((err: Error) => setError(err.message));
   };
 
+  function rememberSession(key: 'selected-chat' | 'active-turn', value: string | null) {
+    try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }
+    catch { setNotice(t('浏览器无法保存本地状态。当前仍可使用，刷新后可能无法自动恢复；关闭前请复制未发送草稿。')); }
+  }
+
+  async function refreshUpdatedApp() {
+    if (turn || choicesBusy || sendPending.current) return;
+    sendPending.current = true; setRefreshingApp(true);
+    try {
+      await flushContentEdits();
+      try { saveComposerDrafts(inputDraftsRef.current, savedInputDrafts.current); }
+      catch { throw new Error(t('无法保留输入草稿，暂未刷新。请先复制草稿，再检查浏览器存储权限。')); }
+      window.location.reload();
+    } finally { sendPending.current = false; setRefreshingApp(false); }
+  }
+
   const avatarFor = (message: MessageNode): string | undefined =>
     message.role === 'user'
       ? activePersona?.avatarPath ?? undefined
@@ -165,33 +239,64 @@ export default function App() {
       ? generalSettings.narrator.avatarPath ?? undefined
       : data.characters?.find((c) => c.id === (message.speaker?.kind === 'character' ? message.speaker.characterId : null))?.avatarPath ?? undefined;
 
+  function updateData(value: Parameters<typeof setData>[0]) {
+    refreshVersions.current.data++;
+    setData(value);
+  }
+
+  function applyGeneralSettings(value: GeneralSettings) {
+    refreshVersions.current.general++;
+    setGeneralSettings(value);
+  }
+
+  function applyPromptSettings(value: PromptSettings) {
+    refreshVersions.current.prompts++;
+    setPromptSettings(value);
+  }
+
   async function refresh() {
+    const version = {
+      data: ++refreshVersions.current.data,
+      general: ++refreshVersions.current.general,
+      prompts: ++refreshVersions.current.prompts,
+    };
     const [values, general, prompts] = await Promise.all([
       Promise.all(collections.map((kind) => api(`/${kind}`))),
       api('/settings/general'),
       api('/settings/prompts'),
     ]);
-    setGeneralSettings(general);
-    setPromptSettings(prompts);
-    setData(Object.fromEntries(collections.map((kind, index) => [kind, values[index]])));
+    // A delayed read must not replace a newer refresh or an already saved change.
+    if (version.general === refreshVersions.current.general) setGeneralSettings(general);
+    if (version.prompts === refreshVersions.current.prompts) setPromptSettings(prompts);
+    if (version.data === refreshVersions.current.data) setData(Object.fromEntries(collections.map((kind, index) => [kind, values[index]])));
   }
 
   async function refreshMessages(id: string) {
-    const [value, latest] = await Promise.all([api(`/conversations/${id}/messages`), api(`/conversations/${id}/last-turn`)]);
-    if (chatRef.current === id) {
-      setBranch(value.branch);
-      setNodes(value.nodes);
-      setLastTurn(latest);
+    if (chatRef.current !== id) return;
+    const request = ++historyRequest.current;
+    const current = () => chatRef.current === id && historyRequest.current === request;
+    try {
+      const [value, latest] = await Promise.all([
+        api<{ branch: MessageNode[]; nodes: MessageSummary[] }>(`/conversations/${id}/messages?view=chat`),
+        api(`/conversations/${id}/last-turn`),
+      ]);
+      if (current()) {
+        setBranch(value.branch);
+        setNodes(value.nodes);
+        setLastTurn(latest);
+      }
+    } catch (error) {
+      if (current()) throw error;
     }
   }
 
   async function savePersona(personaId: string | null, global: boolean) {
     setPersonaSaving(true);
     try {
-      if (global) setGeneralSettings(await api('/settings/general', 'PUT', { ...generalSettings, defaultPersonaId: personaId }));
+      if (global) applyGeneralSettings(await api('/settings/general', 'PUT', { ...generalSettings, defaultPersonaId: personaId }));
       else if (chat) {
         const updated = await api(`/conversations/${chat.id}`, 'PUT', { ...chat, personaId });
-        setData(old => ({ ...old, conversations: old.conversations!.map(c => c.id === updated.id ? updated : c) }));
+        updateData(old => ({ ...old, conversations: old.conversations!.map(c => c.id === updated.id ? updated : c) }));
       }
       setPromptPreview(null);
     } finally { setPersonaSaving(false); }
@@ -222,33 +327,58 @@ export default function App() {
     setActivity([]);
     setReplyTarget('auto');
     setVoice(current => current === 'assistant' ? 'protagonist' : current);
-    if (chatId) { localStorage.setItem('selected-chat', chatId); act(refreshMessages(chatId)); }
+    if (chatId) { rememberSession('selected-chat', chatId); act(refreshMessages(chatId)); }
+    return () => { historyRequest.current++; };
   }, [chatId]);
 
   useEffect(() => {
-    try { localStorage.setItem('story-drafts', JSON.stringify(inputDrafts)); }
+    try { saveComposerDrafts(inputDrafts, savedInputDrafts.current); }
     catch { setNotice(t("浏览器无法保存草稿，请在关闭页面前复制输入。")); }
   }, [inputDrafts]);
 
+  async function selectPage(next: typeof page) {
+    await flushContentEdits();
+    setPage(next);
+    setMobileNav(false);
+  }
+
+  async function closeRecords() {
+    await flushContentEdits();
+    setPanel(false);
+  }
+
+  async function showRecordSource(messageId: string) {
+    await flushContentEdits();
+    scrollToMessage(messageId);
+  }
+
   async function selectChat(id: string, flush = true) {
     if (flush) await flushContentEdits();
-    editedMessageIds.current.clear();
-    if (turn) {
-      await api(`/turns/${turn.id}/cancel`, 'POST', {});
-      streamAbort.current?.abort();
-      setTurn(null);
+    if (id !== chatRef.current) {
+      editedMessageIds.current.clear();
+      if (turn) {
+        await api(`/turns/${turn.id}/cancel`, 'POST', {});
+        streamAbort.current?.abort();
+        setTurn(null);
+      }
+      setChatId(id);
     }
-    setChatId(id);
     setPage('chat');
     setMobileNav(false);
   }
 
   async function follow(id: string, currentChat: string) {
+    // A turn may start while its request is still in flight after leaving the story.
+    if (chatRef.current !== currentChat) {
+      await api(`/turns/${id}/cancel`, 'POST', {});
+      await refresh();
+      return;
+    }
     const controller = new AbortController();
     streamAbort.current?.abort();
     streamAbort.current = controller;
     setTurn({ id, chatId: currentChat });
-    localStorage.setItem('active-turn', JSON.stringify({ id, chatId: currentChat }));
+    rememberSession('active-turn', JSON.stringify({ id, chatId: currentChat }));
     let finished = false;
     try {
       await streamTurn(id, (event) => {
@@ -292,14 +422,14 @@ export default function App() {
         setTurn(null);
         queueDraft({});
         setPhase(null);
-        if (finished || controller.signal.aborted) localStorage.removeItem('active-turn');
+        if (finished || controller.signal.aborted) rememberSession('active-turn', null);
       }
     }
   }
 
   useEffect(() => {
     if (!Object.keys(data).length || turn) return;
-    const saved = localStorage.getItem('active-turn');
+    const saved = storedValue('active-turn');
     if (!saved) return;
     try {
       const pending = JSON.parse(saved);
@@ -307,7 +437,7 @@ export default function App() {
       setChatId(pending.chatId);
       act(follow(pending.id, pending.chatId));
     } catch {
-      localStorage.removeItem('active-turn');
+      rememberSession('active-turn', null);
     }
   }, [Object.keys(data).length]);
 
@@ -315,7 +445,7 @@ export default function App() {
     const draft = choiceText ?? (voice === 'assistant' ? '' : text);
     if (trigger === 'normal' && !draft.trim()) {
       // Read after autosave: editing a message can replace the branch head.
-      const { branch: current } = await api<{ branch: MessageNode[] }>(`/conversations/${chat!.id}/messages`);
+      const { branch: current } = await api<{ branch: MessageNode[] }>(`/conversations/${chat!.id}/messages?view=chat`);
       const last = current.at(-1);
       if (last?.role === 'user') targetMessageId = last.id;
       else trigger = 'auto';
@@ -364,8 +494,11 @@ export default function App() {
           } : { role: 'user', input: { voice: choiceText === undefined && voice === 'narrator' ? 'narrator' : 'protagonist', text: manualText } }),
         });
         if (choiceText === undefined) setInputDrafts(old => old[draftKey] === text ? { ...old, [draftKey]: '' } : old);
-        if (chatRef.current !== chat.id) return;
-        setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        if (chatRef.current !== chat.id) {
+          if (result.turn) await follow(result.turn.id, chat.id);
+          return;
+        }
         setPromptPreview(null);
         await refreshMessages(chat.id);
         if (result.turn) await follow(result.turn.id, chat.id);
@@ -377,7 +510,6 @@ export default function App() {
       const result = await api('/turns', 'POST', payload);
       // Clear only the accepted draft, never newer typing or another chat's input.
       if (payload.input && choiceText === undefined) setInputDrafts(old => old[chat.id] === text ? { ...old, [chat.id]: '' } : old);
-      if (chatRef.current !== chat.id) return;
       await refreshMessages(chat.id);
       await follow(result.id, chat.id);
     } finally {
@@ -391,7 +523,7 @@ export default function App() {
     sendPending.current = true; setSending(true); setError('');
     try {
       await flushContentEdits();
-      setGeneralSettings(await api('/settings/general', 'PATCH', { manualInput }));
+      applyGeneralSettings(await api('/settings/general', 'PATCH', { manualInput }));
     } finally { sendPending.current = false; setSending(false); }
   }
 
@@ -469,7 +601,7 @@ export default function App() {
     if (!chatId) return;
     await flushContentEdits();
     const updated = await api<Conversation>(`/conversations/${chatId}/history-start`, 'POST', { messageId: savedMessageId(messageId ?? undefined) ?? null });
-    setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === updated.id ? updated : item) }));
+    updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === updated.id ? updated : item) }));
     setPromptPreview(null);
   }
 
@@ -493,13 +625,13 @@ export default function App() {
     try {
       await flushContentEdits();
       if (chatRef.current !== preview.conversationId) throw new Error(t("聊天已切换，请重新预览。"));
-      await navigator.clipboard.writeText(preview.webPrompt);
+      await copyText(preview.webPrompt);
       copied = true;
       if (preview.input) {
         const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', { role: 'user', input: preview.input, head: preview.headMessageId });
         setInputDrafts(old => old[chat.id] === preview.draftText ? { ...old, [chat.id]: '' } : old);
         if (chatRef.current !== chat.id) return;
-        setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
+        updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
         // Clear this input before any refresh, so a retry never appends it twice.
         setPromptPreview((old: any) => old ? { ...old, input: undefined, headMessageId: result.message.id, existingUserInput: true } : old);
         await refreshMessages(chat.id);
@@ -520,6 +652,35 @@ export default function App() {
 
   const edit = (kind: Collection, value: any = defaults[kind]) =>
     setEditor({ kind, value });
+
+  function copyName(kind: 'connections' | 'characters' | 'personas', sourceName: string, maxLength: number) {
+    const names = new Set((data[kind] ?? []).map(item => item.name));
+    let name = '', number = 1;
+    do {
+      const suffix = number === 1 ? t('（副本）') : t('（副本 {0}）', number);
+      name = sourceName.slice(0, maxLength - suffix.length) + suffix;
+      number++;
+    } while (names.has(name));
+    return name;
+  }
+
+  async function copyConnection(source: { id: string; name: string }) {
+    const copied = await api(`/connections/${source.id}/copy`, 'POST', { name: copyName('connections', source.name, 100) });
+    updateData(old => ({ ...old, connections: [...(old.connections ?? []), copied] }));
+    edit('connections', copied);
+  }
+
+  async function copyProfile(kind: 'characters' | 'personas', sourceId: string) {
+    if (copyingProfile) return;
+    setCopyingProfile(true);
+    try {
+      await flushContentEdits();
+      const { id, createdAt, updatedAt, ...original } = await api(`/${kind}/${sourceId}`);
+      const copied = await api(`/${kind}`, 'POST', { ...original, name: copyName(kind, original.name, 200) });
+      updateData(old => ({ ...old, [kind]: [...(old[kind] ?? []), copied] }));
+      edit(kind, copied);
+    } finally { setCopyingProfile(false); }
+  }
 
   async function save(value: any) {
     if (!editor) return;
@@ -610,7 +771,7 @@ export default function App() {
         <button
           type="button"
           className={`nav-label-btn ${page === 'conversations' ? 'selected' : ''}`}
-          onClick={() => { setPage('conversations'); setMobileNav(false); }}
+          onClick={() => act(selectPage('conversations'))}
           title={t("查看全部故事卡片")}
         >
           <span className="nav-label-title"><MessageSquare size={13} />  {t("故事列表")}</span>
@@ -624,6 +785,7 @@ export default function App() {
                 {c.title}
                 <small>{c.kind === 'group' ? t("群聊") : t("单聊")} · {{ plain: t("普通写作"), 'writer-agent': 'Writer Agent', planner: 'Planner＋Writer' }[generalSettings.generationMode]}</small>
               </span>
+              {(inputDrafts[c.id]?.trim() || inputDrafts[`${c.id}:assistant`]?.trim()) && <small className="story-draft-indicator" title={t("有未发送草稿")} aria-label={t("有未发送草稿")}>{t("草稿")}</small>}
             </button>
           ))}
           {!data.conversations?.length && <p className="muted" style={{ padding: '4px 8px' }}>{t("暂无故事")}</p>}
@@ -634,7 +796,7 @@ export default function App() {
         </div>
         <nav className="studio-nav">
           {studioCollections.map((kind) => (
-            <button className={page === kind ? 'selected' : ''} key={kind} onClick={() => { setPage(kind); setMobileNav(false); }}>
+            <button className={page === kind ? 'selected' : ''} key={kind} onClick={() => act(selectPage(kind))}>
               {kind === 'groups' ? <Users size={14} /> : <Library size={14} />}
               {titles[kind]} <span>{data[kind]?.length ?? 0}</span>
             </button>
@@ -644,12 +806,12 @@ export default function App() {
           <button onClick={() => { setShowPersona(true); setMobileNav(false); }}>
             <Users size={14} />{t("主角：")}{activePersona?.name ?? t("未选择")}
           </button>
-          <button className={page === 'import' ? 'selected' : ''} onClick={() => { setPage('import'); setMobileNav(false); }}>
+          <button className={page === 'import' ? 'selected' : ''} onClick={() => act(selectPage('import'))}>
             <Upload size={14} />{t("导入故事")}</button>
         </nav>
 
         <div className="local-status">
-          <i />  {t("本地")} {session?.fakeModel ? t("离线演示") : 'v0.2'}
+          <i />  {t("本地")} {session?.fakeModel ? t("离线演示") : `v${appVersion}`}
         </div>
       </aside>
 
@@ -662,7 +824,10 @@ export default function App() {
               </button>
             )}
             <button className="mobile-only" aria-label={t("打开导航")} onClick={() => setMobileNav(true)}>☰</button>
-            <h1>{page === 'chat' ? chat?.title ?? t("新故事") : page === 'import' ? t("导入故事") : page === 'conversations' ? t("故事列表") : titles[page]}</h1>
+            <h1>{page === 'chat' && chat ? <button className="chat-name" title={t(chat.kind === 'group' ? "编辑当前群聊" : "编辑当前角色")}
+              disabled={!chatProfile} onClick={() => edit(chat.kind === 'group' ? 'groups' : 'characters', chatProfile)}>
+              {chatProfile?.name ?? t(chat.kind === 'group' ? "群组" : "角色")}
+            </button> : page === 'chat' ? t("新故事") : page === 'import' ? t("导入故事") : page === 'conversations' ? t("故事列表") : titles[page]}</h1>
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
@@ -671,31 +836,6 @@ export default function App() {
                   <FilePenLine size={14} />
                   <span>{t("作者注释")}</span>
                 </button>
-                {chat.kind === 'group' ? (
-                  <button
-                    title={t("编辑当前群聊")}
-                    aria-label={t("编辑当前群聊")}
-                    onClick={() => {
-                      const grp = data.groups?.find((g) => g.id === chat.groupId);
-                      if (grp) edit('groups', grp);
-                    }}
-                  >
-                    <Users size={14} />
-                    <span>{t("群聊资料")}</span>
-                  </button>
-                ) : (
-                  <button
-                    title={t("编辑当前角色")}
-                    aria-label={t("编辑当前角色")}
-                    onClick={() => {
-                      const char = data.characters?.find((c) => c.id === chat.characterId);
-                      if (char) edit('characters', char);
-                    }}
-                  >
-                    <UserCog size={14} />
-                    <span>{t("角色资料")}</span>
-                  </button>
-                )}
                 <button title={t("故事分支")} aria-label={t("故事分支")} onClick={() => setShowBranches(true)}>
                   <GitFork size={14} />
                   <span>{t("故事分支")}</span>
@@ -704,8 +844,10 @@ export default function App() {
                   <BookOpen size={14} />
                   <span>{t("故事资料")}</span>
                 </button>
+                <button ref={searchButton} title={t('搜索正文（Ctrl / ⌘ + F）')} aria-label={t('搜索正文')} aria-keyshortcuts="Control+f Meta+f" aria-expanded={showSearch}
+                  onClick={() => showSearch ? closeSearch() : setShowSearch(true)}><Search size={14} /></button>
                 <button title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
-                <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => setPanel(!panel)}>
+                <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => panel ? act(closeRecords()) : setPanel(true)}>
                   {panel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
                   <span>{t("记录")}</span>
                 </button>
@@ -714,6 +856,10 @@ export default function App() {
           </div>
         </header>
 
+        {updateReady && <div className="banner app-update" role="status">
+          <span>{t('新版本已就绪，可在完成当前编辑后刷新。')}</span>
+          <button disabled={!!turn || sending || choicesBusy || refreshingApp} onClick={() => act(refreshUpdatedApp())}>{refreshingApp ? t('保存中…') : t('刷新应用')}</button>
+        </div>}
         {error && (
           <div className="banner error" role="alert">
             <span>{error}</span>
@@ -733,7 +879,7 @@ export default function App() {
             <div className="welcome-actions">
               <button className="primary" onClick={newChat}>
                 <Plus size={15} />  {t("开启新故事")}</button>
-              <button onClick={() => setPage('import')}>
+              <button onClick={() => act(selectPage('import'))}>
                 <Upload size={15} />  {t("导入旧故事")}</button>
             </div>
           </section>
@@ -741,15 +887,11 @@ export default function App() {
 
         {page === 'chat' && chat && (
           <>
-            <div className="cast-strip">
-              <span><i className="dot narrator" />{generalSettings.narrator.name}</span>
-              {cast.map((id: string) => (
-                <button className="content-link" key={id} onClick={() => edit('characters', data.characters?.find(c => c.id === id))}><i className="dot" />{data.characters?.find((c) => c.id === id)?.name}</button>
-              ))}
-              <small>{{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}</small>
-            </div>
-
-            <StoryNavigation key={chat.id} chatId={chat.id} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending} onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
+            <StoryNavigation key={chat.id} chatId={chat.id} title={chat.title} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending}
+              agencyLabel={{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}
+              onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
+            {showSearch && <MessageSearch key={chat.id} inputRef={searchInput} messages={branch} onClose={closeSearch}
+              onMatch={(id, query) => { setSearchMatchId(id); setSearchQuery(query); if (id) scrollToMessage(id); }} />}
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">
               <span>{historyStartPosition < 0 ? t("固定发送起点不在当前分支，请重新选择或取消。") : t("已固定发送起点 · 从此处起 {0} 条消息，后续持续追加", branch.slice(historyStartPosition).filter(message => message.role !== 'system').length)}</span>
               {historyStartPosition >= 0 && branch[historyStartPosition] && <button onClick={() => scrollToMessage(branch[historyStartPosition]!.id)}>{t("查看起点")}</button>}
@@ -779,7 +921,7 @@ export default function App() {
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
                 const cacheRate = totalInput && info?.usage ? Math.round(info.usage.cacheRead / totalInput * 100) : 0;
                 return (
-                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''}`} key={messageRenderKey(m.id)} id={`message-${m.id}`} data-message-id={m.id}>
+                  <article className={`message ${m.role === 'user' ? 'user' : ''} ${narrator ? 'narration' : ''} ${m.id === searchMatchId ? 'search-match' : ''}`} key={messageRenderKey(m.id)} id={`message-${m.id}`} data-message-id={m.id}>
                     <div className="avatar-column"><div
                       className={`avatar ${avatar ? 'clickable' : ''}`}
                       onClick={() => { if (avatar) setPreviewImage(avatar); }}
@@ -810,7 +952,7 @@ export default function App() {
                         <summary>{t("模型思考")}</summary>
                         <pre>{info.thinking || t("模型未返回可见思考内容。")}</pre>
                       </details>}
-                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError} layoutKey={`${readingAppearance.font}:${readingAppearance.fontSize}`}
+                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError} layoutKey={`${readingAppearance.font}:${readingAppearance.fontSize}`} highlight={showSearch && m.role !== 'system' ? searchQuery : ''}
                         onSave={async (content, previous) => {
                           const saved = await api<MessageNode>(`/messages/${m.id}/edit`, 'POST', { content, previous, head: chat.headMessageId }, { keepalive: true });
                           if (saved.id !== m.id) editedMessageIds.current.set(m.id, saved.id);
@@ -828,6 +970,10 @@ export default function App() {
                         // Run the click before blur can move or replace the message controls.
                         if (document.activeElement?.closest('.prose')) event.preventDefault();
                       }}>
+                        <button onClick={event => {
+                          const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
+                          act(copyText(body?.value ?? m.content).then(() => setNotice(t('正文已复制。'))));
+                        }}><Copy size={12} />{t('复制正文')}</button>
                         {m.role !== 'system' && <button className={branch[historyStartPosition]?.id === m.id ? 'active' : ''} disabled={!!turn || sending}
                           title={t("包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整")}
                           onClick={() => act(setHistoryStart(branch[historyStartPosition]?.id === m.id ? null : m.id))}>
@@ -904,7 +1050,7 @@ export default function App() {
                   <summary>{speakerName(output.speaker)}  {t("· 未完成片段（不参与剧情）")}</summary>
                   <pre>{output.text}</pre>
                   {output.thinking && <details><summary>{t("已返回的思考")}</summary><pre>{output.thinking}</pre></details>}
-                  <button onClick={() => act(navigator.clipboard.writeText(output.text))}>{t("复制片段")}</button>
+                  <button onClick={() => act(copyText(output.text))}>{t("复制片段")}</button>
                 </details>)}
               </div>}
               {!turn && lastTurn?.status === 'completed' && ['failed', 'cancelled'].includes(lastTurn.recordsStatus) && <small>{t("正文已完成；记录更新")}{lastTurn.recordsStatus === 'failed' ? t("失败") : t("已取消")}{t("，可在 Memory／状态面板重试。")}</small>}
@@ -963,6 +1109,12 @@ export default function App() {
         {page !== 'chat' && page !== 'import' && (
           <section className="management">
             <header>
+              <div className="management-filter">
+                <Search size={15} aria-hidden="true" />
+                <input ref={resourceFilter} type="search" aria-label={t('按名称或标题筛选')} placeholder={t('按名称或标题筛选')} value={resourceSearch}
+                  onChange={event => setResourceSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && !event.nativeEvent.isComposing) setResourceSearch(''); }} />
+                {resourceSearch && <button type="button" aria-label={t('清除筛选')} onClick={() => { setResourceSearch(''); resourceFilter.current?.focus(); }}>×</button>}
+              </div>
               <button className="primary" onClick={() => (page === 'conversations' ? newChat() : edit(page))}>
                 <Plus size={14} />{page === 'conversations' ? t("开启新故事") : t("创建{0}", titles[page])}
               </button>
@@ -971,7 +1123,7 @@ export default function App() {
               {page === 'characters' || page === 'personas' || page === 'groups' || page === 'conversations' ? (
                 <div className="character-grid">
                   {page === 'conversations' ? (
-                    data.conversations?.map((c) => {
+                    filteredResources.map((c) => {
                       const isGroup = c.kind === 'group';
                       const grp = isGroup ? (data.groups ?? []).find((g) => g.id === c.groupId) : null;
                       const char = !isGroup ? (data.characters ?? []).find((ch) => ch.id === c.characterId) : null;
@@ -990,7 +1142,7 @@ export default function App() {
                           >
                             {cover ? (
                               <>
-                                <img className="character-card-bg-blur" src={cover} alt="" aria-hidden="true" />
+                                <img className="character-card-bg-blur" src={cover} alt="" aria-hidden="true" loading="lazy" />
                                 <img className="character-card-img" src={cover} alt={c.title} loading="lazy" />
                               </>
                             ) : (
@@ -1011,10 +1163,7 @@ export default function App() {
                             <div className="character-card-footer">
                               <button
                                 className="primary"
-                                onClick={() => {
-                                  void selectChat(c.id);
-                                  setPage('chat');
-                                }}
+                                onClick={() => act(selectChat(c.id))}
                               >
                                 {t("进入故事")}</button>
                               <button className="danger" onClick={() => act(remove('conversations', c))}>{t("删除")}</button>
@@ -1024,7 +1173,7 @@ export default function App() {
                       );
                     })
                   ) : page === 'groups' ? (
-                    data.groups?.map((v) => {
+                    filteredResources.map((v) => {
                       const memberNames = (v.memberIds ?? []).map((mid: string) => (data.characters ?? []).find((ch) => ch.id === mid)?.name).filter(Boolean).join('、');
                       return (
                         <article className="character-card" key={v.id}>
@@ -1035,7 +1184,7 @@ export default function App() {
                           >
                             {v.avatarPath ? (
                               <>
-                                <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
+                                <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" loading="lazy" />
                                 <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
                               </>
                             ) : (
@@ -1071,7 +1220,7 @@ export default function App() {
                       );
                     })
                   ) : (
-                    data[page]?.map((v) => (
+                    filteredResources.map((v) => (
                       <article className="character-card" key={v.id}>
                         <div
                           className="character-card-image-wrap"
@@ -1080,7 +1229,7 @@ export default function App() {
                         >
                           {v.avatarPath ? (
                             <>
-                              <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" />
+                              <img className="character-card-bg-blur" src={v.avatarPath} alt="" aria-hidden="true" loading="lazy" />
                               <img className="character-card-img" src={v.avatarPath} alt={v.name} loading="lazy" />
                             </>
                           ) : (
@@ -1108,6 +1257,8 @@ export default function App() {
                               >
                                 {t("开始聊天")}</button>
                             )}
+                            <button disabled={copyingProfile} aria-label={page === 'characters' ? t("复制角色") : t("复制主角")} title={page === 'characters' ? t("复制角色") : t("复制主角")}
+                              onClick={() => act(copyProfile(page, v.id))}><Copy size={14} /></button>
                             <button className="danger" onClick={() => act(remove(page, v))}>{t("删除")}</button>
                           </div>
                         </div>
@@ -1117,7 +1268,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="resource-list">
-                  {data[page]?.map((v) => (
+                  {filteredResources.map((v) => (
                     <article className="resource-item" key={v.id}>
                       <div className="resource-main">
                         <div className="resource-info">
@@ -1139,6 +1290,7 @@ export default function App() {
                 </div>
               )}
               {!data[page]?.length && <div className="empty">{t("暂无{0}。点击右上角按钮创建。", page === 'conversations' ? t("故事") : titles[page])}</div>}
+              {!!data[page]?.length && !filteredResources.length && <p className="empty" role="status">{t('没有匹配的名称或标题。')}</p>}
             </div>
           </section>
         )}
@@ -1173,10 +1325,11 @@ export default function App() {
         )}
       </main>
 
-      {page === 'chat' && chat && panel && (
+      {page === 'chat' && chat && (
             <Records
-              key={`${chat.id}:${chat.headMessageId}`}
-              onSource={scrollToMessage}
+              key={chat.id}
+              visible={panel}
+              onSource={id => act(showRecordSource(id))}
           chat={chat}
           generationMode={generalSettings.generationMode}
           version={recordsVersion}
@@ -1185,7 +1338,7 @@ export default function App() {
           disabled={!!turn}
           onError={setError}
           onChanged={() => setRecordsVersion((v) => v + 1)}
-          onClose={() => setPanel(false)}
+          onClose={() => act(closeRecords())}
         />
       )}
 
@@ -1194,27 +1347,28 @@ export default function App() {
         onSaveAppearance={value => { saveAppearance(value); setReadingAppearance(value); }}
         onClose={() => setShowSettings(false)}
         generalSettings={generalSettings}
-        onSaveGeneral={async value => { setGeneralSettings(await api('/settings/general', 'PUT', value)); }}
+        onSaveGeneral={async value => { applyGeneralSettings(await api('/settings/general', 'PUT', value)); }}
         generationActive={sending || !!turn}
         connections={data.connections ?? []}
         onEditConnection={(conn) => edit('connections', conn ?? defaults.connections)}
+        onCopyConnection={copyConnection}
         onDeleteConnection={(conn) => remove('connections', conn)}
         onTestConnection={async (id) => {
           await api(`/connections/${id}/test`, 'POST', {});
         }}
         avatarMode={avatarMode}
-        setAvatarMode={setAvatarMode}
+        setAvatarMode={value => { localStorage.setItem('avatar-mode', value); setAvatarMode(value); }}
         messageDisplayLimit={messageDisplayLimit}
-        setMessageDisplayLimit={value => { setMessageDisplayLimit(value); localStorage.setItem('chat-message-display-limit', String(value)); }}
+        setMessageDisplayLimit={value => { localStorage.setItem('chat-message-display-limit', String(value)); setMessageDisplayLimit(value); }}
         plainThinkingExpanded={plainThinkingExpanded}
-        setPlainThinkingExpanded={value => { setPlainThinkingExpanded(value); localStorage.setItem('plain-thinking-expanded', String(value)); }}
+        setPlainThinkingExpanded={value => { localStorage.setItem('plain-thinking-expanded', String(value)); setPlainThinkingExpanded(value); }}
         promptSettings={promptSettings}
-        onSavePrompts={async value => { setPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
+        onSavePrompts={async value => { applyPromptSettings(await api('/settings/prompts', 'PUT', value)); }}
       />}
 
       {showAuthorNote && chat && <AuthorNoteEditor key={chat.id} chat={chat} disabled={sending || !!turn || choicesBusy}
         onClose={() => setShowAuthorNote(false)} onSaved={saved => {
-          setData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === saved.id ? saved : item) }));
+          updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === saved.id ? saved : item) }));
           setPromptPreview(null);
         }} />}
 
@@ -1226,7 +1380,7 @@ export default function App() {
           data={data}
           defaultPersonaId={generalSettings.defaultPersonaId}
           onPersonaCreated={(newPersona) => {
-            setData(old => ({ ...old, personas: [...(old.personas ?? []).filter(persona => persona.id !== newPersona.id), newPersona] }));
+            updateData(old => ({ ...old, personas: [...(old.personas ?? []).filter(persona => persona.id !== newPersona.id), newPersona] }));
           }}
           onClose={() => {
             setEditor(null);
@@ -1322,7 +1476,7 @@ export default function App() {
               <p className="muted">{t("身份：")}{promptPreview.pendingSelection ? t("待选择") : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)}  {t("· 主角：")}{promptPreview.personaName ?? t("未选择（请求使用 User）")}{promptPreview.clipped ? t(" · 已按上下文预算裁剪") : ''}</p>
               <p className="muted">{t("以下是发送边界捕获的首请求原始 JSON Body，未发送、未重新格式化。修改草稿、设置或聊天内容后请重新预览；Agent 后续请求可在 Trace 中查看。")}</p>
               <section className="prompt-json" aria-label="Raw input">
-                <header><strong>{t("Raw input · 首请求 Body")}</strong><button onClick={() => act(navigator.clipboard.writeText(promptPreview.requestBody))}>{t("复制原始 Body")}</button></header>
+                <header><strong>{t("Raw input · 首请求 Body")}</strong><button onClick={() => act(copyText(promptPreview.requestBody))}>{t("复制原始 Body")}</button></header>
                 <pre tabIndex={0}>{promptPreview.requestBody}</pre>
               </section>
               <section className="prompt-json" aria-label={t("网页提示词")}>

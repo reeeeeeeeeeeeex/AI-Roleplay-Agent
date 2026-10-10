@@ -1,5 +1,5 @@
 import { english } from './i18n-messages.js';
-import { formatUiText, type UiText } from '@new-ai-chat/contracts';
+import { formatUiText, type UiText } from '@new-ai-chat/contracts/client';
 
 export type Locale = 'zh-CN' | 'en';
 export type MessageKey = keyof typeof english;

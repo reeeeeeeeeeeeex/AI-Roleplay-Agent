@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page, type Locator } from '@playwright/test';
 import { defaultGeneralSettings } from '@new-ai-chat/contracts';
 
 test.use({ serviceWorkers: 'block' });
@@ -36,6 +36,513 @@ async function englishInterface(page: Page) {
   await settings.getByRole('button', { name: '保存 / Save', exact: true }).click();
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click();
 }
+
+test('state history loads older checkpoints on demand without replacing open details', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const state = await (await request.get(`/api/conversations/${chat.id}/state`)).json();
+  state.tables.global_state[0].current_location = 'Oldest checkpoint';
+  const oldest = await (await request.post(`/api/conversations/${chat.id}/state`, { data: state })).json();
+  state.tables.global_state[0].current_location = 'Newest checkpoint';
+  const newest = await (await request.post(`/api/conversations/${chat.id}/state`, { data: state })).json();
+  const history = [{ id: newest.id, createdAt: newest.createdAt }, ...Array.from({ length: 99 }, (_, i) => ({ id: `older-${i}`, createdAt: newest.createdAt })), { id: oldest.id, createdAt: oldest.createdAt }];
+  await page.route(`**/api/conversations/${chat.id}/state/history?view=summary`, route => route.fulfill({ json: history }));
+  let detailRequests = 0;
+  page.on('request', req => { if (req.url().includes(`/conversations/${chat.id}/state/history/`)) detailRequests++; });
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  const panel = page.locator('.records details').filter({ has: page.locator('summary').filter({ hasText: '状态检查点' }) });
+  await panel.locator(':scope > summary').click();
+  const checkpoints = panel.locator(':scope > details');
+  await expect(checkpoints).toHaveCount(100);
+  expect(detailRequests).toBe(0);
+  await checkpoints.first().locator('summary').click();
+  await expect(checkpoints.first().locator('pre')).toContainText('Newest checkpoint');
+  expect(detailRequests).toBe(1);
+  await checkpoints.first().locator('summary').click();
+  await checkpoints.first().locator('summary').click();
+  await expect(checkpoints.first().locator('pre')).toBeVisible();
+  expect(detailRequests).toBe(1);
+  await panel.getByRole('button', { name: '显示更早记录（还有 1 条）', exact: true }).click();
+  await expect(checkpoints).toHaveCount(101);
+  await expect(checkpoints.first().locator('pre')).toBeVisible();
+  expect(detailRequests).toBe(1);
+  await checkpoints.last().locator('summary').click();
+  await expect(checkpoints.last().locator('pre')).toContainText('Oldest checkpoint');
+  expect(detailRequests).toBe(2);
+  const restored = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith('/state/restore'));
+  await checkpoints.last().getByRole('button', { name: '恢复为新检查点', exact: true }).click();
+  expect((await restored).postDataJSON()).toEqual({ snapshotId: oldest.id });
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0].current_location).toBe('Oldest checkpoint');
+});
+
+async function enableUpdateNotification(page: Page) {
+  // Simulate a controller change without installing a worker in the test browser.
+  await page.addInitScript(() => Object.defineProperty(navigator, 'serviceWorker', {
+    configurable: true,
+    value: Object.assign(new EventTarget(), { controller: {}, register: async () => ({}) }),
+  }));
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
+}
+
+async function openRecordSource(page: Page, request: APIRequestContext, title: string) {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${title}`);
+  await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 } });
+  const source = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
+    role: 'user', head: null, input: { voice: 'protagonist', text: 'The letter is hidden under the northern bridge.' },
+  } })).json();
+  const reply = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
+    role: 'assistant', head: source.message.id, speaker: { kind: 'narrator' }, text: 'The travelers continue along the river.\n'.repeat(40),
+  } })).json();
+  const fact = await request.post(`/api/conversations/${chat.id}/facts`, { data: { content: 'The letter is under the bridge.', sourceMessageId: source.message.id } });
+  expect(fact.ok()).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
+  if (!await page.getByRole('button', { name: '关闭记录面板', exact: true }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await page.getByRole('button', { name: '展开记录窗口', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '固定事实内容', exact: true })).toHaveValue('The letter is under the bridge.');
+  return { chat, source: source.message, head: reply.message.id };
+}
+
+test('record source navigation saves the draft and keeps the panel on a narrow screen', async ({ page, request }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { chat, source, head } = await openRecordSource(page, request, info.title);
+  await page.getByRole('textbox', { name: '固定事实内容', exact: true }).fill('The letter is beneath the northern bridge.');
+  await page.getByRole('button', { name: '查看来源', exact: true }).click();
+  await expect(page.locator('.records')).toBeVisible();
+  const target = page.locator(`#message-${source.id}`);
+  await expect(target).toBeInViewport();
+  await expect.poll(() => target.evaluate(element => Math.abs(element.getBoundingClientRect().top - document.querySelector('.messages')!.getBoundingClientRect().top - 12))).toBeLessThan(2);
+  expect((await (await request.get(`/api/conversations/${chat.id}/facts`)).json())[0].content).toBe('The letter is beneath the northern bridge.');
+  const chats = await (await request.get('/api/conversations')).json();
+  expect(chats.find((item: any) => item.id === chat.id).headMessageId).toBe(head);
+});
+
+test('record source navigation stays open with the draft when saving fails', async ({ page, request }, info) => {
+  const { chat, source } = await openRecordSource(page, request, info.title);
+  let fail = true;
+  await page.route(`**/api/conversations/${chat.id}/facts`, route => fail && route.request().method() === 'POST'
+    ? route.fulfill({ status: 500, json: { error: 'Source draft save failed' } }) : route.continue());
+  const field = page.getByRole('textbox', { name: '固定事实内容', exact: true });
+  await field.fill('Keep this source draft.');
+  const before = await page.locator('.messages').evaluate(element => element.scrollTop);
+  await page.getByRole('button', { name: '查看来源', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '故事记录窗口', exact: true })).toBeVisible();
+  await expect(page.locator('.records').getByRole('alert')).toContainText('Source draft save failed');
+  await expect(field).toHaveValue('Keep this source draft.');
+  expect(await page.locator('.messages').evaluate(element => element.scrollTop)).toBe(before);
+  expect((await (await request.get(`/api/conversations/${chat.id}/facts`)).json())[0].content).toBe('The letter is under the bridge.');
+  fail = false;
+  await page.getByRole('button', { name: '查看来源', exact: true }).click();
+  await expect(page.locator('.records')).toBeVisible();
+  await expect(page.locator(`#message-${source.id}`)).toBeInViewport();
+});
+
+test('closing records preserves the selected tab and reading position', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const state = await (await request.get(`/api/conversations/${chat.id}/state`)).json();
+  state.tables.protagonist_info[0].appearance = 'A long offline description.\n'.repeat(60);
+  await request.post(`/api/conversations/${chat.id}/state`, { data: state });
+  await page.reload();
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  const content = page.locator('.records-content');
+  await expect(page.getByRole('textbox', { name: '主角信息 1 外貌', exact: true })).toHaveValue(state.tables.protagonist_info[0].appearance);
+  await content.evaluate(element => { element.scrollTop = 400; });
+  await expect.poll(() => content.evaluate(element => element.scrollTop)).toBe(400);
+  await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await expect(page.locator('.records')).toBeHidden();
+  await send(page, 'Continue while the records are closed.', 3);
+  await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await expect(page.locator('.records')).toBeVisible();
+  await expect(page.locator('.records > nav .active')).toHaveText('主角状态');
+  await expect.poll(() => content.evaluate(element => element.scrollTop)).toBe(400);
+});
+
+test('record inspector keeps its Agent tab and expanded window when a reply finishes', async ({ page }) => {
+  let release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/turns/*/events?*', async route => { await waiting; await route.continue(); });
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  await page.getByRole('button', { name: /^跟随最新/ }).click();
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('Keep the inspector open.');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '展开记录窗口', exact: true }).click();
+    const inspector = page.getByRole('dialog', { name: '故事记录窗口', exact: true });
+    await expect(inspector).toBeVisible(); release();
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0);
+    await expect(inspector).toBeVisible();
+    await expect(inspector.getByRole('button', { name: 'Agent', exact: true })).toHaveClass('active');
+    await expect(inspector.getByRole('button', { name: /^跟随最新/ })).not.toHaveClass('active');
+    await expect(inspector.getByRole('region', { name: 'Agent Trace', exact: true })).toBeVisible();
+  } finally { release(); }
+});
+
+test('state and scene editors wait for the selected message version records', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const original = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
+    role: 'assistant', head: null, speaker: { kind: 'character', characterId: chat.characterId }, text: 'Original path.',
+  } })).json();
+  await expect.poll(async () => (await (await request.get(`/api/turns/${original.turn.id}`)).json()).recordsStatus).not.toBe('running');
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { global_state: [{ row_id: 1, current_location: 'Original location' }] } } });
+  const revised = await request.post(`/api/messages/${original.message.id}/edit`, { data: { content: 'Revised path.', previous: 'Original path.' } });
+  expect(revised.ok()).toBe(true);
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { global_state: [{ row_id: 1, current_location: 'Revised location' }] } } });
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  const location = page.getByRole('textbox', { name: '全局状态 1 当前地点', exact: true });
+  await expect(location).toHaveValue('Revised location');
+  await page.locator('.story-navigation > summary').click();
+  const sceneLocation = page.getByRole('textbox', { name: '当前地点', exact: true });
+  await expect(sceneLocation).toHaveValue('Revised location');
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  await page.route(`**/api/conversations/${chat.id}/state`, async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch(); captured(); await waiting; await route.fulfill({ response });
+  });
+  await page.route(`**/api/conversations/${chat.id}/navigation`, async route => {
+    const response = await route.fetch(); await waiting; await route.fulfill({ response });
+  });
+  try {
+    await page.getByTitle('上一个版本', { exact: true }).click(); await ready;
+    await expect(page.getByRole('button', { name: '主角状态', exact: true })).toHaveClass('active');
+    await expect(location).toHaveCount(0);
+    await expect(sceneLocation).toHaveCount(0);
+    release();
+    await expect(location).toHaveValue('Original location');
+    await expect(sceneLocation).toHaveValue('Original location');
+    await sceneLocation.fill('Edited original location'); await sceneLocation.blur();
+    await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0].current_location).toBe('Edited original location');
+    await expect(location).toHaveValue('Edited original location');
+  } finally { release(); }
+});
+
+test('reopening the current story keeps its active reply', async ({ page }, info) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/turns/*/events?*', async route => { await pending; await route.continue(); });
+  let cancelled = 0;
+  page.on('request', request => { if (request.method() === 'POST' && /\/turns\/[^/]+\/cancel$/.test(request.url())) cancelled++; });
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('继续读完这封信。');
+    const eventRequest = page.waitForRequest(request => /\/turns\/[^/]+\/events\?/.test(request.url()));
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await eventRequest;
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toBeVisible();
+    await page.locator('.story-list button').filter({ hasText: `Browser ${info.title}` }).click();
+    release();
+    await expect(page.locator('article.message:not(.streaming)')).toHaveCount(3);
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0);
+    expect(cancelled).toBe(0);
+  } finally { release(); }
+});
+
+for (const phase of ['start', 'history'] as const) test(`late turn ${phase} response cancels the abandoned turn without following it in another story`, async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const other = chats.find((item: any) => item.id !== chat.id);
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let delayed = false, cancelled = 0, followed = 0;
+  page.on('request', req => {
+    if (req.method() === 'POST' && /\/turns\/[^/]+\/cancel$/.test(req.url())) cancelled++;
+    if (/\/turns\/[^/]+\/events\?/.test(req.url())) followed++;
+  });
+  await page.route(phase === 'start' ? '**/api/turns' : `**/api/conversations/${chat.id}/messages*`, async route => {
+    if (delayed || (phase === 'start' && route.request().method() !== 'POST')) return route.continue();
+    const response = await route.fetch();
+    if (phase === 'history' && !(await response.json()).branch.some((message: any) => message.content === 'Delayed reply input.')) return route.fulfill({ response });
+    delayed = true; captured(); await waiting; await route.fulfill({ response });
+  });
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('Delayed reply input.');
+    await page.getByRole('button', { name: '发送', exact: true }).click(); await ready;
+    await page.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(page.locator('.story-list button.selected')).toContainText(other.title);
+    release();
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled();
+    expect(cancelled).toBe(1); expect(followed).toBe(0);
+    await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0);
+  } finally { release(); }
+});
+
+test('late manual save updates its original story head after switching away', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const other = chats.find((item: any) => item.id !== chat.id);
+  const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await toggle.click(); await expect(toggle).toBeChecked();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let delayed = false;
+  await page.route(`**/api/conversations/${chat.id}/manual-messages`, async route => {
+    if (delayed) return route.continue();
+    delayed = true; const response = await route.fetch(); captured(); await waiting; await route.fulfill({ response });
+  });
+  try {
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('First manual input.');
+    await page.getByRole('button', { name: '发送', exact: true }).click(); await ready;
+    await page.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(page.locator('.story-list button.selected')).toContainText(other.title);
+    release(); await expect(toggle).toBeEnabled();
+    await page.locator('.story-list button').filter({ hasText: chat.title }).click();
+    await expect(page.locator('article.message')).toHaveCount(1);
+    await send(page, 'Second manual input.', 2);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  } finally { release(); }
+});
+
+test('connection copy opens a separate editable model without exposing its saved key', async ({ page, request }) => {
+  const created = await request.post('/api/connections', { data: {
+    name: 'Copy source', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1',
+    model: 'original-model', apiKey: 'offline-copy-key', headers: { Authorization: 'offline-copy-header' },
+  } });
+  expect(created.ok()).toBe(true);
+  const source = await created.json();
+  const selected = (await (await request.get('/api/settings/general')).json()).connectionId;
+  await page.reload();
+  await englishInterface(page);
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: 'Models', exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  const item = settings.locator('.resource-item').filter({ has: page.getByRole('heading', { name: 'Copy source', exact: true }) });
+  let modelRequests = 0;
+  page.on('request', req => { if (req.method() === 'POST' && (/\/connections\/[^/]+\/test$/.test(req.url()) || req.url().endsWith('/api/turns'))) modelRequests++; });
+  const duplicate = item.getByRole('button', { name: 'Duplicate connection', exact: true });
+  await duplicate.scrollIntoViewIfNeeded();
+  const bounds = (await duplicate.boundingBox())!;
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+  await duplicate.click();
+  const editor = page.getByRole('dialog', { name: /Edit .*connection/i });
+  await expect(editor.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Copy source (copy)');
+  await expect(editor.getByLabel('API key (blank keeps the saved value)', { exact: true })).toHaveValue('');
+  await expect(editor.getByRole('textbox', { name: 'Custom headers JSON', exact: true })).toHaveValue(/\[stored\]/);
+  await editor.getByRole('textbox', { name: 'Model ID', exact: true }).fill('copy-model');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  const connections = await (await request.get('/api/connections')).json();
+  expect(connections.find((item: any) => item.id === source.id).model).toBe('original-model');
+  expect(connections.find((item: any) => item.name === 'Copy source (copy)')).toMatchObject({ model: 'copy-model', hasApiKey: true });
+  expect((await (await request.get('/api/settings/general')).json()).connectionId).toBe(selected);
+  expect(modelRequests).toBe(0);
+});
+
+test('character copies retain profile fields and edit independently on a narrow English screen', async ({ page, request }, info) => {
+  const source = await (await request.post('/api/characters', { data: {
+    name: 'Profile variant source', description: 'Original description', personality: 'Patient', scenario: 'A quiet library',
+    firstMessage: 'Hello {{user}}', exampleDialogue: 'A short example', systemPrompt: 'Stay in character', postHistoryInstructions: 'Write concisely',
+  } })).json();
+  await request.post('/api/characters', { data: { name: `${source.name} (copy)` } });
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.put(`/api/conversations/${chat.id}`, { data: { ...chat, characterId: source.id } });
+  await page.reload(); await englishInterface(page);
+  await page.locator('.studio-nav button').filter({ hasText: /^Character\s/ }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  const card = page.locator('.character-card').filter({ has: page.getByRole('button', { name: source.name, exact: true }) });
+  const duplicate = card.getByRole('button', { name: 'Duplicate character', exact: true });
+  const box = (await duplicate.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(320);
+  const created = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/api/characters'));
+  await duplicate.click();
+  const copied = await (await created).json();
+  const { id, createdAt, updatedAt, ...profile } = source;
+  expect(copied).toMatchObject({ ...profile, name: `${source.name} (copy 2)` });
+  expect(copied.id).not.toBe(source.id);
+  const editor = page.getByRole('dialog', { name: 'Edit Character', exact: true });
+  await editor.getByRole('textbox', { name: 'Description', exact: true }).fill('Changed in the copy only.');
+  await editor.getByRole('textbox', { name: 'Description', exact: true }).blur();
+  await expect.poll(async () => (await (await request.get(`/api/characters/${copied.id}`)).json()).description).toBe('Changed in the copy only.');
+  expect((await (await request.get(`/api/characters/${source.id}`)).json()).description).toBe(source.description);
+  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).characterId).toBe(source.id);
+});
+
+test('persona copies preserve the starting template without changing the default or story binding', async ({ page, request }, info) => {
+  const source = await (await request.post('/api/personas', { data: { name: '模板主角', description: '原有主角资料', stateTemplate: {
+    occupation: '旅人', current_outfit: '蓝色外套', past_experience_before_story: '从海边长大', skills: [{ skill_name: '航海', skill_level: '熟练' }],
+  } } })).json();
+  const general = await (await request.get('/api/settings/general')).json();
+  await request.put('/api/settings/general', { data: { ...general, defaultPersonaId: source.id } });
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.put(`/api/conversations/${chat.id}`, { data: { ...chat, personaId: source.id } });
+  await page.reload();
+  await page.locator('.studio-nav button').filter({ hasText: /^主角\s/ }).click();
+  const card = page.locator('.character-card').filter({ has: page.getByRole('button', { name: source.name, exact: true }) });
+  const created = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/api/personas'));
+  await card.getByRole('button', { name: '复制主角', exact: true }).click();
+  const copied = await (await created).json();
+  expect(copied.id).not.toBe(source.id);
+  expect(copied).toMatchObject({ name: `${source.name}（副本）`, description: source.description, stateTemplate: source.stateTemplate });
+  await expect(page.getByRole('dialog', { name: '编辑主角', exact: true }).getByRole('textbox', { name: '名称', exact: true })).toHaveValue(copied.name);
+  expect((await (await request.get('/api/settings/general')).json()).defaultPersonaId).toBe(source.id);
+  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).personaId).toBe(source.id);
+});
+
+test('app update waits for the user and retains the composer through reload', async ({ page }) => {
+  await enableUpdateNotification(page);
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('刷新后还要继续写的草稿。');
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '提示词', exact: true }).click();
+  await settings.getByRole('textbox', { name: '附加指令', exact: true }).fill('尚未保存的设置，不应被后台更新丢弃。');
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+  await expect(page.locator('.app-update')).toContainText('新版本已就绪');
+  await expect(settings.getByRole('textbox', { name: '附加指令', exact: true })).toHaveValue('尚未保存的设置，不应被后台更新丢弃。');
+  await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+  const reloaded = page.waitForResponse(response => response.url().endsWith('/api/session'));
+  await page.getByRole('button', { name: '刷新应用', exact: true }).click();
+  await reloaded;
+  await expect(input).toHaveValue('刷新后还要继续写的草稿。');
+  await expect(page.locator('.app-update')).toHaveCount(0);
+});
+
+test('app update keeps a failed message edit and does not reload', async ({ page }) => {
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '先保存一条消息。', 2);
+  await enableUpdateNotification(page);
+  await page.route('**/api/messages/*/edit', route => route.fulfill({ status: 500, json: { error: '保存暂时失败' } }));
+  const body = page.getByRole('textbox', { name: '用户消息正文', exact: true });
+  await body.fill('必须保留这份未保存的修改。');
+  let reloads = 0;
+  page.on('request', req => { if (req.url().endsWith('/api/session')) reloads++; });
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+  await page.getByRole('button', { name: '刷新应用', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '内容尚未保存' })).toBeVisible();
+  await expect(body).toHaveValue('必须保留这份未保存的修改。');
+  expect(reloads).toBe(0);
+});
+
+test('browser storage: blocked reads do not prevent opening and writing a story', async ({ page }, info) => {
+  await page.addInitScript(() => {
+    Storage.prototype.getItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+    Storage.prototype.setItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+    Storage.prototype.removeItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+  });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.reload();
+  await page.locator('.story-list button').filter({ hasText: `Browser ${info.title}` }).click();
+  const manual = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await manual.click();
+  await expect(manual).toBeChecked();
+  await send(page, '本地存储不可用时仍能保存故事。', 1);
+  await expect(page.getByRole('textbox', { name: '用户消息正文' })).toHaveValue('本地存储不可用时仍能保存故事。');
+  expect(errors).toEqual([]);
+});
+
+test('browser drafts: two windows keep their separate story drafts after reload', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const other = await (await request.post('/api/conversations', { data: { title: 'Second window story', kind: 'solo', characterId: chat.characterId } })).json();
+  const second = await page.context().newPage();
+  try {
+    await second.goto('/');
+    await second.locator('.story-list button').filter({ hasText: other.title }).click();
+    await page.getByRole('textbox', { name: '输入消息', exact: true }).fill('第一个窗口的草稿。');
+    await second.getByRole('textbox', { name: '输入消息', exact: true }).fill('第二个窗口的草稿。');
+    await page.reload();
+    await page.locator('.story-list button').filter({ hasText: chat.title }).click();
+    await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue('第一个窗口的草稿。');
+    await second.reload();
+    await second.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(second.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue('第二个窗口的草稿。');
+  } finally { await second.close(); }
+});
+
+test('browser drafts: legacy drafts load and an accepted message stays cleared after reload', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await page.evaluate(id => localStorage.setItem('story-drafts', JSON.stringify({ [id]: '旧版保留的用户草稿。', [`${id}:assistant`]: '旧版保留的角色草稿。' })), chat.id);
+  await page.reload();
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  const badge = page.locator('.story-list button').filter({ hasText: chat.title }).getByLabel('有未发送草稿');
+  await expect(badge).toHaveText('草稿');
+  await expect(input).toHaveValue('旧版保留的用户草稿。');
+  await page.locator('.voice-switch').getByRole('button', { name: '角色', exact: true }).click();
+  await expect(input).toHaveValue('旧版保留的角色草稿。');
+  await page.locator('.voice-switch').getByRole('button', { name: '主角', exact: true }).click();
+  const manual = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await manual.click(); await expect(manual).toBeChecked();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.locator('article.message')).toHaveCount(1);
+  await expect(input).toHaveValue('');
+  await expect(badge).toBeVisible(); // The separate Assistant draft is still pending.
+  await page.reload();
+  await expect(input).toHaveValue('');
+  await page.locator('.voice-switch').getByRole('button', { name: '角色', exact: true }).click();
+  await expect(input).toHaveValue('旧版保留的角色草稿。');
+  await input.fill('  \n');
+  await expect(badge).toHaveCount(0);
+});
+
+test('browser drafts: failed storage keeps the composer and prevents an update reload', async ({ page }) => {
+  await enableUpdateNotification(page);
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith('story-draft:')) throw new DOMException('Storage full', 'QuotaExceededError');
+      set.call(this, key, value);
+    };
+  });
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('存储失败时仍须保留的草稿。');
+  await expect(page.locator('.banner').filter({ hasText: '浏览器无法保存草稿' })).toBeVisible();
+  let reloads = 0;
+  page.on('request', req => { if (req.url().endsWith('/api/session')) reloads++; });
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+  await page.getByRole('button', { name: '刷新应用', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '无法保留输入草稿' })).toBeVisible();
+  await expect(input).toHaveValue('存储失败时仍须保留的草稿。');
+  expect(reloads).toBe(0);
+});
+
+test('browser storage: failed recovery markers do not interrupt live replies', async ({ page }) => {
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem, remove = Storage.prototype.removeItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'active-turn') throw new DOMException('Storage full', 'QuotaExceededError');
+      set.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function (key) {
+      if (key === 'active-turn') throw new DOMException('Storage blocked', 'SecurityError');
+      remove.call(this, key);
+    };
+  });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '等待完整的离线回复。', 2);
+  await expect(page.locator('.banner').filter({ hasText: '浏览器无法保存本地状态' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue('');
+  expect(errors).toEqual([]);
+});
+
+test('browser storage: display preferences keep the applied value when saving fails', async ({ page }) => {
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '外观', exact: true }).click();
+  const avatar = settings.getByRole('combobox', { name: '头像尺寸', exact: true });
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'avatar-mode') throw new DOMException('Storage blocked', 'SecurityError');
+      set.call(this, key, value);
+    };
+  });
+  await avatar.selectOption('compact');
+  await expect(settings.getByRole('alert')).toContainText('当前设置未改变');
+  await expect(avatar).toHaveValue('large');
+  await expect(page.locator('.messages')).toHaveClass(/avatar-large/);
+});
 
 test('language: defaults to Chinese and persists with bilingual discovery', async ({ page }, info) => {
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
@@ -142,6 +649,40 @@ test('language: Gateway preview and web prompt remain identical', async ({ page,
   await expect(page.getByRole('region', { name: 'Web prompt', exact: true }).locator('pre')).toHaveText(prompt!);
   await expect(page.getByRole('dialog', { name: 'Prompt preview', exact: true })).toContainText('Context report');
 });
+test('message copy uses current edited text without saving or generating', async ({ page }) => {
+  await page.getByLabel('回复者').selectOption('narrator');
+  await send(page, '这封信留在桌上。', 2);
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async (text: string) => { (window as any).__copiedMessage = text; },
+  } }));
+  const message = page.locator('article.message').last();
+  const body = message.getByRole('textbox', { name: 'AI 回复正文', exact: true });
+  const revised = '尚未保存的修改，包含换行。\nCopy only the visible prose.';
+  await body.fill(revised);
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && req.method() !== 'GET') writes++; });
+  await message.getByRole('button', { name: '复制正文', exact: true }).click();
+  await expect(page.locator('.banner').filter({ hasText: '正文已复制。' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__copiedMessage)).toBe(revised);
+  await expect(body).toHaveValue(revised);
+  expect(writes).toBe(0);
+});
+
+test('web copy without clipboard access keeps its draft and creates no User', async ({ page }) => {
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('复制失败时仍保留这份输入。');
+  await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && req.method() !== 'GET') writes++; });
+  const web = page.getByRole('region', { name: '网页提示词', exact: true });
+  await web.getByRole('button', { name: '复制网页提示词并保存 User 输入', exact: true }).click();
+  await expect(web.getByRole('alert')).toContainText('请选择文字后手动复制');
+  await expect(page.locator('article.message')).toHaveCount(0);
+  await expect(input).toHaveValue('复制失败时仍保留这份输入。');
+  expect(writes).toBe(0);
+});
+
 test('web copy saves User and manual Assistant replies reappear in the next prompt', async ({ page, request }) => {
   const manualToggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
   await manualToggle.click();
@@ -265,6 +806,57 @@ test('manual input toggle failure keeps its original mode and draft', async ({ p
   await expect(page.locator('article.message')).toHaveCount(0);
 });
 
+test('an older background refresh cannot undo a saved manual input mode', async ({ page, request }) => {
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  await page.route('**/api/settings/general', async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch(); captured();
+    await waiting; await route.fulfill({ response });
+  });
+  try {
+    const navigation = page.locator('.story-navigation');
+    await navigation.locator('summary').click();
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).fill('A saved scene before switching mode.');
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).blur();
+    await ready;
+    const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+    await toggle.click(); await expect(toggle).toBeChecked();
+    const late = page.waitForResponse(response => response.request().method() === 'GET' && response.url().endsWith('/api/settings/general'));
+    release(); await (await late).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(toggle).toBeChecked();
+    expect((await (await request.get('/api/settings/general')).json()).manualInput).toBe(true);
+  } finally { release(); }
+});
+
+test('an older story list refresh cannot move the head behind a manually saved message', async ({ page }) => {
+  const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await toggle.click(); await expect(toggle).toBeChecked();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  await page.route('**/api/conversations', async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch(); captured();
+    await waiting; await route.fulfill({ response });
+  });
+  try {
+    const navigation = page.locator('.story-navigation');
+    await navigation.locator('summary').click();
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).fill('Scene saved before manual messages.');
+    await navigation.getByRole('textbox', { name: '当前场景', exact: true }).blur();
+    await ready;
+    await send(page, '第一条手动消息。', 1);
+    const late = page.waitForResponse(response => response.request().method() === 'GET' && response.url().endsWith('/api/conversations'));
+    release(); await (await late).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await send(page, '第二条继续保存，不应误用旧位置。', 2);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  } finally { release(); }
+});
+
 test('startup distinguishes missing endpoints from required pairing', async ({ page }) => {
   let status = 404;
   await page.route('**/api/settings/general', route => status
@@ -324,6 +916,60 @@ test('replacing a persona image preserves the original 20 MB file', async ({ pag
   expect((await imageResponse.body()).equals(image)).toBe(true);
 });
 
+test('returning to a story ignores an older history response that arrives last', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const first = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: null, input: { voice: 'protagonist', text: '早先的正文。' } } })).json();
+  const other = await (await request.post('/api/conversations', { data: { title: 'Another story while history loads', kind: 'solo', characterId: chat.characterId } })).json();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let delay = true;
+  await page.route(`**/api/conversations/${chat.id}/messages*`, async route => {
+    if (!delay) return route.continue();
+    delay = false;
+    const response = await route.fetch();
+    captured();
+    await waiting;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.reload();
+    await ready;
+    await page.locator('.story-list button').filter({ hasText: other.title }).click();
+    await expect(page.locator('.story-list button.selected')).toContainText(other.title);
+    const appended = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: first.message.id, input: { voice: 'narrator', text: '之后保存的新正文。' } } });
+    expect(appended.status()).toBe(201);
+    await page.locator('.story-list button').filter({ hasText: chat.title }).click();
+    await expect(page.locator('article.message')).toHaveCount(2);
+    const late = page.waitForResponse(response => response.url().includes(`/conversations/${chat.id}/messages?`));
+    release();
+    await (await late).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page.locator('article.message')).toHaveCount(2);
+    await expect(page.locator('article.message textarea').last()).toHaveValue('之后保存的新正文。');
+  } finally { release(); }
+});
+
+test('switching versions reloads complete prose from compact navigation', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const original = '原本的完整正文。'.repeat(40) + '原文末尾。';
+  const replacement = '修改后的完整正文。'.repeat(40) + '修改后的末尾。';
+  const saved = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: null, speaker: { kind: 'narrator' }, text: original } });
+  expect(saved.status()).toBe(201);
+  const { message } = await saved.json();
+  const edited = await request.post(`/api/messages/${message.id}/edit`, { data: { content: replacement, previous: original, head: message.id } });
+  expect(edited.ok()).toBe(true);
+  await page.reload();
+  const body = page.locator('article.message textarea');
+  await expect(body).toHaveValue(replacement);
+  await page.getByTitle('上一个版本', { exact: true }).click();
+  await expect(body).toHaveValue(original);
+  await page.getByTitle('下一个版本', { exact: true }).click();
+  await expect(body).toHaveValue(replacement);
+});
+
 test('global send count and fixed message start control the raw prompt range', async ({ page }) => {
   await send(page, '仅早期历史包含蓝色车票。', 3);
   await send(page, '现在进入旧书店。', 6);
@@ -355,6 +1001,50 @@ test('global send count and fixed message start control the raw prompt range', a
   await page.getByRole('button', { name: '取消固定起点', exact: true }).click();
   await expect(page.locator('.history-start-banner')).toHaveCount(0);
   expect(await preview()).not.toContain('蓝色车票');
+});
+
+test('narrator upload preserves writing edits made while the file is uploading', async ({ page, request }) => {
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  let release!: () => void, captured!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { captured = resolve; });
+  let avatar = '';
+  await page.route('**/api/assets/upload', async route => {
+    const response = await route.fetch(); avatar = (await response.json()).url; captured();
+    await waiting; await route.fulfill({ response });
+  });
+  try {
+    await settings.locator('input[type="file"]').setInputFiles({ name: 'narrator.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=', 'base64') });
+    await ready;
+    await settings.getByRole('textbox', { name: '旁白名称', exact: true }).fill('New narrator name');
+    await settings.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('none');
+    release();
+    await expect(settings.locator('.avatar-field-preview img')).toHaveAttribute('src', avatar);
+    await expect(settings.getByRole('textbox', { name: '旁白名称', exact: true })).toHaveValue('New narrator name');
+    await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('none');
+    await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
+    await expect(settings.getByRole('status')).toContainText('写作设置已保存');
+    expect(await (await request.get('/api/settings/general')).json()).toMatchObject({ narrator: { name: 'New narrator name', avatarPath: avatar }, agencyMode: 'none' });
+  } finally { release(); }
+});
+
+test('writing drafts survive saving model settings without reverting them', async ({ page, request }) => {
+  const settings = await languageSettings(page);
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  const protectedPrompt = settings.getByRole('textbox', { name: '保护主角提示词', exact: true });
+  const draft = `${await protectedPrompt.inputValue()}\n保留这份尚未保存的写作草稿。`;
+  await protectedPrompt.fill(draft);
+  await settings.getByRole('combobox', { name: '主角控制', exact: true }).selectOption('none');
+  await settings.getByRole('button', { name: '模型', exact: true }).click();
+  await settings.getByRole('checkbox', { name: '流式传输', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('流式传输已关闭');
+  await settings.getByRole('button', { name: '写作', exact: true }).click();
+  await expect(protectedPrompt).toHaveValue(draft);
+  await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('none');
+  await settings.getByRole('button', { name: '保存写作设置', exact: true }).click();
+  await expect(settings.getByRole('status')).toContainText('写作设置已保存');
+  expect(await (await request.get('/api/settings/general')).json()).toMatchObject({ streaming: false, agencyMode: 'none', agencyPrompts: { protected: draft } });
 });
 
 test('prompt presets load drafts and only apply after saving, preserving failed edits', async ({ page, request }) => {
@@ -391,11 +1081,11 @@ test('prompt presets load drafts and only apply after saving, preserving failed 
   await expect(additional).toHaveValue('修改后要应用的内容');
 });
 
-test('independent branches appear in both story list and branch switcher', async ({ page }) => {
-  const originalTitle = await page.getByRole('heading', { level: 1 }).textContent();
+test('independent branches appear in both story list and branch switcher', async ({ page }, info) => {
+  const originalTitle = `Browser ${info.title}`;
   await send(page, '第一条选择', 3);
   await page.locator('article.message').first().getByRole('button', { name: '从此处分支', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(`${originalTitle} · 分支 2`);
+  await expect(page.locator('.story-list button.selected')).toContainText(`${originalTitle} · 分支 2`);
   await expect(page.locator('article.message')).toHaveCount(1);
   await expect(page.locator('.story-list').getByRole('button').filter({ hasText: `${originalTitle} · 分支 2` })).toBeVisible();
   await page.getByRole('button', { name: '故事分支', exact: true }).click();
@@ -460,26 +1150,58 @@ test('writing settings preserve agency prompts in none mode and omit control fro
   await expect(raw).not.toContainText('Wait for User to choose.');
 });
 
+test('structured Memory localizes labels without rewriting content and saves fields together', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const original = { timeSpan: '清晨到午后', location: '旧书店', chronicle: '两人找到信件。\n保留 timeSpan 原文。', dialogue: ['“明天见。”\n他点点头。', '“一言为定。”'], overview: '发现信件' };
+  const raw = JSON.stringify(original);
+  const endpoint = `/api/conversations/${chat.id}/memory`;
+  await request.post(endpoint, { data: { content: raw } });
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method())) writes++; });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  const fields = page.locator('.memory-fields');
+  await expect(fields.locator('dt')).toHaveText(['时间跨度', '地点', '纪要', '重要对话', '概览']);
+  await fields.getByRole('textbox', { name: '阶段 1 纪要', exact: true }).evaluate(element => element.setAttribute('data-retained', 'yes'));
+  await englishInterface(page);
+  await expect(fields.locator('dt')).toHaveText(['Time span', 'Location', 'Chronicle', 'Important Dialogue', 'Overview']);
+  const chronicle = fields.getByRole('textbox', { name: 'Stage 1 Chronicle', exact: true });
+  await expect(chronicle).toHaveAttribute('data-retained', 'yes');
+  await expect(chronicle).toHaveValue(original.chronicle);
+  expect((await (await request.get(endpoint)).json())[0].content).toBe(raw);
+  expect(writes).toBe(0);
+  await chronicle.fill('修订后的中文纪要');
+  await fields.getByRole('textbox', { name: 'Stage 1 Important Dialogue 2', exact: true }).fill('“下次再来。”');
+  expect(writes).toBe(0);
+  await page.getByRole('heading', { name: 'Story records', exact: true }).click();
+  await expect.poll(async () => JSON.parse((await (await request.get(endpoint)).json())[0].content)).toEqual({ ...original, chronicle: '修订后的中文纪要', dialogue: [original.dialogue[0], '“下次再来。”'] });
+  expect(writes).toBe(1);
+});
+
 test('record fields save directly on blur and when the drawer closes', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
   await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: '原来的记忆' } });
   await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
-  const memory = page.getByRole('textbox', { name: 'Memory Stage 1', exact: true });
+  const memory = page.getByRole('textbox', { name: '阶段 1', exact: true });
   await memory.fill('修订后的记忆\n保留换行。');
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
   await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('修订后的记忆\n保留换行。');
   await expect(page.getByRole('button', { name: '编辑数据', exact: true })).toHaveCount(0);
-  await page.getByRole('textbox', { name: '全局状态 1 current_location', exact: true }).fill('旧书店');
-  await page.getByRole('textbox', { name: '全局状态 1 current_time', exact: true }).fill('午夜');
+  await page.getByRole('textbox', { name: '全局状态 1 当前地点', exact: true }).fill('旧书店');
+  await page.getByRole('textbox', { name: '全局状态 1 当前时间', exact: true }).fill('午夜');
   await page.getByRole('button', { name: '关闭记录面板' }).click();
+  await expect(page.locator('.records')).toBeHidden();
   await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.global_state[0]).toMatchObject({ current_location: '旧书店', current_time: '午夜' });
   await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await expect(memory).toHaveValue('修订后的记忆\n保留换行。');
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: '全局状态 1 current_location', exact: true })).toHaveValue('旧书店');
+  await expect(page.getByRole('textbox', { name: '全局状态 1 当前地点', exact: true })).toHaveValue('旧书店');
 });
 
 test('collection rows edit together and delete invalid drafts without saving them', async ({ page, request }, info) => {
@@ -490,25 +1212,26 @@ test('collection rows edit together and delete invalid drafts without saving the
     important_characters: [{ row_id: 1, name: 'Sina', gender_age: 'adult', is_absent: '是' }],
   } } });
   await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
   await page.locator('summary').filter({ hasText: '背包物品' }).click();
   const row = page.locator('.state-row[data-table="inventory"]');
   await expect(row.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
-  await row.getByRole('textbox', { name: 'item_name', exact: true }).fill('金币');
-  await row.getByRole('textbox', { name: 'quantity', exact: true }).fill('50');
+  await row.getByRole('textbox', { name: '物品名称', exact: true }).fill('金币');
+  await row.getByRole('textbox', { name: '数量', exact: true }).fill('50');
   expect((await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.inventory[0].item_name).toBe('');
   await page.getByRole('heading', { name: '故事记录', exact: true }).click();
   await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.inventory[0]).toMatchObject({ item_name: '金币', quantity: '50' });
   await expect(row.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
-  await row.getByRole('textbox', { name: 'item_name', exact: true }).fill('');
+  await row.getByRole('textbox', { name: '物品名称', exact: true }).fill('');
   await row.getByRole('button', { name: '删除', exact: true }).click();
   await row.getByRole('button', { name: '确认删除', exact: true }).click();
   await expect(row).toHaveCount(0);
   await page.locator('summary').filter({ hasText: '重要角色' }).click();
   const character = page.locator('.state-row[data-table="important_characters"]');
   await expect(character.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
-  await expect(character.getByRole('combobox', { name: 'is_dead' })).toHaveValue('');
+  await expect(character.getByRole('combobox', { name: '是否确认死亡', exact: true })).toHaveValue('');
   await character.getByRole('button', { name: '删除', exact: true }).click();
   await character.getByRole('button', { name: '确认删除', exact: true }).click();
   await expect(character).toHaveCount(0);
@@ -521,40 +1244,53 @@ test('collection row save failure retains the whole draft for retry', async ({ p
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
   await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { protagonist_skills: [{ row_id: 1, skill_name: '飞行', skill_type: '魔法' }] } } });
   await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
   await page.locator('summary').filter({ hasText: '主角技能' }).click();
   const row = page.locator('.state-row[data-table="protagonist_skills"]');
   await expect(row.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
-  await row.getByRole('textbox', { name: 'effect_description', exact: true }).fill('暂时悬浮');
+  await row.getByRole('textbox', { name: '效果描述', exact: true }).fill('暂时悬浮');
   await page.route('**/api/conversations/*/state/row', route => route.fulfill({ status: 500, json: { error: '测试保存失败' } }));
   await page.getByRole('heading', { name: '故事记录', exact: true }).click();
   await expect(row.getByRole('alert')).toContainText('草稿已保留');
-  await expect(row.getByRole('textbox', { name: 'effect_description', exact: true })).toHaveValue('暂时悬浮');
+  await expect(row.getByRole('textbox', { name: '效果描述', exact: true })).toHaveValue('暂时悬浮');
   await page.unroute('**/api/conversations/*/state/row');
-  await row.getByRole('textbox', { name: 'effect_description', exact: true }).focus();
+  await row.getByRole('textbox', { name: '效果描述', exact: true }).focus();
   await page.getByRole('heading', { name: '故事记录', exact: true }).click();
   await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.protagonist_skills[0].effect_description).toBe('暂时悬浮');
 });
 
-test('failed record autosave keeps the draft after leaving the drawer', async ({ page, request }, info) => {
+for (const closeBy of ['panel', 'toolbar'] as const) test(`failed record autosave keeps the drawer open when closing from its ${closeBy}`, async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
-  await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: '旧内容' } });
+  const original = closeBy === 'panel' ? JSON.stringify({ timeSpan: '清晨', location: '书店', chronicle: '旧内容', dialogue: [], overview: '旧概览' }) : '旧内容';
+  await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: original } });
   await page.reload();
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   let fail = true;
   await page.route('**/api/conversations/*/memory/*', route => fail ? route.fulfill({ status: 500, json: { error: '测试保存失败' } }) : route.continue());
-  const memory = page.getByRole('textbox', { name: 'Memory Stage 1', exact: true });
+  let memory = page.getByRole('textbox', { name: closeBy === 'panel' ? '阶段 1 纪要' : '阶段 1', exact: true });
+  let close = page.getByRole('button', { name: closeBy === 'panel' ? '关闭记录面板' : '记录面板', exact: true });
   await memory.fill('仍然保留的草稿');
-  await page.getByRole('button', { name: '关闭记录面板' }).click();
-  await expect(page.getByRole('alert')).toContainText('测试保存失败');
-  fail = false;
-  await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await close.click();
+  await expect(page.locator('.records').getByRole('alert')).toContainText('测试保存失败');
   await expect(memory).toHaveValue('仍然保留的草稿');
-  await memory.focus();
-  await page.getByRole('heading', { name: '故事记录', exact: true }).click();
-  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('仍然保留的草稿');
+  expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe(original);
+  if (closeBy === 'panel') {
+    await englishInterface(page);
+    memory = page.getByRole('textbox', { name: 'Stage 1 Chronicle', exact: true });
+    close = page.getByRole('button', { name: 'Close records panel', exact: true });
+    await expect(memory).toHaveValue('仍然保留的草稿');
+  }
+  fail = false;
+  await close.click();
+  await expect(page.locator('.records')).toBeHidden();
+  await expect.poll(async () => {
+    const content = (await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content;
+    return closeBy === 'panel' ? JSON.parse(content).chronicle : content;
+  }).toBe('仍然保留的草稿');
 });
 
 test('story author note and global additional instruction persist into raw System prompts', async ({ page, request }) => {
@@ -645,22 +1381,28 @@ test('developer Trace viewer shows live thinking, tool results and exact raw inp
     const events = [{ type: 'message_update', at, data: { type: 'thinking_delta', contentIndex: 0, delta: ++reads > 1 ? '正在思考，继续检查。' : '正在思考' } }];
     return route.fulfill({ json: { ...live, events } });
   });
-  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__traceClipboard = text; } } }));
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await page.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(page.locator('.trace-thinking pre')).toContainText('正在思考，继续检查。');
-  await page.getByRole('button', { name: '放大 Trace' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Agent Trace' });
+  await page.getByRole('button', { name: '展开记录窗口', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '故事记录窗口', exact: true });
   expect((await dialog.boundingBox())!.width).toBeGreaterThan(1100);
   await dialog.getByRole('button', { name: /1\. Writer/ }).click();
   await expect(dialog.locator('.trace-tool')).toContainText('工具返回的完整记忆。');
   await expect(dialog.locator('.trace-text')).toContainText('准备读取记忆。');
   await dialog.getByText('Raw input · 实际请求 Body', { exact: true }).click();
   await dialog.getByRole('button', { name: '复制原文', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '剪贴板不可用或未获授权' })).toBeVisible();
+  await expect(dialog.locator('.trace-raw').filter({ hasText: 'Raw input' }).locator('pre')).toHaveText(raw);
+  await dragLeftOutside(page, dialog.locator('.trace-raw').filter({ hasText: 'Raw input' }).locator('pre'));
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__traceClipboard = text; } } }));
+  await dialog.getByRole('button', { name: '复制原文', exact: true }).click();
   expect(await page.evaluate(() => (window as any).__traceClipboard)).toBe(raw);
   await dialog.getByText('Raw output · 原始响应 / SSE 流', { exact: true }).click();
   await expect(dialog.locator('.trace-raw').filter({ hasText: 'Raw output' }).locator('pre')).toHaveText(done.response);
-  await page.keyboard.press('Escape');
+  await page.mouse.click(4, 100);
   await expect(dialog).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -855,7 +1597,7 @@ test('empty send replies after deleting and editing, then Enter adds an assistan
   expect(saved.branch.filter((message: any) => message.role === 'user').map((message: any) => message.id)).toEqual([savedUser.id]);
 });
 
-test('empty send preserves a failed user edit and does not request generation', async ({ page }) => {
+test('empty send and page navigation preserve a failed user edit', async ({ page }) => {
   await page.getByLabel('回复者').selectOption('narrator');
   await send(page, '打开信。', 2);
   page.once('dialog', dialog => dialog.accept());
@@ -874,6 +1616,17 @@ test('empty send preserves a failed user edit and does not request generation', 
   await page.reload();
   await expect(input).toHaveValue(revised);
   await expect(page.locator('article.message')).toHaveCount(1);
+  const navigationDraft = '离开故事前也必须成功保存这次修改。';
+  await input.fill(navigationDraft);
+  await page.locator('.nav-label-btn').click();
+  await expect(input).toHaveValue(navigationDraft);
+  await expect(page.getByRole('alert').filter({ hasText: '内容尚未保存' })).toBeVisible();
+  await page.unroute('**/api/messages/*/edit');
+  const saved = page.waitForResponse(response => /\/api\/messages\/[^/]+\/edit$/.test(response.url()));
+  await page.locator('.nav-label-btn').click();
+  expect((await saved).ok()).toBe(true);
+  await expect(page.locator('.management')).toBeVisible();
+  expect(requests).toBe(0);
 });
 
 test('inline facts bookmarks scene and rewrite controls stay beside their content', async ({ page, request }, info) => {
@@ -907,6 +1660,30 @@ test('inline facts bookmarks scene and rewrite controls stay beside their conten
   expect((await accepted).request().postDataJSON()).toEqual({ instruction: '减少解释，保留信封。' });
   await expect(page.getByRole('textbox', { name: '改写要求' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '停止生成' })).toHaveCount(0);
+});
+
+test('story filter stays usable in English on a narrow screen and opens the matching story', async ({ page, request }) => {
+  const characters = await (await request.get('/api/characters')).json();
+  const title = 'Ｓｈｅｌｖｅｄ Café · 原始标题';
+  expect((await request.post('/api/conversations', { data: { title, kind: 'solo', characterId: characters[0].id } })).status()).toBe(201);
+  await page.reload();
+  await englishInterface(page);
+  await page.getByRole('button', { name: 'Close records panel', exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+  await page.getByRole('button', { name: /^Story list/ }).click();
+  const filter = page.getByRole('searchbox', { name: 'Filter by name or title', exact: true });
+  await filter.fill('sHELVED Cafe\u0301');
+  await expect(page.locator('.management .character-card')).toHaveCount(1);
+  for (const control of [filter, page.locator('.management').getByRole('button', { name: 'Start a new story', exact: true })]) {
+    const box = (await control.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(320);
+  }
+  await page.getByRole('button', { name: 'Open story', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(characters[0].name);
+  await expect(page.locator('.story-list button.selected')).toContainText(title);
+  await expect(page.getByRole('textbox', { name: 'Message input', exact: true })).toBeVisible();
 });
 
 test('content cards and nested persona creation save on leaving their fields', async ({ page, request }) => {

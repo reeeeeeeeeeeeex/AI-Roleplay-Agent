@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type {
   GenerationInfo,
   RequestTiming,
@@ -136,7 +136,7 @@ export const turns = sqliteTable('turns', {
   error: text('error'),
   createdAt: text('created_at').notNull(),
   completedAt: text('completed_at'),
-});
+}, table => [index('turns_conversation_idx').on(table.conversationId)]);
 
 export const sessionEvents = sqliteTable('session_events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -167,7 +167,7 @@ export const turnTraces = sqliteTable('turn_traces', {
   error: text('error'),
   createdAt: text('created_at').notNull(),
   completedAt: text('completed_at'),
-});
+}, table => [index('turn_traces_conversation_created_idx').on(table.conversationId, table.createdAt, table.requestIndex)]);
 
 export const memories = sqliteTable('memories', {
   id: text('id').primaryKey(),
@@ -178,7 +178,7 @@ export const memories = sqliteTable('memories', {
   source: text('source').notNull(),
   coverage: text('coverage', { mode: 'json' }).$type<MemoryCoverage | null>(),
   createdAt: text('created_at').notNull(),
-});
+}, table => [index('memories_conversation_idx').on(table.conversationId)]);
 
 export const stateSnapshots = sqliteTable('state_snapshots', {
   id: text('id').primaryKey(),
@@ -187,7 +187,7 @@ export const stateSnapshots = sqliteTable('state_snapshots', {
   version: integer('version').notNull().default(1),
   tables: text('tables', { mode: 'json' }).$type<ProtagonistTables>().notNull(),
   createdAt: text('created_at').notNull(),
-});
+}, table => [index('state_snapshots_conversation_idx').on(table.conversationId)]);
 
 export const proposals = sqliteTable('proposals', {
   id: text('id').primaryKey(),

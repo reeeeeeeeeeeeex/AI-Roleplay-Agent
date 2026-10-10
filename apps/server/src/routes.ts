@@ -17,6 +17,7 @@ import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
 import type { ActionChoiceService } from './services/action-choices.js';
 import { forkStory, deleteStoryFrom } from './services/story-branches.js';
+import { projectMemoryStages, splitMemoryStages } from './memory-stages.js';
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
@@ -38,13 +39,26 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       return repo.getConversation(chat.id);
     })(), update: (id,v) => repo.updateConversation(id,v), remove: (id) => repo.deleteConversation(id) },
   ];
-  function refs(path: string, input: any) {
-    if (path === 'groups' && (new Set(input.memberIds).size !== input.memberIds.length || input.memberIds.some((id: string) => !repo.getCharacter(id)))) throw new AppError("Invalid or duplicate group member.");
+  function refs(path: string, input: any, previous?: { memberIds?: string[]; lorebookIds?: string[] } | null) {
+    if (path === 'groups') {
+      if (new Set(input.memberIds).size !== input.memberIds.length) throw new AppError("Invalid or duplicate group member.");
+      input.memberIds = input.memberIds.filter((id: string) => {
+        if (repo.getCharacter(id)) return true;
+        if (previous?.memberIds?.includes(id)) return false;
+        throw new AppError("Invalid or duplicate group member.");
+      });
+      if (!input.memberIds.length) throw new AppError("群组至少需要一个有效角色，请重新选择。");
+    }
     if (path !== 'conversations') return;
     if (input.characterId && !repo.getCharacter(input.characterId)) throw new AppError("Character not found.");
     if (input.groupId && !repo.getGroup(input.groupId)) throw new AppError("Group not found.");
     if (input.personaId && !repo.getPersona(input.personaId)) throw new AppError("Persona not found.");
-    if (input.lorebookIds.some((id: string) => !repo.getLorebook(id))) throw new AppError("Lorebook not found.");
+    input.lorebookIds = input.lorebookIds.filter((id: string) => {
+      if (repo.getLorebook(id)) return true;
+      // Old dangling links must not block unrelated edits; new invalid links still fail.
+      if (previous?.lorebookIds?.includes(id)) return false;
+      throw new AppError("Lorebook not found.");
+    });
   }
   for (const collection of collections) {
     const base = `/api/${collection.path}`;
@@ -53,12 +67,15 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     app.post(base, async (req, reply) => { const value = collection.schema.parse(req.body); refs(collection.path, value); return reply.code(201).send(collection.create(value)); });
     app.put(`${base}/:id`, async (req, reply) => {
       idleAll();
-      const { expectedUpdatedAt: expected, expectedScenario } = z.object({ expectedUpdatedAt: z.string().optional(), expectedScenario: z.string().optional() }).parse(req.body);
-      const existing = collection.get(idOf(req)) as { updatedAt?: string } | null;
-      if (expected && existing?.updatedAt !== expected) throw new AppError("内容已在别处修改，草稿已保留，请重新打开后核对。");
-      if (collection.path === 'conversations' && expectedScenario !== undefined && repo.navigation(idOf(req)).scene.scenario !== expectedScenario) throw new AppError("场景已在别处修改，未覆盖现有内容。");
-      const value = collection.schema.parse(req.body); refs(collection.path, value);
-      return collection.update(idOf(req), value) ?? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') });
+      const saved = repo.database.sqlite.transaction(() => {
+        const { expectedUpdatedAt: expected, expectedScenario } = z.object({ expectedUpdatedAt: z.string().optional(), expectedScenario: z.string().optional() }).parse(req.body);
+        const existing = collection.get(idOf(req)) as { updatedAt?: string; memberIds?: string[]; lorebookIds?: string[] } | null;
+        if (expected && existing?.updatedAt !== expected) throw new AppError("内容已在别处修改，草稿已保留，请重新打开后核对。");
+        if (collection.path === 'conversations' && expectedScenario !== undefined && repo.navigation(idOf(req)).scene.scenario !== expectedScenario) throw new AppError("场景已在别处修改，未覆盖现有内容。");
+        const value = collection.schema.parse(req.body); refs(collection.path, value, existing);
+        return collection.update(idOf(req), value);
+      })();
+      return saved ?? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') });
     });
     app.delete(`${base}/:id`, async (req) => { idleAll(); return { deleted: Boolean(collection.remove(idOf(req))) }; });
   }
@@ -108,6 +125,13 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     idleAll();
     return repo.deletePromptPreset(idOf(req)) ? { deleted: true } : reply.code(404).send({ error: '预设不存在。', errorText: uiText('预设不存在。') });
   });
+  app.post('/api/connections/:id/copy', async (req, reply) => {
+    const { name } = z.object({ name: connectionInputSchema.shape.name }).parse(req.body);
+    const source = repo.getRuntimeConnection(idOf(req));
+    if (!source) return reply.code(404).send({ error: 'Connection not found.', errorText: uiText('Connection not found.') });
+    // Credentials stay on the server; createConnection returns only the public summary.
+    return reply.code(201).send(repo.createConnection(connectionInputSchema.parse({ ...source, name })));
+  });
   app.post('/api/connections/:id/test', async (req) => {
     const connection = repo.getRuntimeConnection(idOf(req)); if (!connection) throw new AppError("Connection not found.");
     return { ...await turns.runtime.testConnection(connection, AbortSignal.timeout(60_000)), streaming: true, tools: true };
@@ -123,7 +147,18 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return { models: await listModels({ ...input, apiKey: input.apiKey || (sameEndpoint ? saved.apiKey : ''),
       headers: Object.fromEntries(Object.entries(input.headers).map(([key, value]) => [key, value === '[stored]' && sameEndpoint ? saved.headers[key] ?? '' : value])) }) };
   });
-  app.get('/api/conversations/:id/messages', async (req) => ({ branch: repo.getActiveBranch(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })), nodes: repo.listMessages(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })) }));
+  app.get('/api/conversations/:id/messages', async req => {
+    const { view } = z.object({ view: z.enum(['full', 'chat']).default('full') }).parse(req.query);
+    if (view === 'chat') return {
+      branch: repo.getActiveBranch(idOf(req)).map(m => ({ ...m, providerState: null, legacyPayload: null })),
+      nodes: repo.listMessageSummaries(idOf(req)),
+    };
+    const nodes = repo.listMessages(idOf(req));
+    return {
+      branch: repo.getActiveBranch(idOf(req), undefined, nodes).map(m => ({ ...m, providerState: null, legacyPayload: null })),
+      nodes: nodes.map(m => ({ ...m, providerState: null, legacyPayload: null })),
+    };
+  });
   app.post('/api/conversations/:id/manual-messages', async (req, reply) => reply.code(201).send(turns.appendManual(idOf(req), manualMessageSchema.parse(req.body))));
   app.post('/api/conversations/:id/branches', async (req, reply) => {
     const chatId = idOf(req); turns.assertIdle(chatId);
@@ -180,14 +215,26 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const row = repo.database.sqlite.prepare('SELECT id FROM turns WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1').get(idOf(req)) as { id: string } | undefined;
     return row ? repo.getTurn(row.id) : null;
   });
-  app.get('/api/conversations/:id/memory', async (req) => repo.listMemories(idOf(req),1000));
+  app.get('/api/conversations/:id/memory', async (req) => repo.listMemoryStages(idOf(req)));
   app.patch('/api/conversations/:id/memory/:memoryId', async (req) => {
     const { id: chat, memoryId } = z.object({ id: z.string(), memoryId: z.string() }).parse(req.params);
     turns.assertIdle(chat);
     const value = z.object({ content: z.string().max(200_000), previous: z.string(), head: z.string().nullable() }).parse(req.body);
-    const entry = repo.listMemories(chat, 1000).find(item => item.id === memoryId);
+    const raw = repo.listMemories(chat, Infinity);
+    const entry = projectMemoryStages(raw).find(item => item.id === memoryId) ?? raw.find(item => item.id === memoryId);
     if (!entry || repo.getConversation(chat)?.headMessageId !== value.head || entry.content !== value.previous) throw new AppError("记忆或分支已变化，请刷新后重试。未覆盖现有内容。");
-    if (entry.content !== value.content) repo.addEvent(chat, null, 'memory.edited', { id: memoryId, head: value.head, content: value.content });
+    if (entry.content !== value.content) {
+      let content = value.content, id = memoryId;
+      if ('snapshotId' in entry && entry.snapshotId) {
+        const snapshot = raw.find(item => item.id === entry.snapshotId)!;
+        const part = splitMemoryStages(snapshot.content)!.find(item => item.stage === entry.stage)!;
+        if (/^\s*\[Stage\s+\d+\]\s*[:：]/im.test(content)) throw new AppError('阶段正文不能包含阶段标题，请直接编辑该阶段的内容。');
+        content = snapshot.content.slice(0, part.start) + content.trimEnd()
+          + (part.end < snapshot.content.length ? '\n\n' + snapshot.content.slice(part.end).trimStart() : '');
+        id = snapshot.id;
+      }
+      repo.addEvent(chat, null, 'memory.edited', { id, head: value.head, content });
+    }
     return { ...entry, content: value.content };
   });
   app.get('/api/conversations/:id/facts', async req => repo.listPinnedFacts(idOf(req)));
@@ -219,15 +266,19 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return repo.createMemory({ conversationId: chat, content, source: mode === 'replace' ? 'manual' : 'generated', stage: (repo.listMemories(chat,1)[0]?.stage ?? 0)+1, storyTurnId: settledStoryIds(repo,chat).at(-1) ?? null });
   });
   app.get('/api/conversations/:id/state', async (req) => repo.latestState(idOf(req)) ?? { tables: blankState(), version: 2 });
-  app.get('/api/conversations/:id/state/history', async req => repo.listStateSnapshots(idOf(req)));
+  app.get('/api/conversations/:id/state/history', async req => (req.query as { view?: string }).view === 'summary' ? repo.listStateCheckpoints(idOf(req)) : repo.listStateSnapshots(idOf(req)));
+  app.get('/api/conversations/:id/state/history/:snapshotId', async (req, reply) => {
+    const { snapshotId } = req.params as { snapshotId: string };
+    return repo.getStateSnapshot(idOf(req), snapshotId) ?? reply.code(404).send({ error: 'Snapshot is not on the current branch.', errorText: uiText('Snapshot is not on the current branch.') });
+  });
   app.post('/api/conversations/:id/state/restore', async req => {
     const chat = idOf(req); turns.assertIdle(chat);
     const { snapshotId } = z.object({ snapshotId: z.string() }).parse(req.body);
-    const snapshot = repo.listStateSnapshots(chat).find((item) => item.id === snapshotId);
+    const snapshot = repo.getStateSnapshot(chat, snapshotId);
     if (!snapshot) throw new AppError("Snapshot is not on the current branch.");
     return repo.createState(chat, settledStoryIds(repo, chat).at(-1) ?? null, snapshot.tables);
   });
-  app.get('/api/conversations/:id/planner-history', async req => repo.events(idOf(req)).filter((e) => ['planner.completed', 'routing.completed', 'planner.imported'].includes(e.type)).map((e) => ({ id: e.id, type: e.type, createdAt: e.createdAt, payload: e.payload })));
+  app.get('/api/conversations/:id/planner-history', async req => repo.events(idOf(req), ['planner.completed', 'routing.completed', 'planner.imported']).map((e) => ({ id: e.id, type: e.type, createdAt: e.createdAt, payload: e.payload })));
   app.post('/api/conversations/:id/state', async (req) => {
     const chat = idOf(req); turns.assertIdle(chat); const { tables } = z.object({ tables: z.unknown() }).parse(req.body);
     return repo.createState(chat, settledStoryIds(repo,chat).at(-1) ?? null, normalizeState(tables));

@@ -21,7 +21,7 @@ const same = (a: string,b: string) => { const left=Buffer.from(a); const right=B
 export async function createApp(config: AppConfig = loadConfig(), runtime?: AgentRuntime, configurePlugins?: (registry: PluginRegistry) => void) {
   const app = Fastify({ bodyLimit: 2_000_000, logger: false });
   const database = createDatabase(config.databasePath); const repository = new Repository(database);
-  repository.recoverInterruptedTurns(); mkdirSync(config.assetDir,{recursive:true});
+  mkdirSync(config.assetDir,{recursive:true});
   if(config.fakeModel) seedDemo(repository);
   const gateway = runtime ?? (config.fakeModel ? new FakeRuntime() : new PiAgentRuntime());
   const events = new EventBroker(repository);
@@ -74,7 +74,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     const terminal=(type:string)=>['turn.completed','turn.partial','turn.failed','turn.cancelled'].includes(type);
     const send=(event:ReturnType<Repository['addEvent']>)=>{ if (!reply.raw.destroyed) reply.raw.write(`${event.id > 0 ? `id: ${event.id}\n` : ''}data: ${JSON.stringify(event)}\n\n`); };
     const prior=repository.eventsForTurn(id,after); for(const event of prior) send(event);
-    const all=repository.eventsForTurn(id); if (all.some((event)=>terminal(event.type))) {reply.raw.end();return;}
+    if (repository.hasTerminalEvent(id)) {reply.raw.end();return;}
     const current=repository.getTurn(id)!;
     if (['partial','failed','cancelled'].includes(current.status) || (current.status==='completed' && current.recordsStatus!=='running')) {
       // A restart can occur after the durable status but before its final SSE event.
@@ -86,11 +86,32 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     const heartbeat=setInterval(()=>{ if(!reply.raw.destroyed)reply.raw.write(': heartbeat\n\n'); },15_000);
     reply.raw.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
   });
-  await app.register(fastifyStatic,{root:config.assetDir,prefix:'/api/assets/',decorateReply:false,allowedPath:(path)=>/^[a-f0-9]{64}\.(png|jpe?g|webp)$/u.test(path.replace(/^\//u,''))});
+  await app.register(async assets => {
+    assets.addHook('onSend', async (_request, reply, payload) => {
+      // Asset names identify their bytes; replacements get a different URL.
+      // Keep private images out of shared proxy caches and never cache errors.
+      if ([200, 206, 304].includes(reply.statusCode)) reply.header('Cache-Control', 'private, max-age=31536000, immutable');
+      return payload;
+    });
+    await assets.register(fastifyStatic,{root:config.assetDir,prefix:'/api/assets/',decorateReply:false,allowedPath:(path)=>/^[a-f0-9]{64}\.(png|jpe?g|webp)$/u.test(path.replace(/^\//u,''))});
+  });
   if(existsSync(config.webDist)) {
     await app.register(fastifyStatic,{root:config.webDist,prefix:'/'});
     app.setNotFoundHandler((req,reply)=> req.url.startsWith('/api/') ? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') }) : reply.sendFile('index.html'));
   }
-  app.addHook('onClose',async()=>{await choices.shutdown();await turns.shutdown();database.sqlite.close();});
-  return { app,repository,turns,records,choices,events,plugins,config };
+  // Active SSE requests need their generation cancelled before the server can drain them.
+  app.addHook('preClose',async()=>{await Promise.all([choices.shutdown(),turns.shutdown(),records.shutdown()]);});
+  app.addHook('onClose',async()=>{database.sqlite.close();});
+  async function listen() {
+    try {
+      // A second launcher must acquire the port before changing persisted tasks.
+      const address = await app.listen({ host: config.host, port: config.port });
+      repository.recoverInterruptedTurns();
+      return address;
+    } catch (error) {
+      await app.close();
+      throw error;
+    }
+  }
+  return { app,repository,turns,records,choices,events,plugins,config,listen };
 }

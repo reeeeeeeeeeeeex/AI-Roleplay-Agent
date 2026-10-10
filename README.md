@@ -31,6 +31,12 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 **连接 API，共同写作。** 发送主角行动或用户旁白，让模型接着回应。默认使用普通写作；需要时可选择 Writer Agent 或 Planner＋Writer，使用选人、规划与工具辅助创作。支持 **Chat Completions、Anthropic Messages、OpenAI Responses** 三种协议。
 
+同一服务商使用多个模型时，可以在「设置 → 模型」复制已有连接，再修改副本的模型 ID。地址、参数和已保存的密钥会一并复制；密钥不会返回浏览器，也不会自动切换当前模型。
+
+如果连接提示返回了 HTML 网页，请检查填写的是 API 地址，以及服务商是否要求 `/v1`；中转站异常也可能返回网页。Trace 会保留原始响应，便于排查。
+
+角色和主角资料也可以在资源列表中复制，再调整副本的设定。头像、角色提示词和主角初始状态模板会保留；原资料、已有故事绑定和全局默认主角保持不变。
+
 **手动录入，掌握每一句话。** 开启输入框上方的「单人创作／网页聊天手动输入」，主角、用户旁白和角色发言都只保存消息。可以连续输入同一种身份，无须强制交替。
 
 **使用 AI 网页，再把回复带回来。** 在预览中复制整理好的网页提示词，手动粘贴到 Gemini、ChatGPT、Claude 等网页，再把回复填入「角色」并发送。复制会同步保存尚未发送的 User 草稿，避免历史缺少这一轮输入。复制出的内容是普通文本，不是网页端真正的 System 消息。
@@ -61,6 +67,16 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 正文和资料通常直接点击编辑，失焦自动保存；设置和提示词使用显式保存。载入提示词预设只填入草稿，点击「保存提示词」后才生效。
 
+输入框草稿按故事和输入身份保存在当前浏览器，侧栏会标出有未发送草稿的故事。不同窗口编辑不同故事时，保存草稿不会互相覆盖。
+
+故事和资料列表可按名称或标题筛选；清除筛选或按 Esc 即可恢复完整列表。
+
+导出的 Markdown 和故事包文件名包含故事标题及短编号，方便辨认不同故事和分支。导出前会先保存正在编辑的正文；保存失败时保留草稿并停止导出。
+
+状态检查点和 Planner 历史先显示最近 100 项，点击「显示更早记录」可继续查看。状态表在展开检查点时才读取，旧检查点可恢复为一份新记录。
+
+点击聊天顶部的搜索按钮，或按 **Ctrl / ⌘ + F**，可以查找当前分支已保存的全部正文，包括尚未显示的早期消息。使用上下箭头或 Enter／Shift+Enter 切换匹配消息，Esc 关闭；搜索只定位阅读位置，不改变故事进度。
+
 导入 SillyTavern 数据时，请填写自己的数据目录；也可通过 `SILLYTAVERN_DATA_PATH` 设置默认路径。
 
 「设置 → 外观」提供石墨黑、午夜蓝、暖墨棕和纸白配色，并搭配对应的文字颜色。可以选择正文字体和 12–28 px 字号，先预览再保存；偏好仅保存在当前浏览器。字体使用设备已安装的字体及回退，不需要下载字体文件。
@@ -72,6 +88,8 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 API 密钥保存在本地 SQLite，数据库未加密。公开项目时不要上传数据库、`.env` 或私人故事数据。默认仅监听本机；安装为 PWA 后，仍需要本地服务运行。
 
 更新发布包时，先停止服务并备份数据，再解压新版，将原来的 `apps/server/data/` 和自定义 `.env` 放入新版目录后启动；不要复制旧 `node_modules`。源码开发者更新代码后运行 `pnpm build`。重启服务后刷新或重开应用。
+
+已打开的页面检测到新版时会提示刷新，不会自动打断编辑。点击「刷新应用」会先等待正文保存并保留输入草稿；保存失败时留在当前页面。
 
 ### 开发与贡献
 
@@ -110,6 +128,12 @@ The project follows a **Minimalist** approach: edit content directly, keep every
 
 **Connect an API and write together.** Send a protagonist action or user narration, then let the model respond. Plain writing is the default. Writer Agent and Planner＋Writer offer speaker selection, planning, and tool-assisted writing when needed. Supported protocols are **Chat Completions, Anthropic Messages, and OpenAI Responses**.
 
+To use several models from one provider, duplicate a connection in **Settings → Models**, then edit the copy's model ID. The URL, parameters, and saved credentials are copied on the server. Saved secrets are not returned to the browser, and your current model selection stays unchanged.
+
+If a connection reports an HTML page, check that you entered an API address and whether your provider requires `/v1`. Proxy failures can also return HTML. The trace retains the original response for diagnosis.
+
+Duplicate a character or persona from its resource card to try a different version of the profile. Copies retain avatars, character prompts, and persona starting-state templates. The original profile, existing story bindings, and default persona stay unchanged.
+
 **Enter every voice manually.** Enable the manual-input switch above the composer to save protagonist, user-narrator, and character messages without generating story text. Any voice can send consecutive messages; alternating roles is optional.
 
 **Use an AI website and bring the reply back.** Copy the formatted web prompt from the preview, paste it into a website such as Gemini, ChatGPT, or Claude, then paste the response into the Character input and send. Copying also saves an unsent User draft so that the input remains in your history. The copied prompt is ordinary text, not a real System-role message in the website.
@@ -140,6 +164,16 @@ Want to explore first? After the initial setup, Windows users can run [Demo.cmd]
 
 Most content is edited directly and saved on blur. Settings and prompts have explicit save actions. Loading a prompt preset fills the draft; **Save prompts** applies it.
 
+Composer drafts are saved in the current browser separately for each story and input identity. Stories with unsent drafts are marked in the sidebar. Writing in different stories across windows does not overwrite their drafts.
+
+Filter story and resource lists by name or title. Clear the filter or press Esc to return to the full list.
+
+Use the search button above the chat or **Ctrl / ⌘ + F** to find saved story text across the current branch, including older messages outside the displayed window. Move between matching messages with the arrows or Enter / Shift+Enter, and close with Esc. Searching changes only the reading position, not story progress.
+
+Exported Markdown and story packages include the story title and a short ID in their filenames to distinguish stories and branches. Pending content edits are saved before exporting; a failed save keeps the draft and stops the export.
+
+State checkpoints and Planner history initially show the latest 100 entries. Use **Show earlier records** to see older entries. State tables load when you expand a checkpoint; restoring an earlier checkpoint creates a new record.
+
 To import SillyTavern data, enter your own data directory. You can optionally set its default with `SILLYTAVERN_DATA_PATH`.
 
 **Settings → Appearance** offers Graphite, Midnight blue, Warm dark, and Paper white palettes with matching text colors. Preview a story font and size from 12–28 px before saving. Preferences stay in this browser; fonts come from your device with automatic fallbacks, without font downloads.
@@ -151,6 +185,8 @@ Chats and settings are stored locally in `apps/server/data/` by default. Stop th
 API keys are stored in local SQLite; the database is not encrypted. Keep databases, `.env`, and private story data out of public repositories. The server listens on localhost by default. Installing the PWA still requires the local server to run.
 
 To update a release, stop the server and back up your data. Extract the new version, transfer your existing `apps/server/data/` and custom `.env` into it, then start it. Do not copy old `node_modules`. Source users should run `pnpm build` after updating. Refresh or reopen the app after restarting the server.
+
+An open page announces available updates without interrupting editing. **Reload app** waits for content saves and preserves composer drafts; if saving fails, the page stays open.
 
 ### Development and contributions
 

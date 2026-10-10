@@ -22,6 +22,8 @@ This guide describes the current implementation and its important invariants. St
 
 Pi 依赖集中在 `agent-runtime`；前端通过本地服务访问模型，不直接向供应商发送密钥。SQLite 是持久数据来源，浏览器负责界面状态和未提交草稿。
 
+前端通过 `@new-ai-chat/contracts/client` 读取默认设置、状态字段和显示辅助函数；领域类型使用 `import type`。这个入口不加载 Zod 或服务端校验器，服务端仍从原入口执行完整校验。
+
 ```mermaid
 flowchart LR
   UI[React WebUI] -->|REST| API[Fastify]
@@ -70,7 +72,7 @@ flowchart LR
 
 主角状态只有六张表：`global_state`、`protagonist_info`、`important_characters`、`protagonist_skills`、`inventory`、`quests_events`。候选行动使用独立缓存，不属于状态表。故事前经历由用户维护；`is_dead` 只表示确认死亡，不能由离场推断。
 
-Memory 默认选最近两阶段，加最多三条本地关键词命中的旧记录；入选的普通 Memory 按阶段顺序发送。检索不需要向量数据库或额外模型。Memory 与状态共享可选的 `recordConnectionId`，但分别请求、分别按间隔维护；上下文发送开关与自动更新间隔相互独立。
+开启 Memory 发送时，当前分支的全部有效阶段按从前到后发送；预算不足就阻止请求，不按关键词省略旧阶段。旧导入记录取当前位置最新的累积快照，按明确连续的 `[Stage N]:` 前缀拆分，同号内容以该快照为准，后续新记忆接续编号。拆分只影响读取与显示，数据库原记录及历史快照保留，未知覆盖范围不补猜。Agent 的显式搜索工具仍支持本地关键词，不需要向量数据库或额外模型。Memory 与状态共享可选的 `recordConnectionId`，但分别请求、分别按间隔维护；上下文发送开关与自动更新间隔相互独立。
 
 `SessionEvent` 服务于回合日志和部分投影，并非所有数据都采用事件溯源。记录阶段事件也不等于已调用模型：实际是否到更新间隔，由 `RecordService.automatic` 判断。
 
@@ -145,6 +147,8 @@ The request path is **WebUI → Fastify → story context → AgentRuntime → M
 
 A lightweight React context and local dictionaries provide the UI language, stored in the browser as `interface-language`. Application diagnostics may carry `UiText` keys and parameters alongside their original text. Language never enters model requests; state display labels are separate from model-facing field descriptions.
 
+The UI reads defaults, state columns, and display helpers from `@new-ai-chat/contracts/client`, and uses `import type` for domain types. This entry point does not load Zod or server validators. Server-side validation continues through the original package entry point.
+
 ### 2. From input to a completed turn
 
 `TurnService` owns the turn lifecycle; `StoryContext` reads the material visible at the current story position.
@@ -180,7 +184,7 @@ Global `manualInput` uses the same message store. Consecutive new User messages 
 
 There are six state tables: `global_state`, `protagonist_info`, `important_characters`, `protagonist_skills`, `inventory`, and `quests_events`. Action choices are cached separately. Pre-story experience is user-authored; `is_dead` means confirmed death, not absence from a scene.
 
-Default Memory retrieval selects the latest two stages plus up to three older keyword matches, then serializes selected ordinary Memory in stage order. Retrieval needs no vector database or extra model call. Memory and state share the optional `recordConnectionId` but run separate requests at their own intervals. Context inclusion switches and automatic update intervals are independent settings.
+When Memory is enabled, all effective stages on the current branch are sent in chronological order. An insufficient budget blocks the request instead of omitting older stages by keyword relevance. Legacy imports use the latest cumulative snapshot at the current story position. Consecutive `[Stage N]:` headers become individual stages, that snapshot supplies each stage's current text, and newer memories continue the numbering. This is a read-time projection: original database records and historical snapshots remain intact, and unknown coverage is not inferred. Explicit Agent search tools still support local keywords without a vector database or extra model call. Memory and state share the optional `recordConnectionId` but run separate requests at their own intervals. Context inclusion switches and automatic update intervals are independent settings.
 
 `SessionEvent` supports turn logs and selected projections; this is not a fully event-sourced CRUD system. A record-phase event does not itself prove a model request occurred: `RecordService.automatic` decides whether an interval is due.
 

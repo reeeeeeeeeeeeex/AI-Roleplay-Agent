@@ -1,6 +1,7 @@
 import { reasoningLabel } from './ui-labels.js';
 import { t } from './i18n.js';
-import { defaultActionChoicePrompt, type ActionChoiceSettings as Settings } from '@new-ai-chat/contracts';
+import { defaultActionChoicePrompt } from '@new-ai-chat/contracts/client';
+import type { ActionChoiceSettings as Settings } from '@new-ai-chat/contracts';
 
 export default function ActionChoiceSettings({ value, onChange, connections, currentConnectionId, streaming }: {
   value: Settings; onChange: (value: Settings) => void; connections: any[]; currentConnectionId: string | null; streaming: boolean;

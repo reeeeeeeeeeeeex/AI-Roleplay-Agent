@@ -1,6 +1,6 @@
 import { AppError, errorText, uiText, type UiText } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { defaultPromptSettings, generalSettingsSchema, personaInputSchema, personaStateTemplateSchema, promptSettingsSchema, promptPresetSchema, type GeneralSettings, type PromptSettings, type PromptPreset, type PromptPresetInput, type PromptPresetPatch, type TurnTrace } from '@new-ai-chat/contracts';
 import type {
   Character,
@@ -15,6 +15,7 @@ import type {
   StoryBookmark,
   StoryNavigation,
   MessageNode,
+  MessageSummary,
   Persona,
   ProtagonistStateSnapshot,
   ProtagonistTables,
@@ -24,6 +25,7 @@ import type {
 } from '@new-ai-chat/contracts';
 import type { RuntimeConnection } from '@new-ai-chat/agent-runtime';
 import type { AppDatabase } from './database.js';
+import { projectMemoryStages } from '../memory-stages.js';
 import {
   characters,
   connections,
@@ -49,6 +51,28 @@ const id = () => randomUUID();
 type ConversationRow = typeof conversations.$inferSelect;
 type MessageRow = typeof messages.$inferSelect;
 type TurnRow = typeof turns.$inferSelect;
+
+function branchIds(conversationId: string, headMessageId: string) {
+  // UNION terminates corrupt cycles; orderedBranch still reports them as errors.
+  return sql`(WITH RECURSIVE branch(id, parent_id) AS (
+    SELECT id, parent_id FROM messages WHERE id = ${headMessageId} AND conversation_id = ${conversationId}
+    UNION
+    SELECT parent.id, parent.parent_id FROM messages AS parent JOIN branch ON parent.id = branch.parent_id
+    WHERE parent.conversation_id = ${conversationId}
+  ) SELECT id FROM branch)`;
+}
+
+function orderedBranch<T extends Pick<MessageNode, 'id' | 'parentId'>>(nodes: T[], headMessageId: string): T[] {
+  const all = new Map(nodes.map(message => [message.id, message]));
+  const branch: T[] = []; let current = all.get(headMessageId);
+  const visited = new Set<string>();
+  while (current) {
+    if (visited.has(current.id)) throw new AppError("Cycle in message branch.");
+    visited.add(current.id); branch.push(current);
+    current = current.parentId ? all.get(current.parentId) : undefined;
+  }
+  return branch.reverse();
+}
 
 function mapConversation(row: ConversationRow): Conversation {
   return {
@@ -258,7 +282,15 @@ export class Repository {
     return this.getCharacter(characterId);
   }
   deleteCharacter(characterId: string): boolean {
-    return this.database.db.delete(characters).where(eq(characters.id, characterId)).run().changes > 0;
+    return this.database.sqlite.transaction(() => {
+      const deleted = this.database.db.delete(characters).where(eq(characters.id, characterId)).run().changes > 0;
+      if (!deleted) return false;
+      for (const group of this.listGroups()) {
+        if (group.memberIds.includes(characterId)) this.database.db.update(groups)
+          .set({ memberIds: group.memberIds.filter(id => id !== characterId), updatedAt: now() }).where(eq(groups.id, group.id)).run();
+      }
+      return true;
+    })();
   }
 
   listPersonas(): Persona[] { return this.database.db.select().from(personas).orderBy(asc(personas.name)).all().map(row => ({ ...row, stateTemplate: personaStateTemplateSchema.parse(row.stateTemplate) })) as Persona[]; }
@@ -296,7 +328,13 @@ export class Repository {
   deleteGroup(groupId: string): boolean { return this.database.db.delete(groups).where(eq(groups.id, groupId)).run().changes > 0; }
 
   listLorebooks(): Lorebook[] {
-    return this.database.db.select().from(lorebooks).orderBy(asc(lorebooks.name)).all().map((book) => this.getLorebook(book.id)!);
+    const books = this.database.db.select().from(lorebooks).orderBy(asc(lorebooks.name)).all().map(book => ({ ...book, entries: [] as Lorebook['entries'] }));
+    if (!books.length) return books;
+    const entriesByBook = new Map(books.map(book => [book.id, book.entries]));
+    for (const entry of this.database.db.select().from(loreEntries).orderBy(asc(loreEntries.order)).all()) {
+      entriesByBook.get(entry.lorebookId)?.push({ ...entry, position: entry.position as 'before' | 'after' | 'depth' });
+    }
+    return books;
   }
   getLorebook(lorebookId: string): Lorebook | null {
     const book = this.database.db.select().from(lorebooks).where(eq(lorebooks.id, lorebookId)).get();
@@ -321,7 +359,17 @@ export class Repository {
     });
     transaction(); return this.getLorebook(lorebookId);
   }
-  deleteLorebook(lorebookId: string): boolean { return this.database.db.delete(lorebooks).where(eq(lorebooks.id, lorebookId)).run().changes > 0; }
+  deleteLorebook(lorebookId: string): boolean {
+    return this.database.sqlite.transaction(() => {
+      const deleted = this.database.db.delete(lorebooks).where(eq(lorebooks.id, lorebookId)).run().changes > 0;
+      if (!deleted) return false;
+      for (const chat of this.listConversations()) {
+        if (chat.lorebookIds.includes(lorebookId)) this.database.db.update(conversations)
+          .set({ lorebookIds: chat.lorebookIds.filter(id => id !== lorebookId), updatedAt: now() }).where(eq(conversations.id, chat.id)).run();
+      }
+      return true;
+    })();
+  }
 
   listConversations(): Conversation[] { return this.database.db.select().from(conversations).orderBy(desc(conversations.updatedAt)).all().map(mapConversation); }
   getConversation(conversationId: string): Conversation | null {
@@ -354,16 +402,28 @@ export class Repository {
   listMessages(conversationId: string): MessageNode[] {
     return this.database.db.select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt)).all().map(mapMessage);
   }
+  listMessageSummaries(conversationId: string): MessageSummary[] {
+    // A byte prefix bounds reads and preserves embedded NULs; coalesce preserves empty text after SQLite slices an empty BLOB.
+    return this.database.db.select({ id: messages.id, parentId: messages.parentId, role: messages.role, speaker: messages.speaker,
+      content: sql<string>`coalesce(CAST(substr(CAST(${messages.content} AS BLOB), 1, 400) AS TEXT), '')`,
+    }).from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt)).all()
+      .map(row => ({ ...row, role: row.role as MessageSummary['role'], content: row.content.slice(0, 100) }));
+  }
   getMessage(messageId: string): MessageNode | null {
     const row = this.database.db.select().from(messages).where(eq(messages.id, messageId)).get(); return row ? mapMessage(row) : null;
   }
-  getActiveBranch(conversationId: string, headMessageId = this.getConversation(conversationId)?.headMessageId): MessageNode[] {
+  getActiveBranch(conversationId: string, headMessageId = this.getConversation(conversationId)?.headMessageId, nodes?: MessageNode[]): MessageNode[] {
     if (!headMessageId) return [];
-    const all = new Map(this.listMessages(conversationId).map((message) => [message.id, message]));
-    const branch: MessageNode[] = []; let current = all.get(headMessageId);
-    const visited = new Set<string>();
-    while (current) { if (visited.has(current.id)) throw new AppError("Cycle in message branch."); visited.add(current.id); branch.push(current); current = current.parentId ? all.get(current.parentId) : undefined; }
-    return branch.reverse();
+    // Follow IDs first so alternate versions' prose and provider state are never decoded.
+    const selected = nodes ?? this.database.db.select().from(messages).where(inArray(messages.id, branchIds(conversationId, headMessageId))).all().map(mapMessage);
+    return orderedBranch(selected, headMessageId);
+  }
+  private activeMessageIds(conversationId: string): Set<string> {
+    const head = this.getConversation(conversationId)?.headMessageId;
+    if (!head) return new Set();
+    const links = this.database.db.select({ id: messages.id, parentId: messages.parentId }).from(messages)
+      .where(inArray(messages.id, branchIds(conversationId, head))).all();
+    return new Set(orderedBranch(links, head).map(message => message.id));
   }
   createMessage(input: Omit<MessageNode, 'id' | 'createdAt' | 'generationInfo'> & { generationInfo?: MessageNode['generationInfo'] }): MessageNode {
     const row = { ...input, generationInfo: input.generationInfo ?? null, id: id(), createdAt: now() };
@@ -403,9 +463,13 @@ export class Repository {
   }
   eventsForTurn(turnId: string, afterId = 0): SessionEvent[] {
     return this.database.db.select().from(sessionEvents)
-      .where(eq(sessionEvents.turnId, turnId))
-      .orderBy(asc(sessionEvents.id)).all()
-      .filter((event) => event.id > afterId) as SessionEvent[];
+      .where(and(eq(sessionEvents.turnId, turnId), gt(sessionEvents.id, afterId)))
+      .orderBy(asc(sessionEvents.id)).all() as SessionEvent[];
+  }
+  hasTerminalEvent(turnId: string): boolean {
+    return Boolean(this.database.db.select({ id: sessionEvents.id }).from(sessionEvents)
+      .where(and(eq(sessionEvents.turnId, turnId), inArray(sessionEvents.type, ['turn.completed', 'turn.partial', 'turn.failed', 'turn.cancelled'])))
+      .limit(1).get());
   }
 
   private traceSafe(value: unknown): unknown {
@@ -432,11 +496,13 @@ export class Repository {
     this.database.db.insert(turnTraces).values(row).run();
     return row as TurnTrace;
   }
-  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'events' | 'thinking' | 'usage' | 'timing' | 'error' | 'completedAt'>>): TurnTrace | null {
+  updateTrace(traceId: string, values: Partial<Pick<TurnTrace, 'status' | 'request' | 'response' | 'tools' | 'events' | 'thinking' | 'usage' | 'timing' | 'error' | 'completedAt'>>): void {
     const patch = { ...values, request: values.request === undefined ? undefined : this.traceSafe(values.request), response: values.response === undefined ? undefined : this.traceSafe(values.response), tools: values.tools === undefined ? undefined : this.traceSafe(values.tools) as unknown[], events: values.events === undefined ? undefined : this.traceSafe(values.events) as TurnTrace['events'] };
     this.database.db.update(turnTraces).set(patch).where(eq(turnTraces.id, traceId)).run();
-    const row = this.database.db.select().from(turnTraces).where(eq(turnTraces.id, traceId)).get();
-    return row ? row as TurnTrace : null;
+  }
+  getTraceMetadata(traceId: string) {
+    return this.database.db.select({ phase: turnTraces.phase, timing: turnTraces.timing, tools: turnTraces.tools })
+      .from(turnTraces).where(eq(turnTraces.id, traceId)).get() ?? null;
   }
   listTraces(turnId: string): TurnTrace[] {
     return this.database.db.select().from(turnTraces).where(eq(turnTraces.turnId, turnId)).orderBy(asc(turnTraces.requestIndex)).all() as TurnTrace[];
@@ -465,22 +531,30 @@ export class Repository {
 
   listMemories(conversationId: string, limit = 20): MemoryEntry[] {
     const active = this.checkpointFilter(conversationId);
-    const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
+    const selected = this.database.db.select({ id: memories.id }).from(memories).where(eq(memories.conversationId, conversationId))
+      .orderBy(desc(sql`rowid`)).all().filter(row => active(row.id)).slice(0, limit).map(row => row.id);
+    if (!selected.length) return [];
+    const heads = this.activeMessageIds(conversationId);
     const edits = new Map<string, string>();
-    for (const event of this.events(conversationId)) {
-      if (event.type !== 'memory.edited') continue;
+    for (const event of this.events(conversationId, ['memory.edited'])) {
       const edit = event.payload as { id: string; head: string | null; content: string };
       if (!edit.head || heads.has(edit.head)) edits.set(edit.id, edit.content);
     }
-    return (this.database.db.select().from(memories).where(eq(memories.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all() as MemoryEntry[]).filter((row) => active(row.id)).slice(0, limit).map(row => edits.has(row.id) ? { ...row, content: edits.get(row.id)! } : row);
+    return (this.database.db.select().from(memories).where(inArray(memories.id, selected)).orderBy(desc(sql`rowid`)).all() as MemoryEntry[])
+      .map(row => edits.has(row.id) ? { ...row, content: edits.get(row.id)! } : row);
   }
   createMemory(input: Omit<MemoryEntry, 'id' | 'createdAt'>): MemoryEntry {
     const row = { ...input, coverage: input.coverage ?? null, id: id(), createdAt: now() }; this.database.db.insert(memories).values(row).run();
     this.addEvent(input.conversationId, null, 'checkpoint', { id: row.id, head: this.getConversation(input.conversationId)?.headMessageId ?? null }); return row;
   }
+  listMemoryStages(conversationId: string) {
+    return projectMemoryStages(this.listMemories(conversationId, Infinity));
+  }
   latestState(conversationId: string): ProtagonistStateSnapshot | null {
     const active = this.checkpointFilter(conversationId);
-    const row = this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().find((item) => active(item.id));
+    // Find the branch's checkpoint before decoding potentially large historical state tables.
+    const selected = this.database.db.select({ id: stateSnapshots.id }).from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().find((item) => active(item.id));
+    const row = selected ? this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.id, selected.id)).get() : null;
     return row ? { ...row, version: row.version as 1 | 2 } : null;
   }
   createState(conversationId: string, storyTurnId: string | null, tables: ProtagonistTables): ProtagonistStateSnapshot {
@@ -491,6 +565,16 @@ export class Repository {
   listStateSnapshots(conversationId: string): ProtagonistStateSnapshot[] {
     const active = this.checkpointFilter(conversationId);
     return this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter((row) => active(row.id)).map((row) => ({ ...row, version: row.version as 1 | 2 }));
+  }
+  listStateCheckpoints(conversationId: string) {
+    const active = this.checkpointFilter(conversationId);
+    return this.database.db.select({ id: stateSnapshots.id, createdAt: stateSnapshots.createdAt }).from(stateSnapshots)
+      .where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter(row => active(row.id));
+  }
+  getStateSnapshot(conversationId: string, snapshotId: string): ProtagonistStateSnapshot | null {
+    if (!this.checkpointActive(conversationId, snapshotId)) return null;
+    const row = this.database.db.select().from(stateSnapshots).where(and(eq(stateSnapshots.conversationId, conversationId), eq(stateSnapshots.id, snapshotId))).get();
+    return row ? { ...row, version: row.version as 1 | 2 } : null;
   }
 
   createProposals(conversationId: string, plan: TurnPlan): void {
@@ -516,17 +600,18 @@ export class Repository {
   }
   getProposal(proposalId: string) { return this.database.db.select().from(proposals).where(eq(proposals.id, proposalId)).get() ?? null; }
   listImports() { return this.database.db.select().from(imports).orderBy(desc(imports.createdAt)).all(); }
-  events(conversationId: string): SessionEvent[] {
-    return this.database.db.select().from(sessionEvents).where(eq(sessionEvents.conversationId, conversationId)).orderBy(asc(sessionEvents.id)).all() as SessionEvent[];
+  events(conversationId: string, types?: string[]): SessionEvent[] {
+    return this.database.db.select().from(sessionEvents)
+      .where(and(eq(sessionEvents.conversationId, conversationId), types ? inArray(sessionEvents.type, types) : undefined))
+      .orderBy(asc(sessionEvents.id)).all() as SessionEvent[];
   }
   checkpointActive(conversationId: string, checkpointId: string): boolean {
     return this.checkpointFilter(conversationId)(checkpointId);
   }
   listPinnedFacts(conversationId: string): PinnedFact[] {
-    const heads = new Set(this.getActiveBranch(conversationId).map(message => message.id));
+    const heads = this.activeMessageIds(conversationId);
     const facts = new Map<string, PinnedFact>();
-    for (const event of this.events(conversationId)) {
-      if (event.type !== 'fact.saved' && event.type !== 'fact.removed') continue;
+    for (const event of this.events(conversationId, ['fact.saved', 'fact.removed'])) {
       const value = event.payload as PinnedFact;
       if (value.head && !heads.has(value.head)) continue;
       if (event.type === 'fact.removed') facts.delete(value.id);
@@ -538,7 +623,7 @@ export class Repository {
     const chat = this.getConversation(conversationId); if (!chat) throw new AppError("Conversation not found.");
     const previous = factId ? this.listPinnedFacts(conversationId).find(fact => fact.id === factId) : null;
     if (factId && !previous) throw new AppError("Fact is not on the current branch.");
-    if (sourceMessageId && !this.getActiveBranch(conversationId).some(message => message.id === sourceMessageId)) throw new AppError("Fact source is not on the current branch.");
+    if (sourceMessageId && !this.activeMessageIds(conversationId).has(sourceMessageId)) throw new AppError("Fact source is not on the current branch.");
     const fact = { id: factId ?? id(), content, sourceMessageId: previous?.sourceMessageId ?? sourceMessageId, head: chat.headMessageId };
     this.addEvent(conversationId, null, 'fact.saved', fact); return fact;
   }
@@ -548,7 +633,7 @@ export class Repository {
   }
   listBookmarks(conversationId: string): StoryBookmark[] {
     const bookmarks = new Map<string, StoryBookmark>();
-    for (const event of this.events(conversationId)) {
+    for (const event of this.events(conversationId, ['bookmark.saved', 'bookmark.removed'])) {
       const value = event.payload as StoryBookmark;
       if (event.type === 'bookmark.saved') bookmarks.set(value.id, value);
       if (event.type === 'bookmark.removed') bookmarks.delete(value.id);
@@ -575,17 +660,16 @@ export class Repository {
     } };
   }
   private checkpointFilter(conversationId: string) {
-    const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));
-    const checkpoints = new Map(this.events(conversationId).filter((event) => event.type === 'checkpoint').map((event) => {
+    const heads = this.activeMessageIds(conversationId);
+    const checkpoints = new Map(this.events(conversationId, ['checkpoint']).map((event) => {
       const value = event.payload as { id: string; head: string | null }; return [value.id, value.head];
     }));
     return (checkpointId: string) => { const head = checkpoints.get(checkpointId); return !head || heads.has(head); };
   }
   currentWorld(conversationId: string): Array<{ summary: string; evidence: string }> {
-    const heads = new Set(this.getActiveBranch(conversationId).map((message) => message.id));
+    const heads = this.activeMessageIds(conversationId);
     const applied = new Map<string, { summary: string; evidence: string }>();
-    for (const event of this.events(conversationId)) {
-      if (event.type !== 'world.applied' && event.type !== 'world.undone') continue;
+    for (const event of this.events(conversationId, ['world.applied', 'world.undone'])) {
       const value = event.payload as { head: string | null; proposalId: string; summary: string; evidence: string };
       if (value.head && !heads.has(value.head)) continue;
       if (event.type === 'world.undone') applied.delete(value.proposalId);
