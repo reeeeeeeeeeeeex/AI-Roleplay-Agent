@@ -344,7 +344,7 @@ export default function App() {
   }
 
   async function showRecordSource(messageId: string) {
-    await closeRecords();
+    await flushContentEdits();
     scrollToMessage(messageId);
   }
 
@@ -1349,9 +1349,10 @@ export default function App() {
         )}
       </main>
 
-      {page === 'chat' && chat && panel && (
+      {page === 'chat' && chat && (
             <Records
               key={chat.id}
+              visible={panel}
               onSource={id => act(showRecordSource(id))}
           chat={chat}
           generationMode={generalSettings.generationMode}

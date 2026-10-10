@@ -23,7 +23,7 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
   });
   useLayoutEffect(() => {
     const element = container.current!;
-    const resize = () => element.querySelectorAll('textarea').forEach(field => { field.style.height = '0px'; field.style.height = `${field.scrollHeight}px`; });
+    const resize = () => element.querySelectorAll('textarea').forEach(field => { if (!field.clientWidth) return; field.style.height = '0px'; field.style.height = `${field.scrollHeight}px`; });
     resize();
     let width = element.clientWidth;
     const observer = new ResizeObserver(() => { if (width !== element.clientWidth) { width = element.clientWidth; resize(); } });

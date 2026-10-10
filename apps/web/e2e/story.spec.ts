@@ -105,12 +105,12 @@ async function openRecordSource(page: Page, request: APIRequestContext, title: s
   return { chat, source: source.message, head: reply.message.id };
 }
 
-test('record source navigation saves the draft and reveals prose on a narrow screen', async ({ page, request }, info) => {
+test('record source navigation saves the draft and keeps the panel on a narrow screen', async ({ page, request }, info) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { chat, source, head } = await openRecordSource(page, request, info.title);
   await page.getByRole('textbox', { name: '固定事实内容', exact: true }).fill('The letter is beneath the northern bridge.');
   await page.getByRole('button', { name: '查看来源', exact: true }).click();
-  await expect(page.locator('.records')).toHaveCount(0);
+  await expect(page.locator('.records')).toBeVisible();
   const target = page.locator(`#message-${source.id}`);
   await expect(target).toBeInViewport();
   await expect.poll(() => target.evaluate(element => Math.abs(element.getBoundingClientRect().top - document.querySelector('.messages')!.getBoundingClientRect().top - 12))).toBeLessThan(2);
@@ -135,8 +135,28 @@ test('record source navigation stays open with the draft when saving fails', asy
   expect((await (await request.get(`/api/conversations/${chat.id}/facts`)).json())[0].content).toBe('The letter is under the bridge.');
   fail = false;
   await page.getByRole('button', { name: '查看来源', exact: true }).click();
-  await expect(page.locator('.records')).toHaveCount(0);
+  await expect(page.locator('.records')).toBeVisible();
   await expect(page.locator(`#message-${source.id}`)).toBeInViewport();
+});
+
+test('closing records preserves the selected tab and reading position', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const state = await (await request.get(`/api/conversations/${chat.id}/state`)).json();
+  state.tables.protagonist_info[0].appearance = 'A long offline description.\n'.repeat(60);
+  await request.post(`/api/conversations/${chat.id}/state`, { data: state });
+  await page.reload();
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  const content = page.locator('.records-content');
+  await expect(page.getByRole('textbox', { name: '主角信息 1 外貌', exact: true })).toHaveValue(state.tables.protagonist_info[0].appearance);
+  await content.evaluate(element => { element.scrollTop = 400; });
+  await expect.poll(() => content.evaluate(element => element.scrollTop)).toBe(400);
+  await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await expect(page.locator('.records')).toBeHidden();
+  await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await expect(page.locator('.records')).toBeVisible();
+  await expect(page.locator('.records > nav .active')).toHaveText('主角状态');
+  await expect.poll(() => content.evaluate(element => element.scrollTop)).toBe(400);
 });
 
 test('record inspector keeps its Agent tab and expanded window when a reply finishes', async ({ page }) => {

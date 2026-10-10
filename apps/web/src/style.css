@@ -1365,6 +1365,7 @@ main {
 
 .records-header-actions { display: flex; align-items: center; gap: 8px; }
 .records-host, .records-layout { display: contents; }
+.records-host[hidden], .records-shade[hidden] { display: none; }
 .records-shade { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; background: #0009; padding: 16px; }
 .records.records-expanded { position: static; width: min(1600px, 96vw); height: 94dvh; max-height: calc(100dvh - 32px); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: 0 24px 80px #0008; background: var(--bg-canvas); }
 .records-expanded > nav { flex-shrink: 0; }

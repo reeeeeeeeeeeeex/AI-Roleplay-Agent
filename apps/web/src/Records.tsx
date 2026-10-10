@@ -1,7 +1,7 @@
 import { stateLabel } from './state-labels.js';
 import { t } from './i18n.js';
 import { proposalLabel } from './ui-labels.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import { type Conversation, type GenerationMode, type PinnedFact, type StateTableName } from '@new-ai-chat/contracts';
 import StateCollectionRow from './StateCollectionRow.js';
@@ -22,6 +22,7 @@ const tableNames: Record<string, string> = {
 };
 export default function Records({
   chat,
+  visible,
   generationMode,
   version,
   activity,
@@ -33,6 +34,7 @@ export default function Records({
   onSource,
 }: {
   chat: Conversation;
+  visible: boolean;
   generationMode: GenerationMode;
   version: number;
   activity: any[];
@@ -55,21 +57,27 @@ export default function Records({
   const [facts, setFacts] = useState<PinnedFact[]>([]);
   const [loadedHead, setLoadedHead] = useState<string | null>();
   const [loading, setLoading] = useState(true);
+  const content = useRef<HTMLDivElement>(null);
+  const scrollTop = useRef(0);
   const ready = loadedHead === chat.headMessageId;
   const selectedMemory = memorySection === 'facts' || memorySection === 'new' || memory.some(entry => entry.id === memorySection)
     ? memorySection : memory.at(-1)?.id ?? 'facts';
 
   useEffect(() => { setExpanded(false); }, [chat.id]);
+  useLayoutEffect(() => {
+    if (visible && content.current) content.current.scrollTop = scrollTop.current;
+  }, [visible]);
   useEffect(() => {
-    if (!expanded) return;
+    if (!visible || !expanded) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); setExpanded(false); }
     };
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [expanded]);
+  }, [visible, expanded]);
 
   useEffect(() => {
+    if (!visible) return;
     let active = true;
     setLoading(true);
     void Promise.all([
@@ -94,7 +102,7 @@ export default function Records({
     return () => {
       active = false;
     };
-  }, [chat.id, chat.headMessageId, version]);
+  }, [chat.id, chat.headMessageId, version, visible]);
 
   async function run(path: string, value: unknown = {}, method = 'POST') {
     try {
@@ -117,7 +125,7 @@ export default function Records({
   }
 
   return (
-    <div className={expanded ? 'records-shade' : 'records-host'} {...backdrop}>
+    <div className={expanded ? 'records-shade' : 'records-host'} hidden={!visible} {...backdrop}>
     <aside className={`records${expanded ? ' records-expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label={expanded ? t("故事记录窗口") : undefined}>
       <header>
         <h2>{t("故事记录")}</h2>
@@ -157,7 +165,7 @@ export default function Records({
             <strong>{tableNames[table] ?? table}</strong><small>{(rows as any[]).length}  {t("条记录")}</small>
           </button>)}
         </nav>}
-      <div className={`records-content${tab === 'planner' ? ' records-agent-content' : ''}`}>
+      <div ref={content} onScroll={event => { if (visible) scrollTop.current = event.currentTarget.scrollTop; }} className={`records-content${tab === 'planner' ? ' records-agent-content' : ''}`}>
         {!ready && loading && <p className="muted" role="status">{t("正在读取记录…")}</p>}
         {ready && tab === 'memory' && (
           <>
@@ -233,7 +241,7 @@ export default function Records({
         )}
 
         <div className="records-agent-view" hidden={tab !== 'planner'}>
-          <AgentTrace key={chat.id} chatId={chat.id} version={version} activeTurnId={activeTurnId} expanded={expanded} visible={tab === 'planner'} onError={onError}>
+          <AgentTrace key={chat.id} chatId={chat.id} version={version} activeTurnId={activeTurnId} expanded={expanded} visible={visible && tab === 'planner'} onError={onError}>
             <h3 className="planner-status">{generationMode === 'plain' ? t("普通写作") : generationMode === 'planner' ? 'Planner → Writer' : t("统一 Writer Agent")}</h3>
             {ready && proposals.map((p) => (
               <article className="proposal" key={p.id}>
