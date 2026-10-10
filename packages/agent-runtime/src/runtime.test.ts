@@ -86,7 +86,7 @@ it.each([
   expect(traces[0]?.events).toContainEqual({ type: 'http.response', data: { status: 200, statusText: '', contentType: 'text/html; charset=utf-8', requestId: null } });
 });
 
-it('sends memories from oldest to newest in the plain request body and preview', async () => {
+it('sends memories from oldest to newest before state in the plain request body and preview', async () => {
   const { runtime, request, network, bodies } = setup([{ text: 'Continue the story.' }]);
   request.dynamicContext = [
     { source: 'memory', title: 'Pinned Fact', content: 'User fact.', priority: 2000, required: true },
@@ -99,7 +99,7 @@ it('sends memories from oldest to newest in the plain request body and preview',
   expect(bodies[0]).toBe(preview.requestBody);
   const body = JSON.parse(bodies[0]!);
   expect(body.messages.slice(1, -1).map((message: { content: string }) => message.content.match(/^\[([^\]]+)\]/u)?.[1]))
-    .toEqual(['Pinned Fact', 'User State', 'Memory: Stage 1', 'Memory: Stage 2', 'Memory: Stage 3']);
+    .toEqual(['Pinned Fact', 'Memory: Stage 1', 'Memory: Stage 2', 'Memory: Stage 3', 'User State']);
 });
 
 it('action choice requests omit writing instructions and history reasoning, and trace malformed results', async () => {

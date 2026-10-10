@@ -1287,7 +1287,9 @@ describe('record truth and logical-turn safeguards', () => {
     repo.updateConnection(connection, connectionInputSchema.parse({ name: 'Offline', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1', model: 'test', apiKey: 'offline', reasoning: 'off' }));
     const markers = Array.from({ length: 7 }, (_, i) => `memory-marker-${i + 1}`);
     repo.createMemory({ conversationId: chat, stage: 9, source: 'imported', storyTurnId: null, content: markers.slice(0, 6).map((m, i) => `[Stage ${i + 1}]: ${m}`).join('\n\n') });
-    repo.createMemory({ conversationId: chat, stage: 10, source: 'generated', storyTurnId: null, content: markers[6]! });
+    const generated = JSON.stringify({ timeSpan: '清晨', location: '书店', chronicle: markers[6], dialogue: ['“明天见。”'], overview: '发现信件' }, null, 2);
+    repo.createMemory({ conversationId: chat, stage: 10, source: 'generated', storyTurnId: null, content: generated });
+    repo.createState(chat, null, blankState());
     const bodies: string[] = [];
     const network = vi.fn<typeof fetch>(async (_url, options) => {
       bodies.push(String(options?.body));
@@ -1302,6 +1304,13 @@ describe('record truth and logical-turn safeguards', () => {
     expect(repo.getTurn(turn.id)?.status).toBe('completed');
     expect(bodies).toHaveLength(1);
     for (const body of [preview.requestBody, preview.webPrompt, bodies[0]!]) expect(body.match(/memory-marker-\d+/g)).toEqual(markers);
+    for (const raw of [preview.requestBody, bodies[0]!]) {
+      const messages = JSON.parse(raw).messages as Array<{ role: string; content: string }>;
+      const memory = messages.filter(message => message.content.startsWith('[Memory:'));
+      expect(memory[0]!.content).toContain(`\n\n${markers[0]}`);
+      expect(memory.at(-1)!.content).toContain(generated);
+      expect(messages.findIndex(message => message.content.startsWith('[User State]'))).toBeGreaterThan(messages.indexOf(memory.at(-1)!));
+    }
     expect(preview.contextReport.items.filter(item => item.source === 'memory' && !item.included)).toEqual([]);
   });
   it('keeps pending world proposals out of truth, applies them, then supports safe undo', async () => {

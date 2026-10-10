@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Context } from '@earendil-works/pi-ai';
 import { PiModelGateway } from './pi-gateway.js';
 import { formatWebPrompt } from './web-prompt.js';
+import { buildWriterContext } from './prompt.js';
+import type { WriterRequest } from './types.js';
 import type { RuntimeConnection } from './types.js';
 
 const context: Context = { systemPrompt: 'Test', messages: [{ role: 'user', content: 'Go', timestamp: 1 }] };
@@ -46,6 +48,33 @@ function response(protocol: RuntimeConnection['protocol'], streaming: boolean): 
 }
 
 describe('gateway transport contract', () => {
+  it.each(['openai-chat-completions', 'anthropic-messages', 'openai-responses'] as const)('%s keeps Memory before changing state at the fetch boundary', async protocol => {
+    const request: WriterRequest = {
+      connection: { id: 'test', protocol, baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'offline', headers: {}, temperature: 1, maxTokens: 1000, reasoning: 'off' },
+      conversationId: 'chat', storyTurnId: 'turn', conversationKind: 'solo', streaming: false,
+      agencyMode: 'none', narrator: { name: 'Narrator', style: '' }, characters: [], persona: null,
+      history: [], stableLore: [], dynamicContext: [
+        { source: 'state', title: 'Current state', content: 'state-before-change', priority: 500 },
+        { source: 'memory', title: 'Stage 2', content: '{"chronicle":"新记忆"}', priority: 100.000002 },
+        { source: 'memory', title: 'Stage 1', content: '旧记忆原文。', priority: 100.000001 },
+      ],
+      latestUserText: 'Continue.', latestUserIsNarration: false, speaker: { kind: 'narrator' }, mode: 'plain', brief: '', outputIndex: 0,
+      source: {} as never, signal: new AbortController().signal,
+    };
+    const sent: string[] = [];
+    const gateway = new PiModelGateway(async (_url, init) => { sent.push(String(init?.body)); return response(protocol, false); });
+    const original = buildWriterContext(request);
+    const options = { streaming: false, replayReasoning: false };
+    const preview = await gateway.captureRequestBody(request.connection, original, options);
+    for await (const _event of gateway.stream(request.connection, original, options)) { /* Capture transport without a paid request. */ }
+    expect(sent).toEqual([preview]);
+    expect(preview.indexOf('旧记忆原文。')).toBeLessThan(preview.indexOf('新记忆'));
+    expect(preview.indexOf('新记忆')).toBeLessThan(preview.indexOf('[User State]'));
+    const changed = buildWriterContext({ ...request, dynamicContext: request.dynamicContext.map(item => item.source === 'state' ? { ...item, content: 'state-after-change' } : item) });
+    const changedBody = await gateway.captureRequestBody(request.connection, changed, options);
+    expect(changedBody.split('state-after-change')[0]).toBe(preview.split('state-before-change')[0]);
+  });
+
   it('context budget excludes internal reports from a plain rewrite request', async () => {
     const connection: RuntimeConnection = { id: 'budget', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'test', apiKey: 'test', headers: {}, temperature: 1, maxTokens: 1000, contextWindow: 8000, reasoning: 'off' };
     const rewritten: Context & { contextReport: unknown } = {

@@ -142,10 +142,12 @@ export function buildDynamicContext(request: BaseAgentRequest): string {
 function orderedDynamicContext(items: RetrievedContext[]): RetrievedContext[] {
   const ordered = [...items].sort((a, b) => b.priority - a.priority);
   const isMemory = (item: RetrievedContext) => item.source === 'memory' && !item.required;
-  // Newer stages retain higher budget priority, but are sent after older memories.
+  // Budget priority is separate from transmission order: keep the growing Memory
+  // prefix before changing state, with stages sent from oldest to newest.
   const memories = ordered.filter(isMemory).sort((a, b) => a.priority - b.priority);
+  const records = [...memories, ...ordered.filter(item => item.source === 'state')];
   let index = 0;
-  return ordered.map(item => isMemory(item) ? memories[index++]! : item);
+  return ordered.map(item => isMemory(item) || item.source === 'state' ? records[index++]! : item);
 }
 
 export function latestUserAnchor(request: BaseAgentRequest): string {
@@ -224,7 +226,7 @@ export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText 
   const keys = new Set(items.map(item => `${item.source}:${item.id}`));
   if (authorNote) items.push({ id: 'author-note', source: 'control', title: '作者注释', titleText: uiText("作者注释"), role: 'system', included: true, reason: '聊天独有 · 前置 System；修改注释会影响后续前缀缓存', reasonText: uiText("聊天独有 · 前置 System；修改注释会影响后续前缀缓存"), estimatedTokens: estimateTokens(String(authorNote.content)) + 32 });
   items.push(...(request.contextReport?.items ?? []).filter(item => !item.included && !keys.has(`${item.source}:${item.id}`)));
-  return { ...request, history, dynamicContext, contextReport: { items } };
+  return { ...request, history, dynamicContext: orderedDynamicContext(dynamicContext), contextReport: { items } };
 }
 
 export function buildWriterContext(input: WriterRequest): { systemPrompt: string; messages: Message[]; contextReport: ContextReport } {
