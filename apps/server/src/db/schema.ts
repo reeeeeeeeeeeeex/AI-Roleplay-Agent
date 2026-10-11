@@ -169,6 +169,11 @@ export const turnTraces = sqliteTable('turn_traces', {
   completedAt: text('completed_at'),
 }, table => [index('turn_traces_conversation_created_idx').on(table.conversationId, table.createdAt, table.requestIndex)]);
 
+export const memoryRebuilds = sqliteTable('memory_rebuilds', {
+  conversationId: text('conversation_id').primaryKey().references(() => conversations.id, { onDelete: 'cascade' }),
+  draft: text('draft', { mode: 'json' }).$type<import('@new-ai-chat/contracts').MemoryRebuildDraft>().notNull(),
+});
+
 export const memories = sqliteTable('memories', {
   id: text('id').primaryKey(),
   conversationId: text('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),

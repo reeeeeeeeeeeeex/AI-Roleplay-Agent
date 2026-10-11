@@ -18,8 +18,9 @@ import { exportStory, importStory, previewStoryArchive } from './services/story-
 import type { ActionChoiceService } from './services/action-choices.js';
 import { forkStory, deleteStoryFrom } from './services/story-branches.js';
 import { projectMemoryStages, splitMemoryStages } from './memory-stages.js';
+import type { MemoryRebuildService } from './services/memory-rebuild.js';
 
-export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService) {
+export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService, memoryRebuild: MemoryRebuildService) {
   const idOf = (request: { params: unknown }) => z.object({ id: z.string().min(1) }).parse(request.params).id;
   function idleAll() { for (const chat of repo.listConversations()) turns.assertIdle(chat.id); }
   const collections: Array<{ path: string; schema: z.ZodType; list: () => unknown; get: (id: string) => unknown; create: (v: any) => unknown; update: (id: string, v: any) => unknown; remove: (id: string) => unknown }> = [
@@ -77,7 +78,14 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       })();
       return saved ?? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') });
     });
-    app.delete(`${base}/:id`, async (req) => { idleAll(); return { deleted: Boolean(collection.remove(idOf(req))) }; });
+    app.delete(`${base}/:id`, async (req) => {
+      idleAll();
+      if (collection.path === 'conversations') {
+        const draft = repo.getMemoryRebuild(idOf(req));
+        if (draft) await memoryRebuild.stop(idOf(req), draft.id);
+      }
+      return { deleted: Boolean(collection.remove(idOf(req))) };
+    });
   }
   app.get('/api/settings/general', async () => repo.getGeneralSettings());
   const choicePosition = z.object({ head: z.string().min(1).nullable() });
@@ -169,6 +177,8 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const { id: chatId, messageId } = z.object({ id: z.string().min(1), messageId: z.string().min(1) }).parse(req.params);
     turns.assertIdle(chatId);
     const { head } = z.object({ head: z.string().nullable() }).parse(req.body);
+    const rebuild = repo.getMemoryRebuild(chatId);
+    if (rebuild) await memoryRebuild.stop(chatId, rebuild.id);
     return deleteStoryFrom(repo, chatId, messageId, head);
   });
   app.post('/api/conversations/:id/history-start', async req => {
@@ -216,6 +226,26 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return row ? repo.getTurn(row.id) : null;
   });
   app.get('/api/conversations/:id/memory', async (req) => repo.listMemoryStages(idOf(req)));
+  const rebuildOptions = z.object({ rounds: z.coerce.number().int().positive(), groups: z.coerce.number().int().positive(), batchRounds: z.coerce.number().int().positive() }).strict();
+  app.get('/api/conversations/:id/memory/rebuild', async req => {
+    const chat = idOf(req);
+    const query = req.query as Record<string, unknown>;
+    const draft = memoryRebuild.get(chat);
+    return { draft, plan: draft ? null : memoryRebuild.plan(chat, Object.keys(query).length ? rebuildOptions.parse(query) : undefined) };
+  });
+  app.post('/api/conversations/:id/memory/rebuild', async (req, reply) => {
+    const input = z.object({ head: z.string().nullable(), options: rebuildOptions }).strict().parse(req.body);
+    return reply.code(202).send(memoryRebuild.start(idOf(req), input.head, input.options));
+  });
+  const rebuildParams = z.object({ id: z.string().min(1), draftId: z.string().min(1) });
+  app.post('/api/conversations/:id/memory/rebuild/:draftId/:action', async req => {
+    const { id, draftId, action } = rebuildParams.extend({ action: z.enum(['resume', 'stop', 'apply']) }).parse(req.params);
+    return action === 'resume' ? memoryRebuild.resume(id, draftId) : action === 'stop' ? memoryRebuild.stop(id, draftId) : memoryRebuild.apply(id, draftId);
+  });
+  app.delete('/api/conversations/:id/memory/rebuild/:draftId', async req => {
+    const { id, draftId } = rebuildParams.parse(req.params);
+    return memoryRebuild.discard(id, draftId);
+  });
   app.patch('/api/conversations/:id/memory/:memoryId', async (req) => {
     const { id: chat, memoryId } = z.object({ id: z.string(), memoryId: z.string() }).parse(req.params);
     turns.assertIdle(chat);

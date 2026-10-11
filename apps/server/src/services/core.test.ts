@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../app.js';
-import { FakeRuntime, PiAgentRuntime, buildWriterContext, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
+import { FakeRuntime, PiAgentRuntime, PiModelGateway, buildWriterContext, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, lorebookInputSchema, blankState, defaultAgencyPrompts, defaultPromptSettings, promptSettingsSchema } from '@new-ai-chat/contracts';
 import { settledStoryIds, applyProposal } from './records.js';
 import { StoryContext } from './context.js';
@@ -28,6 +28,128 @@ beforeEach(async()=>{
   chat=server.repository.createConversation(conversationInputSchema.parse({title:'Test story',kind:'solo',characterId:character})).id;
 });
 afterEach(async()=>{vi.unstubAllGlobals();await server.app.close();rmSync(work,{recursive:true,force:true});});
+
+function rebuildHistory(count: number) {
+  const repo = server.repository;
+  let head = repo.getConversation(chat)!.headMessageId;
+  for (let round = 1; round <= count; round++) {
+    const storyTurnId = round === 1 ? null : `rebuild-round-${round}`;
+    for (const role of (round === 1 ? ['user', 'user', 'assistant'] : round === 2 ? ['user', 'assistant', 'assistant'] : ['user', 'assistant']) as Array<'user' | 'assistant'>) {
+      const message = repo.createMessage({ conversationId: chat, parentId: head, storyTurnId, role,
+        authorKind: role === 'user' ? 'protagonist' : 'narrator', speaker: role === 'user' ? null : { kind: 'narrator' },
+        content: `round-${round}-${role}`, providerState: null, legacyPayload: null });
+      head = message.id; repo.setHead(chat, head);
+    }
+    if (storyTurnId) repo.addEvent(chat, null, 'story.settled', { storyTurnId, head });
+  }
+  return head;
+}
+
+it('Memory rebuild sends cumulative groups and new stages through the real Gateway without old records', async () => {
+  const repo = server.repository;
+  rebuildHistory(6);
+  const pending = repo.createMessage({ conversationId: chat, parentId: repo.getConversation(chat)!.headMessageId, storyTurnId: 'pending', role: 'user', authorKind: 'protagonist', speaker: null, content: 'Unanswered, not a completed round', providerState: null, legacyPayload: null });
+  repo.setHead(chat, pending.id);
+  const messages = repo.getActiveBranch(chat);
+  const old = repo.createMemory({ conversationId: chat, stage: 9, storyTurnId: null, source: 'imported', content: 'OLD_MEMORY_EXCLUDED' });
+  const state = blankState(); state.global_state[0]!.current_location = 'FUTURE_STATE_EXCLUDED'; repo.createState(chat, null, state);
+  const record = repo.createConnection(connectionInputSchema.parse({ name: 'Records', model: 'record-test', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', apiKey: 'offline', maxTokens: 1000 }));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), recordConnectionId: record.id, streaming: false, historyMessageLimit: 1 });
+  repo.setHistoryStart(chat, pending.id);
+  const bodies: any[] = [];
+  const gateway = new PiAgentRuntime(new PiModelGateway(async (_url, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return Response.json({ id: 'offline', object: 'chat.completion', model: 'record-test', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ timeSpan: '', location: '', chronicle: `NEW_STAGE_${bodies.length}`, dialogue: [], overview: 'summary' }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
+  }));
+  vi.spyOn(runtime, 'maintain').mockImplementation((request, instruction) => gateway.maintain(request, instruction));
+  const draft = server.memoryRebuild.start(chat, pending.id, { rounds: 6, groups: 2, batchRounds: 2 });
+  await server.memoryRebuild.idle(chat);
+  const saved = server.memoryRebuild.get(chat)!;
+  expect(saved.error).toBeNull(); expect(saved.status).toBe('ready');
+  expect(saved.plan.batches.map(batch => [batch.from, batch.to, batch.newFrom])).toEqual([[1, 2, 1], [1, 3, 3], [4, 5, 4], [4, 6, 6]]);
+  expect(bodies.map(body => [...new Set(JSON.parse(body.messages[1].content).history.map((item: any) => Number(item.text.match(/round-(\d+)/)[1])))])).toEqual([[1, 2], [1, 2, 3], [4, 5], [4, 5, 6]]);
+  expect(bodies.map(body => JSON.parse(body.messages[1].content).context.length)).toEqual([0, 1, 2, 3]);
+  expect(bodies.every(body => body.model === 'record-test')).toBe(true);
+  expect(JSON.stringify(bodies)).not.toMatch(/OLD_MEMORY_EXCLUDED|FUTURE_STATE_EXCLUDED|Unanswered/);
+  expect(saved.stages.map(stage => stage.coverage.roundCount)).toEqual([2, 1, 2, 1]);
+  expect(saved.stages[0]!.coverage.inferred).toBe(true);
+  expect(repo.getActiveBranch(chat)).toEqual(messages);
+  expect(repo.listMemoryStages(chat).map(memory => memory.id)).toEqual([old.id]);
+  expect(saved.id).toBe(draft.id);
+});
+
+it('Memory rebuild persists successful batches and resumes after failure and restart', async () => {
+  const head = rebuildHistory(4);
+  let calls = 0;
+  const maintain = runtime.maintain.bind(runtime);
+  vi.spyOn(runtime, 'maintain').mockImplementation(async (request, instruction) => {
+    if (++calls === 2) throw new Error('Offline provider failure');
+    return maintain(request, instruction);
+  });
+  const draft = server.memoryRebuild.start(chat, head, { rounds: 4, groups: 2, batchRounds: 1 });
+  await server.memoryRebuild.idle(chat);
+  const failed = server.memoryRebuild.get(chat)!;
+  expect(failed.status).toBe('failed'); expect(failed.stages).toHaveLength(1); expect(calls).toBe(2);
+  // A process may die after persisting the running marker. Startup must pause it.
+  server.repository.saveMemoryRebuild({ ...failed, status: 'running' });
+  const config = server.config;
+  await server.app.close();
+  runtime = new InspectRuntime(); server = await createApp(config, runtime); await server.listen();
+  const resumedRequests: BaseAgentRequest[] = [];
+  const nextMaintain = runtime.maintain.bind(runtime);
+  vi.spyOn(runtime, 'maintain').mockImplementation(async (request, instruction) => { resumedRequests.push(request); return nextMaintain(request, instruction); });
+  expect(server.memoryRebuild.get(chat)?.status).toBe('paused');
+  expect(resumedRequests).toHaveLength(0);
+  server.memoryRebuild.resume(chat, draft.id); await server.memoryRebuild.idle(chat);
+  const ready = server.memoryRebuild.get(chat)!;
+  expect(ready.status).toBe('ready'); expect(ready.stages).toHaveLength(4);
+  expect(ready.stages[0]).toEqual(failed.stages[0]); expect(resumedRequests).toHaveLength(3);
+  expect(resumedRequests[0]!.history.map(message => message.content)).toContain('round-1-user');
+  expect(resumedRequests[0]!.history.at(-1)?.content).toBe('round-2-assistant');
+});
+
+it('Memory rebuild pauses before a model request when the exact batch exceeds its budget', async () => {
+  rebuildHistory(1);
+  const repo = server.repository;
+  const connection = repo.createConnection(connectionInputSchema.parse({ name: 'Small window', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', model: 'small', apiKey: 'offline', maxTokens: 1000, contextWindow: 8192 }));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), recordConnectionId: connection.id });
+  const tail = repo.createMessage({ conversationId: chat, parentId: repo.getConversation(chat)!.headMessageId, storyTurnId: null, role: 'assistant', authorKind: 'narrator', speaker: { kind: 'narrator' }, content: 'Long canonical story. '.repeat(3000), providerState: null, legacyPayload: null });
+  repo.setHead(chat, tail.id);
+  const maintain = vi.spyOn(runtime, 'maintain');
+  server.memoryRebuild.start(chat, tail.id, { rounds: 1, groups: 1, batchRounds: 1 }); await server.memoryRebuild.idle(chat);
+  const draft = server.memoryRebuild.get(chat)!;
+  expect(draft.status).toBe('paused'); expect(draft.errorText?.key).toBe('memoryRebuild.budget');
+  expect(draft.stages).toEqual([]); expect(maintain).not.toHaveBeenCalled();
+});
+
+it('Memory rebuild applies a complete replacement atomically and rejects a changed source', async () => {
+  const repo = server.repository;
+  const head = rebuildHistory(2);
+  const old = repo.createMemory({ conversationId: chat, stage: 5, storyTurnId: null, source: 'imported', content: '[Stage 1]: Earlier\n[Stage 2]: Old' });
+  const draft = server.memoryRebuild.start(chat, head, { rounds: 2, groups: 1, batchRounds: 1 }); await server.memoryRebuild.idle(chat);
+  repo.setHead(chat, repo.getActiveBranch(chat)[0]!.id);
+  expect(() => server.memoryRebuild.apply(chat, draft.id)).toThrow('故事位置');
+  repo.setHead(chat, head);
+  const create = repo.createMemory.bind(repo);
+  const saving = vi.spyOn(repo, 'createMemory').mockImplementationOnce(create).mockImplementationOnce(() => { throw new Error('Offline save failure'); });
+  expect(() => server.memoryRebuild.apply(chat, draft.id)).toThrow('Offline save failure');
+  expect(repo.listMemories(chat)).toHaveLength(1); expect(repo.listMemories(chat)[0]!.id).toBe(old.id);
+  expect(server.memoryRebuild.get(chat)?.stages).toHaveLength(2);
+  saving.mockRestore();
+  const applied = server.memoryRebuild.apply(chat, draft.id);
+  expect([...applied].reverse().map(memory => memory.stage)).toEqual([1, 2]);
+  expect(applied.some(memory => memory.content.includes('Earlier'))).toBe(false);
+  expect(applied.at(-1)!.source).toBe('rebuilt'); expect(repo.getMemoryRebuild(chat)).toBeNull();
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), memoryTurnInterval: 1, stateTurnInterval: 0 });
+  const maintain = vi.spyOn(runtime, 'maintain');
+  await server.records.automatic(chat, new AbortController().signal);
+  expect(maintain).not.toHaveBeenCalled();
+  const next = repo.createMessage({ conversationId: chat, parentId: head, storyTurnId: 'after-rebuild', role: 'assistant', authorKind: 'narrator', speaker: { kind: 'narrator' }, content: 'New round after rebuild.', providerState: null, legacyPayload: null });
+  repo.setHead(chat, next.id); repo.addEvent(chat, null, 'story.settled', { head: next.id, storyTurnId: next.storyTurnId });
+  await server.records.automatic(chat, new AbortController().signal);
+  expect(maintain).toHaveBeenCalledTimes(1);
+  expect(maintain.mock.calls[0]![0].history.map(message => message.id)).toEqual([next.id]);
+});
 
 it('resource references: renaming a legacy story removes only its missing lorebook links', async () => {
   const repo = server.repository;

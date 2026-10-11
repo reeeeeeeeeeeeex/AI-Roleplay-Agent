@@ -1499,6 +1499,15 @@ button.character-card-desc.content-link, button.resource-desc.content-link { dis
 .trace-card > header span { color: var(--text-secondary); text-align: right; }
 .trace-card details { margin-top: 6px; }
 .trace-card pre, .prompt-preview-list pre, .prompt-json pre { white-space: pre-wrap; word-break: break-word; }
+.memory-rebuild-content { padding: 20px; min-width: 0; overflow: auto; overflow-wrap: anywhere; }
+.memory-rebuild .memory-rebuild-content form { padding: 0; }
+.memory-rebuild-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.memory-rebuild-options label { min-width: 0; }
+.memory-rebuild-options input { width: 100%; }
+.memory-rebuild-plan { margin-block: 16px; }
+.memory-rebuild-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-block: 16px; }
+.memory-rebuild progress { width: 100%; }
+.memory-rebuild-content > details { margin-block: 12px; }
 .modal.prompt-preview { width: min(1600px, 96vw); height: 94dvh; max-height: calc(100dvh - 32px); overflow: hidden; }
 .prompt-preview-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; gap: 12px; }
 .prompt-preview-body > p { margin: 0; }

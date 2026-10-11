@@ -66,7 +66,7 @@ export function forkStory(repo: Repository, chatId: string, messageId: string, h
     for (const row of path) db.insert(messages).values({ ...row, id: mapped(row.id), conversationId: copy.id,
       parentId: nullable(row.parentId), storyTurnId: nullable(row.storyTurnId), providerState: null, legacyPayload: null }).run();
     for (const row of records.memory) db.insert(memories).values({ ...row, id: mapped(row.id), conversationId: copy.id,
-      storyTurnId: nullable(row.storyTurnId), coverage: row.coverage ? { startMessageId: mapped(row.coverage.startMessageId), endMessageId: mapped(row.coverage.endMessageId), storyTurnIds: row.coverage.storyTurnIds.map(mapped) } : null }).run();
+      storyTurnId: nullable(row.storyTurnId), coverage: row.coverage ? { ...row.coverage, startMessageId: mapped(row.coverage.startMessageId), endMessageId: mapped(row.coverage.endMessageId), storyTurnIds: row.coverage.storyTurnIds.map(mapped) } : null }).run();
     for (const row of records.states) db.insert(stateSnapshots).values({ ...row, id: mapped(row.id), conversationId: copy.id, storyTurnId: nullable(row.storyTurnId) }).run();
     const eventIds = new Map<number, number>();
     for (const event of records.events) {
@@ -110,6 +110,8 @@ export function deleteStoryFrom(repo: Repository, chatId: string, messageId: str
     const retained = new Set(all.filter(row => !removed.has(row.id)).map(row => row.id));
     const records = recordsAt(repo, chatId, retained);
     const db = repo.database.db, sqlite = repo.database.sqlite;
+    const rebuild = repo.getMemoryRebuild(chatId);
+    if (rebuild && (rebuild.head && removed.has(rebuild.head) || rebuild.plan.rounds.some(round => round.messageIds.some(id => removed.has(id))))) repo.deleteMemoryRebuild(chatId);
     const affectedStoryTurns = new Set(all.filter(row => removed.has(row.id)).map(row => row.storyTurnId).filter(Boolean));
     const removedTurns = new Set(db.select().from(turns).where(eq(turns.conversationId, chatId)).all()
       .filter(row => affectedStoryTurns.has(row.storyTurnId) || [row.progress?.head, row.progress?.parent, row.progress?.oldHead, ...(row.progress?.completedMessageIds ?? [])].some(id => id && removed.has(id)))

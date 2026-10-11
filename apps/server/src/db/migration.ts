@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS imports (
 
 export function migrateDatabase(database: Database.Database): void {
   database.exec(migration);
+  database.exec('CREATE TABLE IF NOT EXISTS memory_rebuilds (conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, draft TEXT NOT NULL)');
   migrateRetiredOptions(database);
   migrateStateFields(database);
   const loreColumns = database.prepare('PRAGMA table_info(lore_entries)').all() as Array<{ name: string }>;

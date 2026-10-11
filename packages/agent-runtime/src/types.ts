@@ -75,6 +75,7 @@ export interface BaseAgentRequest {
   scenario?: string;
   authorNote?: string;
   fixedHistory?: boolean;
+  recordRebuild?: boolean;
   streaming?: boolean;
   agencyMode: ProtagonistAgencyMode;
   agencyPrompts?: GeneralSettings['agencyPrompts'];

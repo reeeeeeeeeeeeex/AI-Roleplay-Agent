@@ -27,6 +27,7 @@ export function projectMemoryStages(memories: MemoryEntry[]): MemoryStage[] {
         stage: part.stage, content: part.content, coverage: null })) : [entry];
       number = parts?.at(-1)?.stage;
     } else {
+      if (entry.source === 'rebuilt') { stages = []; number = 0; }
       if (entry.source === 'manual') stages = [];
       stages.push(number === undefined ? entry : { ...entry, stage: ++number });
     }

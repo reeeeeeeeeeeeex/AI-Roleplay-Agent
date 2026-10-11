@@ -143,7 +143,7 @@ export class TurnService {
     return turn;
   }
 
-  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input'], maintenance?: 'memory' | 'state'): Promise<BaseAgentRequest> {
+  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input'], maintenance?: 'memory' | 'state' | 'memory-rebuild'): Promise<BaseAgentRequest> {
     const chat = this.repository.getConversation(chatId)!;
     const settings = this.repository.getGeneralSettings();
     const connection = this.repository.resolveConnection(maintenance ? settings.recordConnectionId : null);

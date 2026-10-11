@@ -15,14 +15,15 @@ export class StoryContext implements StoryContextSource {
   readonly facts: RetrievedContext[];
   readonly contextReport: ContextReport = { items: [] };
   readonly lore;
-  constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode, options: { maintenance?: 'memory' | 'state' | undefined; choiceHistoryLimit?: number } = {}) {
+  constructor(repository: Repository, conversationId: string, virtualMessage?: MessageNode, options: { maintenance?: 'memory' | 'state' | 'memory-rebuild' | undefined; choiceHistoryLimit?: number } = {}) {
     const chat = repository.getConversation(conversationId)!;
     const settings = repository.getGeneralSettings();
     const branch = [...repository.getActiveBranch(conversationId), ...(virtualMessage ? [virtualMessage] : [])];
-    const start = chat.historyStartMessageId ? repository.getMessage(chat.historyStartMessageId) : null;
+    const rebuilding = options.maintenance === 'memory-rebuild';
+    const start = !rebuilding && chat.historyStartMessageId ? repository.getMessage(chat.historyStartMessageId) : null;
     const startIndex = start ? historyStartIndex(branch, start) : 0;
-    if (chat.historyStartMessageId && (!start || startIndex < 0)) throw new AppError("固定发送起点不在当前分支，请重新选择起点或取消固定起点。");
-    this.fixedHistory = Boolean(start);
+    if (!rebuilding && chat.historyStartMessageId && (!start || startIndex < 0)) throw new AppError("固定发送起点不在当前分支，请重新选择起点或取消固定起点。");
+    this.fixedHistory = rebuilding || Boolean(start);
     const history = branch.slice(startIndex).filter(message => message.role !== 'system');
     const ceiling = options.choiceHistoryLimit ?? (this.fixedHistory ? 0 : settings.historyMessageLimit);
     this.history = ceiling > 0 ? history.slice(-ceiling) : history;
@@ -31,8 +32,8 @@ export class StoryContext implements StoryContextSource {
     const group = chat.groupId ? repository.getGroup(chat.groupId) : null;
     this.cast = repository.getCharactersByIds(group?.memberIds ?? (chat.characterId ? [chat.characterId] : []))
       .map(({ id, name, description, personality, scenario, exampleDialogue, systemPrompt, postHistoryInstructions }) => ({ id, name, description, personality, scenario: group || chat.scenario ? '' : scenario, exampleDialogue, systemPrompt, postHistoryInstructions }));
-    this.state = settings.sendProtagonistState || options.maintenance === 'state' ? repository.latestState(conversationId) : null;
-    const memories = settings.sendMemory || options.maintenance === 'memory' ? repository.listMemoryStages(conversationId) : [];
+    this.state = !rebuilding && (settings.sendProtagonistState || options.maintenance === 'state') ? repository.latestState(conversationId) : null;
+    const memories = !rebuilding && (settings.sendMemory || options.maintenance === 'memory') ? repository.listMemoryStages(conversationId) : [];
     this.memory = memories.reverse().filter((m) => m.content.trim()).map((m) => ({ source: 'memory', title: `Stage ${m.stage}`, content: m.content, priority: 100 + m.stage / 1_000_000, sourceId: m.id, messageIds: m.coverage ? [m.coverage.startMessageId, m.coverage.endMessageId] : [] }));
     this.facts = repository.listPinnedFacts(chat.id).map(fact => ({ source: 'memory', title: 'Pinned Fact', content: fact.content, priority: 2000, required: true, sourceId: fact.id, messageIds: fact.sourceMessageId ? [fact.sourceMessageId] : [] }));
     this.lore = chat.lorebookIds.flatMap((id) => { const book = repository.getLorebook(id); return book?.entries.filter((e) => e.enabled).map((e) => ({ ...e, title: book.name })) ?? []; });

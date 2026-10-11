@@ -10,6 +10,7 @@ import RecordHistory from './RecordHistory.js';
 import AgentTrace from './AgentTrace.js';
 import AutoSaveField from './AutoSaveField.js';
 import MemoryContent, { memoryPreview } from './MemoryContent.js';
+import MemoryRebuild from './MemoryRebuild.js';
 import { flushContentEdits } from './useContentAutosave.js';
 import { useBackdropClose } from './useBackdropClose.js';
 
@@ -55,6 +56,7 @@ export default function Records({
   const [state, setState] = useState<any>({ tables: {} });
   const [proposals, setProposals] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const [facts, setFacts] = useState<PinnedFact[]>([]);
   const [loadedHead, setLoadedHead] = useState<string | null>();
   const [loading, setLoading] = useState(true);
@@ -64,7 +66,7 @@ export default function Records({
   const selectedMemory = memorySection === 'facts' || memorySection === 'new' || memory.some(entry => entry.id === memorySection)
     ? memorySection : memory.at(-1)?.id ?? 'facts';
 
-  useEffect(() => { setExpanded(false); }, [chat.id]);
+  useEffect(() => { setExpanded(false); setRebuilding(false); }, [chat.id]);
   useLayoutEffect(() => {
     if (visible && ready && content.current) content.current.scrollTop = scrollTop.current;
   }, [visible, ready]);
@@ -127,6 +129,7 @@ export default function Records({
 
   return (
     <div className={expanded ? 'records-shade' : 'records-host'} hidden={!visible} {...backdrop}>
+    {visible && rebuilding && <MemoryRebuild key={chat.id} chat={chat} disabled={disabled || busy} onClose={() => setRebuilding(false)} onChanged={onChanged} />}
     <aside className={`records${expanded ? ' records-expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} aria-label={expanded ? t("故事记录窗口") : undefined}>
       <header>
         <h2>{t("故事记录")}</h2>
@@ -187,10 +190,11 @@ export default function Records({
             <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory/generate`)}>
               {busy ? t("更新中…") : t("立即生成 Memory")}
             </button>
+            <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => { void flushContentEdits().then(() => setRebuilding(true)).catch(error => onError(error.message)); }}>{t('手动重建 Memory')}</button>
             {[...memory].reverse().map((entry) => (
               <article className="memory-entry" key={entry.id} hidden={expanded && selectedMemory !== entry.id}>
                 <div className="memory-stage">{t("阶段 {0}", entry.stage)}</div>
-                <small className="muted">{entry.coverage ? t("覆盖 {0} 个完整回合", entry.coverage.storyTurnIds.length) : t("覆盖范围：历史记录未提供")}</small>
+                <small className="muted">{entry.coverage ? t(entry.coverage.inferred ? '覆盖 {0} 轮（含临时识别的旧回合）' : '覆盖 {0} 个完整回合', entry.coverage.roundCount ?? entry.coverage.storyTurnIds.length) : t("覆盖范围：历史记录未提供")}</small>
                 {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>{t("起点")}</button><button onClick={() => onSource(entry.coverage.endMessageId)}>{t("终点")}</button></div>}
                 <MemoryContent key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content ?? ''} label={t("阶段 {0}", entry.stage)} disabled={disabled || busy} onError={onError}
                   onSave={async (content, previous) => {

@@ -12,6 +12,7 @@ import { loadConfig, type AppConfig } from './config.js';
 import { EventBroker } from './services/events.js';
 import { TurnService } from './services/turns.js';
 import { RecordService } from './services/records.js';
+import { MemoryRebuildService } from './services/memory-rebuild.js';
 import { registerRoutes } from './routes.js';
 import { seedDemo } from './demo.js';
 import { InternalPluginHost } from './services/plugins.js';
@@ -32,6 +33,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
   const turns = new TurnService(repository,gateway,events,async (chat,signal,trace) => records.automatic(chat,signal,trace),pluginHost);
   records = new RecordService(repository,gateway,(chat,turn,signal,kind) => turns.request(chat,turn,signal,false,undefined,kind));
   const choices = new ActionChoiceService(repository,gateway,events,turns);
+  const memoryRebuild = new MemoryRebuildService(repository,gateway,turns,records);
   app.addHook('onRequest',async (req,reply) => {
     const host = req.headers.host ?? '';
     const hostname = host.startsWith('[') ? host.slice(0,host.indexOf(']')+1) : host.split(':')[0];
@@ -65,7 +67,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     if (!config.pairingToken || !same(token,config.pairingToken)) return reply.code(401).send({ error: 'Invalid pairing token.', errorText: uiText('Invalid pairing token.') });
     reply.header('Set-Cookie',`pair=${config.pairingToken}; HttpOnly; SameSite=Strict; Path=/`); return {paired:true};
   });
-  registerRoutes(app,repository,turns,records,config,choices);
+  registerRoutes(app,repository,turns,records,config,choices,memoryRebuild);
   app.get('/api/turns/:id/events',async(req,reply)=>{
     const {id}=z.object({id:z.string()}).parse(req.params); if (!repository.getTurn(id)) return reply.code(404).send({ error: 'Turn not found.', errorText: uiText('Turn not found.') });
     const after=Number(req.headers['last-event-id'] ?? (req.query as {after?:string}).after ?? 0);
@@ -100,18 +102,19 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
     app.setNotFoundHandler((req,reply)=> req.url.startsWith('/api/') ? reply.code(404).send({ error: 'Not found.', errorText: uiText('Not found.') }) : reply.sendFile('index.html'));
   }
   // Active SSE requests need their generation cancelled before the server can drain them.
-  app.addHook('preClose',async()=>{await Promise.all([choices.shutdown(),turns.shutdown(),records.shutdown()]);});
+  app.addHook('preClose',async()=>{await Promise.all([choices.shutdown(),turns.shutdown(),records.shutdown(),memoryRebuild.shutdown()]);});
   app.addHook('onClose',async()=>{database.sqlite.close();});
   async function listen() {
     try {
       // A second launcher must acquire the port before changing persisted tasks.
       const address = await app.listen({ host: config.host, port: config.port });
       repository.recoverInterruptedTurns();
+      repository.recoverMemoryRebuilds();
       return address;
     } catch (error) {
       await app.close();
       throw error;
     }
   }
-  return { app,repository,turns,records,choices,events,plugins,config,listen };
+  return { app,repository,turns,records,choices,memoryRebuild,events,plugins,config,listen };
 }

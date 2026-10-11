@@ -4,7 +4,7 @@ import { applyStateOperations, blankState, modelStateColumns, stateColumnLabels,
 import { fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
 import type { Repository } from '../db/repository.js';
 
-const chronicle = z.object({ timeSpan: z.string(), location: z.string(), chronicle: z.string().min(1), dialogue: z.array(z.string()).max(3), overview: z.string().max(40) }).strict();
+export const chronicle = z.object({ timeSpan: z.string(), location: z.string(), chronicle: z.string().min(1), dialogue: z.array(z.string()).max(3), overview: z.string().max(40) }).strict();
 export function parseModelJson(text: string): unknown {
   return JSON.parse(text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, ''));
 }
@@ -15,6 +15,7 @@ export function settledStoryIds(repository: Repository, chat: string): string[] 
 }
 export class RecordService {
   private pending = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  busy(chat: string) { return this.pending.has(chat); }
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime,
     private request: (chat: string, turn: string, signal: AbortSignal, maintenance: 'memory' | 'state') => Promise<BaseAgentRequest>) {}
   async automatic(chat: string, signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
@@ -23,11 +24,17 @@ export class RecordService {
     const memory = this.repository.listMemories(chat, 1)[0];
     const state = this.repository.latestState(chat);
     const since = (marker: string | null | undefined) => marker ? completed.length - (completed.indexOf(marker) + 1) : completed.length;
-    if (config.memoryTurnInterval > 0 && since(memory?.storyTurnId) >= config.memoryTurnInterval) await this.generate(chat, 'memory', signal, trace);
+    const branch = this.repository.getActiveBranch(chat);
+    const boundary = memory?.coverage ? branch.findIndex(message => message.id === memory.coverage!.endMessageId) : -1;
+    const after = boundary >= 0 ? new Set(branch.slice(boundary + 1).map(message => message.storyTurnId)) : null;
+    const covered = boundary >= 0 ? new Set(branch.slice(0, boundary + 1).map(message => message.storyTurnId)) : null;
+    const memorySince = after ? completed.filter(id => after.has(id) && !covered!.has(id)).length : since(memory?.storyTurnId);
+    if (config.memoryTurnInterval > 0 && memorySince >= config.memoryTurnInterval) await this.generate(chat, 'memory', signal, trace);
     if (config.stateTurnInterval > 0 && since(state?.storyTurnId) >= config.stateTurnInterval) await this.generate(chat, 'state', signal, trace);
   }
   async generate(chat: string, kind: 'memory' | 'state', signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
     if (this.pending.has(chat)) throw new AppError("A record update is already running.");
+    if (this.repository.getMemoryRebuild(chat)?.status === 'running') throw new AppError('memoryRebuild.running');
     const controller = new AbortController();
     let finish!: () => void;
     const done = new Promise<void>(resolve => { finish = resolve; });

@@ -13,7 +13,7 @@ import { conversations, messages, memories, stateSnapshots, proposals, sessionEv
 const ref = z.string().min(1).max(200);
 const maybeRef = ref.nullable();
 const text = z.string();
-const coverage = z.object({ startMessageId: ref, endMessageId: ref, storyTurnIds: z.array(ref) }).nullable();
+const coverage = z.object({ startMessageId: ref, endMessageId: ref, storyTurnIds: z.array(ref), roundCount: z.number().int().positive().optional(), inferred: z.boolean().optional() }).nullable();
 const usage = z.object({ input: z.number(), output: z.number(), cacheRead: z.number(), cacheWrite: z.number(), totalTokens: z.number(), reasoning: z.number().optional() })
   .transform(({ reasoning, ...rest }) => reasoning === undefined ? rest : { ...rest, reasoning }).nullable();
 const timing = z.object({ preparedAt: text, sentAt: text.nullable(), headersAt: text.nullable(), firstThinkingAt: text.nullable(), firstTextAt: text.nullable(), completedAt: text.nullable() }).nullable();
@@ -43,7 +43,7 @@ const archiveSchema = z.object({
   lorebooks: z.array(lorebookInputSchema.omit({ legacyPayload: true }).extend({ id: ref })),
   group: groupInputSchema.extend({ id: ref }).nullable(),
   messages: z.array(z.object({ id: ref, parentId: maybeRef, storyTurnId: maybeRef, role: z.enum(['user', 'assistant', 'system']), authorKind: z.enum(['protagonist', 'user_narrator', 'character', 'narrator', 'system']), speaker: speakerRefSchema.nullable(), content: text, generationInfo, createdAt: text })).max(50_000),
-  memories: z.array(z.object({ id: ref, stage: z.number().int(), storyTurnId: maybeRef, content: text, source: z.enum(['generated', 'imported', 'manual']), coverage: coverage.default(null), createdAt: text })),
+  memories: z.array(z.object({ id: ref, stage: z.number().int(), storyTurnId: maybeRef, content: text, source: z.enum(['generated', 'imported', 'manual', 'rebuilt']), coverage: coverage.default(null), createdAt: text })),
   states: z.array(z.object({ id: ref, storyTurnId: maybeRef, tables: z.unknown().transform(normalizeState), createdAt: text })),
   proposals: z.array(z.object({ id: ref, storyTurnId: ref, originHead: maybeRef, kind: z.enum(['world', 'state']), payload: z.unknown(), status: z.enum(['pending', 'applied', 'rejected', 'undone']), committedSnapshot: z.object({ before: z.unknown().transform(normalizeState), afterId: maybeRef, worldEventId: z.number().int().nullable(), head: maybeRef }).nullable(), createdAt: text, updatedAt: text })),
   events: z.array(z.object({ id: z.number().int(), type: text.refine(value => Object.hasOwn(payloads, value), 'Unsupported story event.'), payload: z.unknown(), createdAt: text })),
@@ -166,7 +166,7 @@ export function importStory(repo: Repository, value: unknown, assetDir: string) 
       ids.set(archive.conversation.id, chat.id);
       const db = repo.database.db;
       for (const item of archive.messages) db.insert(messages).values({ ...item, id: mapped(item.id), conversationId: chat.id, parentId: nullable(item.parentId), storyTurnId: nullable(item.storyTurnId), speaker: speaker(item.speaker), providerState: null, legacyPayload: null }).run();
-      for (const item of archive.memories) db.insert(memories).values({ ...item, id: mapped(item.id), conversationId: chat.id, storyTurnId: nullable(item.storyTurnId), coverage: item.coverage ? { startMessageId: mapped(item.coverage.startMessageId), endMessageId: mapped(item.coverage.endMessageId), storyTurnIds: item.coverage.storyTurnIds.map(mapped) } : null }).run();
+      for (const item of archive.memories) db.insert(memories).values({ ...item, id: mapped(item.id), conversationId: chat.id, storyTurnId: nullable(item.storyTurnId), coverage: item.coverage ? { ...item.coverage, startMessageId: mapped(item.coverage.startMessageId), endMessageId: mapped(item.coverage.endMessageId), storyTurnIds: item.coverage.storyTurnIds.map(mapped) } : null }).run();
       for (const item of archive.states) db.insert(stateSnapshots).values({ ...item, id: mapped(item.id), conversationId: chat.id, storyTurnId: nullable(item.storyTurnId), version: 2 }).run();
       const eventIds = new Map<number, number>();
       for (const event of archive.events) {

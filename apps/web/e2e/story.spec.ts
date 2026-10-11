@@ -1179,6 +1179,42 @@ test('structured Memory localizes labels without rewriting content and saves fie
   expect(writes).toBe(1);
 });
 
+test('Memory rebuild keeps an unapplied draft across reopening on a narrow English interface', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const settings = await (await request.get('/api/settings/general')).json();
+  await request.put('/api/settings/general', { data: { ...settings, manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 } });
+  let head = chat.headMessageId;
+  for (let round = 1; round <= 2; round++) {
+    const user = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head, input: { voice: 'protagonist', text: `离线重建输入 ${round}` } } });
+    expect(user.ok()).toBe(true); head = (await user.json()).message.id;
+    const assistant = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head, speaker: { kind: 'narrator' }, text: `离线重建回复 ${round}` } });
+    expect(assistant.ok()).toBe(true); const reply = await assistant.json(); head = reply.message.id;
+    await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/last-turn`)).json()).recordsStatus).toBe('completed');
+  }
+  await request.post(`/api/conversations/${chat.id}/memory`, { data: { content: '原有 Memory 仍生效', head } });
+  await page.reload();
+  await englishInterface(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (!await page.getByRole('button', { name: 'Close records panel' }).isVisible()) await page.getByRole('button', { name: 'Records panel', exact: true }).click();
+  await page.getByRole('button', { name: 'Rebuild Memory', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'Rebuild Memory', exact: true });
+  await expect(dialog.getByRole('spinbutton', { name: 'Latest rounds' })).toHaveValue('2');
+  await dialog.getByRole('spinbutton', { name: 'Rounds added per batch' }).fill('1');
+  await expect(dialog.getByText('2 rounds available. Latest 2 selected, in 1 groups: 2 requests expected.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Start rebuild', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Keep as draft', exact: true })).toBeVisible();
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await dialog.getByRole('button', { name: 'Keep as draft', exact: true }).click();
+  expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('原有 Memory 仍生效');
+  await page.reload();
+  if (!await page.getByRole('button', { name: 'Close records panel' }).isVisible()) await page.getByRole('button', { name: 'Records panel', exact: true }).click();
+  await page.getByRole('button', { name: 'Rebuild Memory', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Rebuild Memory', exact: true });
+  await expect(dialog.getByText('Rebuild complete, not applied · 2 / 2 stages saved')).toBeVisible();
+  expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('原有 Memory 仍生效');
+});
+
 test('record fields save directly on blur and when the drawer closes', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);

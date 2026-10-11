@@ -461,6 +461,35 @@ export interface MemoryCoverage {
   startMessageId: string;
   endMessageId: string;
   storyTurnIds: string[];
+  roundCount?: number | undefined;
+  inferred?: boolean | undefined;
+}
+
+export interface MemoryRebuildOptions { rounds: number; groups: number; batchRounds: number }
+export interface MemoryRebuildRound { messageIds: string[]; storyTurnId: string | null; inferred: boolean }
+export interface MemoryRebuildBatch { group: number; from: number; to: number; newFrom: number }
+export interface MemoryRebuildPlan {
+  options: MemoryRebuildOptions;
+  availableRounds: number;
+  rounds: MemoryRebuildRound[];
+  batches: MemoryRebuildBatch[];
+  groups: Array<{ from: number; to: number }>;
+  start: { id: string; text: string };
+  end: { id: string; text: string };
+  model: string | null;
+}
+export interface MemoryRebuildDraft {
+  id: string;
+  conversationId: string;
+  head: string | null;
+  memoryVersion: string;
+  plan: MemoryRebuildPlan;
+  stages: Array<{ content: string; coverage: MemoryCoverage; storyTurnId: string | null }>;
+  status: 'running' | 'paused' | 'failed' | 'ready' | 'stale';
+  error: string | null;
+  errorText?: import('./diagnostics.js').UiText | undefined;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PinnedFact {
@@ -482,7 +511,7 @@ export interface MemoryEntry {
   stage: number;
   storyTurnId: string | null;
   content: string;
-  source: 'generated' | 'imported' | 'manual';
+  source: 'generated' | 'imported' | 'manual' | 'rebuilt';
   coverage?: MemoryCoverage | null;
   createdAt: string;
 }

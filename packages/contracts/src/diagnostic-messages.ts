@@ -1,5 +1,14 @@
 // Application diagnostics only; never translate provider payloads or model instructions.
 export const diagnosticMessages = {
+  'memoryRebuild.budget': { original: '重建范围超过预算：估算输入 {0}、最大输出 {1}、上下文窗口 {2} token。草稿已保留；请增大窗口、减少最大输出，或重新配置分组。没有自动裁剪。', zh: '重建范围超过预算：估算输入 {0}、最大输出 {1}、上下文窗口 {2} token。草稿已保留；请增大窗口、减少最大输出，或重新配置分组。没有自动裁剪。', en: 'Rebuild exceeds the budget: estimated input {0}, maximum output {1}, context window {2} tokens. Draft preserved. Increase the window, reduce maximum output, or start with different groups. Nothing was truncated.' },
+  'memoryRebuild.running': { original: 'Memory 重建正在运行，请先停止。', zh: 'Memory 重建正在运行，请先停止。', en: 'Memory rebuild is running. Stop it first.' },
+  'memoryRebuild.empty': { original: '没有可重建的完整回合，末尾未回复的 User 不计入。', zh: '没有可重建的完整回合，末尾未回复的 User 不计入。', en: 'No complete rounds to rebuild. Unanswered trailing User messages are excluded.' },
+  'memoryRebuild.range': { original: '请选择有效轮数和组数，当前有 {0} 轮可用。', zh: '请选择有效轮数和组数，当前有 {0} 轮可用。', en: 'Choose valid round and group counts. {0} rounds are available.' },
+  'memoryRebuild.exists': { original: '已有重建草稿，请先继续、应用或丢弃。', zh: '已有重建草稿，请先继续、应用或丢弃。', en: 'A rebuild draft already exists. Resume, apply, or discard it first.' },
+  'memoryRebuild.missing': { original: '重建草稿不存在，请重新打开。', zh: '重建草稿不存在，请重新打开。', en: 'Rebuild draft not found. Reopen the panel.' },
+  'memoryRebuild.stale': { original: '故事位置、来源消息或 Memory 已变化。草稿已保留供查看，不能继续或覆盖，请重新重建。', zh: '故事位置、来源消息或 Memory 已变化。草稿已保留供查看，不能继续或覆盖，请重新重建。', en: 'The story position, source messages, or Memory changed. Draft preserved for review; it cannot be resumed or applied. Start a new rebuild.' },
+  'memoryRebuild.incomplete': { original: '重建尚未全部完成，不能覆盖当前 Memory。', zh: '重建尚未全部完成，不能覆盖当前 Memory。', en: 'Finish the rebuild before replacing the current Memory.' },
+  'memoryRebuild.format': { original: '模型未返回有效的结构化 Memory。本批未保存，已完成阶段保留，可手动继续。', zh: '模型未返回有效的结构化 Memory。本批未保存，已完成阶段保留，可手动继续。', en: 'The model did not return valid structured Memory. This batch was not saved; completed stages remain. Resume manually to retry.' },
   '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。': { original: '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。', zh: '阶段正文不能包含阶段标题，请直接编辑该阶段的内容。', en: 'Edit the stage content without adding stage headers.' },
   '{0} was not called with a valid plan.': { original: '{0} was not called with a valid plan.', zh: '{0} 未返回有效计划。', en: '{0} was not called with a valid plan.' },
   'Generation failed.': { original: 'Generation failed.', zh: '生成失败。', en: 'Generation failed.' },

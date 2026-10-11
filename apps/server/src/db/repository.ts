@@ -11,6 +11,7 @@ import type {
   Group,
   Lorebook,
   MemoryEntry,
+  MemoryRebuildDraft,
   PinnedFact,
   StoryBookmark,
   StoryNavigation,
@@ -35,6 +36,7 @@ import {
   lorebooks,
   loreEntries,
   memories,
+  memoryRebuilds,
   messages,
   personas,
   proposals,
@@ -418,7 +420,7 @@ export class Repository {
     const selected = nodes ?? this.database.db.select().from(messages).where(inArray(messages.id, branchIds(conversationId, headMessageId))).all().map(mapMessage);
     return orderedBranch(selected, headMessageId);
   }
-  private activeMessageIds(conversationId: string): Set<string> {
+  activeMessageIds(conversationId: string): Set<string> {
     const head = this.getConversation(conversationId)?.headMessageId;
     if (!head) return new Set();
     const links = this.database.db.select({ id: messages.id, parentId: messages.parentId }).from(messages)
@@ -529,6 +531,21 @@ export class Repository {
     this.database.sqlite.prepare(`DELETE FROM turn_traces WHERE conversation_id = ? AND turn_id IN (${remove.map(() => '?').join(',')})`).run(conversationId, ...remove);
   }
 
+  getMemoryRebuild(conversationId: string): MemoryRebuildDraft | null {
+    return this.database.db.select().from(memoryRebuilds).where(eq(memoryRebuilds.conversationId, conversationId)).get()?.draft ?? null;
+  }
+  saveMemoryRebuild(draft: MemoryRebuildDraft): void {
+    this.database.db.insert(memoryRebuilds).values({ conversationId: draft.conversationId, draft })
+      .onConflictDoUpdate({ target: memoryRebuilds.conversationId, set: { draft } }).run();
+  }
+  deleteMemoryRebuild(conversationId: string): void {
+    this.database.db.delete(memoryRebuilds).where(eq(memoryRebuilds.conversationId, conversationId)).run();
+  }
+  recoverMemoryRebuilds(): void {
+    for (const { draft } of this.database.db.select().from(memoryRebuilds).all()) {
+      if (draft.status === 'running') this.saveMemoryRebuild({ ...draft, status: 'paused' });
+    }
+  }
   listMemories(conversationId: string, limit = 20): MemoryEntry[] {
     const active = this.checkpointFilter(conversationId);
     const selected = this.database.db.select({ id: memories.id }).from(memories).where(eq(memories.conversationId, conversationId))
