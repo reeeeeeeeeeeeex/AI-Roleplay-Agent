@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createApp } from '../app.js';
 import { FakeRuntime, PiAgentRuntime, PiModelGateway, buildWriterContext, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, lorebookInputSchema, blankState, defaultAgencyPrompts, defaultPromptSettings, promptSettingsSchema } from '@new-ai-chat/contracts';
-import { settledStoryIds, applyProposal } from './records.js';
+import { settledStoryIds, applyProposal, memoryRecordInstruction } from './records.js';
 import { StoryContext } from './context.js';
 import { Repository } from '../db/repository.js';
 import { createTraceSink } from './trace.js';
@@ -97,6 +97,19 @@ it('Memory rebuild keeps failed attempts in Trace and continues request numberin
   expect(repo.listTraces(draft.id)[0]!.error).toContain('结构化 Memory');
   server.memoryRebuild.resume(chat, draft.id); await server.memoryRebuild.idle(chat);
   expect(repo.listTraces(draft.id).map(trace => [trace.requestIndex, trace.status])).toEqual([[0, 'failed'], [1, 'completed']]);
+});
+
+it('Memory generation and rebuild both request speaker-labelled important dialogue', async () => {
+  const head = rebuildHistory(2);
+  const maintain = vi.spyOn(runtime, 'maintain');
+  await server.records.generate(chat, 'memory', new AbortController().signal);
+  server.memoryRebuild.start(chat, head, { rounds: 2, groups: 1, batchRounds: 2 }); await server.memoryRebuild.idle(chat);
+  expect(maintain).toHaveBeenCalledTimes(2);
+  for (const [, instruction] of maintain.mock.calls) {
+    expect(instruction).toContain(memoryRecordInstruction);
+    expect(instruction).toContain('角色名：“原话”');
+    expect(instruction).toContain('omit that quote instead of guessing');
+  }
 });
 
 it('Memory rebuild persists successful batches and resumes after failure and restart', async () => {

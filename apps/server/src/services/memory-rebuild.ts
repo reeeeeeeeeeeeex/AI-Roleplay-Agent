@@ -3,7 +3,7 @@ import { AppError, type MemoryRebuildDraft, type MemoryRebuildOptions, type Memo
 import { assertRecordBudget, type AgentRuntime } from '@new-ai-chat/agent-runtime';
 import type { Repository } from '../db/repository.js';
 import type { TurnService } from './turns.js';
-import { chronicle, parseModelJson, type RecordService } from './records.js';
+import { chronicle, memoryRecordInstruction, parseModelJson, type RecordService } from './records.js';
 import { createTraceSink } from './trace.js';
 import type { EventBroker } from './events.js';
 
@@ -152,7 +152,7 @@ export class MemoryRebuildService {
         const added = draft.plan.rounds.slice(batch.newFrom - 1, batch.to);
         const addedIds = added.flatMap(round => round.messageIds);
         const offset = history.findIndex(message => message.id === addedIds[0]);
-        const instruction = `Return only a JSON object with timeSpan, location, chronicle (objective chronology, target 400 Chinese characters), dialogue (up to 3 strings), overview (at most 40 characters). Rebuild stage ${index + 1}. The history array contains context for this group; summarize ONLY the newly covered messages at array indexes ${offset} through ${history.length - 1} (zero-based), rounds ${batch.newFrom}–${batch.to}. Earlier messages and all previous stages are context only; do not repeat or rewrite their summaries. Background, identities and pinned facts are not evidence that an event happened. Preserve the language of the story. Do not invent events. No AM codes.`;
+        const instruction = `${memoryRecordInstruction} Rebuild stage ${index + 1}. The history array contains context for this group; summarize ONLY the newly covered messages at array indexes ${offset} through ${history.length - 1} (zero-based), rounds ${batch.newFrom}–${batch.to}. Earlier messages and all previous stages are context only; do not repeat or rewrite their summaries. Background, identities and pinned facts are not evidence that an event happened.`;
         const request = { ...base, trace, recordRebuild: true, history, fixedHistory: true, latestUserText: '',
           signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
           dynamicContext: [...base.dynamicContext.filter(item => item.required), ...draft.stages.map((stage, i) => ({ source: 'memory' as const, title: `Stage ${i + 1}`, content: stage.content, priority: 100 + i / 1_000_000 }))] };

@@ -5,6 +5,7 @@ import { fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-ch
 import type { Repository } from '../db/repository.js';
 
 export const chronicle = z.object({ timeSpan: z.string(), location: z.string(), chronicle: z.string().min(1), dialogue: z.array(z.string()).max(3), overview: z.string().max(40) }).strict();
+export const memoryRecordInstruction = 'Return only a JSON object with timeSpan, location, chronicle (objective chronology, target 400 Chinese characters), dialogue (up to 3 strings), overview (at most 40 characters). Each dialogue string must include the actual speaker\'s name and the original quote, formatted as 角色名：“原话” (for example 林：“明天见。”). Preserve the spoken words. Identify the speaker from story evidence and known identities; do not output bare quotes or substitute User/Assistant for a known name. If the speaker cannot be determined, omit that quote instead of guessing. Preserve the language of the story. No AM codes. Do not invent events.';
 export function parseModelJson(text: string): unknown {
   return JSON.parse(text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, ''));
 }
@@ -51,7 +52,7 @@ export class RecordService {
       const request = await this.request(chat, storyTurnId ?? 'manual', signal, kind);
       if (trace) request.trace = trace;
       const instruction = kind === 'memory'
-        ? 'Return only a JSON object with timeSpan, location, chronicle (objective chronology, target 400 Chinese characters), dialogue (up to 3 strings), overview (at most 40 characters). Append a new stage, preserve earlier memory, and avoid repeating details already summarized. No AM codes. Do not invent events.'
+        ? `${memoryRecordInstruction} Append a new stage, preserve earlier memory, and avoid repeating details already summarized.`
         : `Return only a JSON array of state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Never use SQL. Allowed fields: ${JSON.stringify(modelStateColumns)}. Field labels: ${JSON.stringify(stateColumnLabels)}. Past Experience Before Story / 故事前经历 is user-authored context and must never be changed. Occupation / 身份与地位 includes identity and social standing; Current Outfit / 当前穿搭 is current clothing, while appearance is stable physical appearance. Past Experience in Story / 故事中经历 starts with this chat. global_state/protagonist_info are update-only row 1. Do not delete important_characters. Maintain current facts and compact long-term conclusions; chronology belongs in Memory. Required insert identities: name+gender_age, skill_name+skill_type, item_name+quantity+category, quest_name+quest_type. Inventory quantity is a positive integer; ${stateDeathInstruction} Empty array if no evidenced change.`;
       let coverage: MemoryCoverage | null = null;
       if (kind === 'memory') {
