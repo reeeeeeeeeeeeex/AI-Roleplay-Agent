@@ -549,7 +549,7 @@ export class PiAgentRuntime implements AgentRuntime {
   async maintain(request: BaseAgentRequest, instruction: string): Promise<string> {
     if (request.recordRebuild) assertRecordBudget(request, instruction);
     else request = fitRequest(request, instruction);
-    return this.completeJson(request, buildRecordContext(request, instruction), 'records', text => text);
+    return this.completeJson(request, buildRecordContext(request, instruction), request.recordRebuild ? 'memory-rebuild' : 'records', text => text);
   }
 
   async choices(input: BaseAgentRequest, count: number, instruction: string): Promise<string[]> {
@@ -569,7 +569,7 @@ export class PiAgentRuntime implements AgentRuntime {
     });
   }
 
-  private async completeJson<T>(request: BaseAgentRequest, context: Context, phase: 'records' | 'choices', validate: (text: string) => T): Promise<T> {
+  private async completeJson<T>(request: BaseAgentRequest, context: Context, phase: 'records' | 'memory-rebuild' | 'choices', validate: (text: string) => T): Promise<T> {
     const traceId = request.trace?.start(phase, request.connection.model, undefined, request.contextReport) ?? null;
     const timing: RequestTiming = { preparedAt: new Date().toISOString(), sentAt: null, headersAt: null, firstThinkingAt: null, firstTextAt: null, completedAt: null };
     let final: AssistantMessage | null = null;

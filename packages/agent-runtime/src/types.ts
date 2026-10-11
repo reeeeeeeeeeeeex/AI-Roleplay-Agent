@@ -97,7 +97,7 @@ export interface BaseAgentRequest {
   trace?: RuntimeTraceSink;
 }
 
-export type TracePhase = 'selection' | 'planning' | 'writing' | 'records' | 'plain' | 'choices';
+export type TracePhase = 'selection' | 'planning' | 'writing' | 'records' | 'memory-rebuild' | 'plain' | 'choices';
 export interface RuntimeTraceSink {
   event?(traceId: string, type: string, data: unknown): void;
   start(phase: TracePhase, model: string, speaker?: SpeakerRef, contextReport?: ContextReport): string;

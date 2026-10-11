@@ -1,6 +1,7 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
   '手动重建 Memory': 'Rebuild Memory',
+  'Memory 重建': 'Memory rebuild',
   '停止': 'Stop',
   '重建中': 'Rebuilding',
   '已暂停': 'Paused',

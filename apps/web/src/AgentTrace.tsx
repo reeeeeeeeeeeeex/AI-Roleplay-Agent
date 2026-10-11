@@ -6,7 +6,7 @@ import { copyText } from './clipboard.js';
 import ContextReport from './ContextReport.js';
 import './trace.css';
 
-const phases = { get selection() { return t("选择发言者"); }, planning: 'Planner', writing: 'Writer', get records() { return t("记录更新"); }, get plain() { return t("普通写作"); }, get choices() { return t("行动选项"); } };
+const phases = { get selection() { return t("选择发言者"); }, planning: 'Planner', writing: 'Writer', get records() { return t("记录更新"); }, get 'memory-rebuild'() { return t('Memory 重建'); }, get plain() { return t("普通写作"); }, get choices() { return t("行动选项"); } };
 const statuses = { get running() { return t("运行中"); }, get completed() { return t("完成"); }, get failed() { return t("失败"); }, get cancelled() { return t("已取消"); } };
 const format = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 const duration = (from?: string | null, to?: string | null) => from && to ? `${formatNumber((Date.parse(to) - Date.parse(from)) / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} s` : '—';
@@ -121,6 +121,7 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError, exp
   const [copied, setCopied] = useState(false);
   const selectedId = follow ? summaries[0]?.id : selected;
   const selectedStatus = summaries.find(item => item.id === selectedId)?.status;
+  const hasRunningRequest = summaries.some(item => item.status === 'running');
 
   useEffect(() => { setSummaries([]); setTrace(null); setSelected(null); setFollow(true); }, [chatId]);
   useEffect(() => {
@@ -134,9 +135,9 @@ export default function AgentTrace({ chatId, version, activeTurnId, onError, exp
       finally { pending = false; }
     };
     void load();
-    const timer = activeTurnId ? setInterval(() => void load(), 750) : undefined;
+    const timer = activeTurnId || hasRunningRequest ? setInterval(() => void load(), 750) : undefined;
     return () => { active = false; clearInterval(timer); };
-  }, [chatId, version, activeTurnId, visible]);
+  }, [chatId, version, activeTurnId, hasRunningRequest, visible]);
 
   useEffect(() => {
     if (!visible || !selectedId) return;

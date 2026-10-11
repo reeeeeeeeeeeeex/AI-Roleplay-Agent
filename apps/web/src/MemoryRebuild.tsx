@@ -73,10 +73,12 @@ export default function MemoryRebuild({ chat, disabled, onClose, onChanged }: {
         if (current.headMessageId !== chat.headMessageId) { await load(options); throw new Error(t('故事位置已变化，请重新打开并核对重建范围。')); }
         const saved = await api<MemoryRebuildDraft>(endpoint, 'POST', { options, head: current.headMessageId });
         setResult({ draft: saved, plan: null });
+        onChanged();
       } else if (draft) {
         await api(`${endpoint}/${draft.id}${action === 'discard' ? '' : `/${action}`}`, action === 'discard' ? 'DELETE' : 'POST', {});
         if (action === 'apply') { onChanged(); onClose(); return; }
         await load();
+        onChanged();
       }
     } catch (e) { if (mounted.current) setError((e as Error).message); }
     finally { if (mounted.current) setBusy(false); }

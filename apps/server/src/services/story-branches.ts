@@ -116,6 +116,10 @@ export function deleteStoryFrom(repo: Repository, chatId: string, messageId: str
     const removedTurns = new Set(db.select().from(turns).where(eq(turns.conversationId, chatId)).all()
       .filter(row => affectedStoryTurns.has(row.storyTurnId) || [row.progress?.head, row.progress?.parent, row.progress?.oldHead, ...(row.progress?.completedMessageIds ?? [])].some(id => id && removed.has(id)))
       .map(row => row.id));
+    for (const event of repo.events(chatId, ['memory.rebuild.started'])) {
+      const value = event.payload as { head: string | null };
+      if (event.turnId && value.head && removed.has(value.head)) removedTurns.add(event.turnId);
+    }
     const retainedEvents = new Set(records.events.map(row => row.id));
     const removeEvent = sqlite.prepare('DELETE FROM session_events WHERE conversation_id = ? AND id = ?');
     const detachEvent = sqlite.prepare('UPDATE session_events SET turn_id = NULL WHERE conversation_id = ? AND id = ?');

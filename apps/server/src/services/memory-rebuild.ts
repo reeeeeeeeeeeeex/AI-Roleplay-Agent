@@ -4,6 +4,8 @@ import { assertRecordBudget, type AgentRuntime } from '@new-ai-chat/agent-runtim
 import type { Repository } from '../db/repository.js';
 import type { TurnService } from './turns.js';
 import { chronicle, parseModelJson, type RecordService } from './records.js';
+import { createTraceSink } from './trace.js';
+import type { EventBroker } from './events.js';
 
 // Reliable contiguous turns retain all outputs. Only unmarked/inconsistent legacy
 // spans use the user-confirmed fallback; no message or settlement is rewritten.
@@ -42,7 +44,7 @@ export function rebuildRounds(messages: MessageNode[], settled: Set<string>): Me
 
 export class MemoryRebuildService {
   private active = new Map<string, { controller: AbortController; done: Promise<void> }>();
-  constructor(private repo: Repository, private runtime: AgentRuntime, private turns: TurnService, private records: RecordService) {}
+  constructor(private repo: Repository, private runtime: AgentRuntime, private turns: TurnService, private records: RecordService, private events: EventBroker) {}
 
   private version(chat: string): string {
     return JSON.stringify([this.repo.listMemories(chat, 1)[0]?.id ?? null, this.repo.events(chat, ['memory.edited']).at(-1)?.id ?? null]);
@@ -131,10 +133,17 @@ export class MemoryRebuildService {
   }
   private async run(draft: MemoryRebuildDraft, signal: AbortSignal): Promise<void> {
     const chat = draft.conversationId;
+    const previous = this.repo.listTraces(draft.id);
+    const trace = createTraceSink(this.repo, this.events, { id: draft.id, conversationId: chat }, previous.reduce((next, item) => Math.max(next, item.requestIndex + 1), 0));
+    let currentTrace: string | undefined;
+    const startTrace = trace.start;
+    trace.start = (...args) => { currentTrace = startTrace(...args); return currentTrace; };
     try {
+      this.events.publish(chat, draft.id, 'memory.rebuild.started', { head: draft.head });
       const base = await this.turns.request(chat, draft.id, signal, true, undefined, 'memory-rebuild');
       const messages = new Map(this.repo.getActiveBranch(chat).map(message => [message.id, message]));
       for (let index = draft.stages.length; index < draft.plan.batches.length; index++) {
+        currentTrace = undefined;
         signal.throwIfAborted();
         this.require(chat, draft.id);
         if (!this.valid(draft)) throw new AppError('memoryRebuild.stale');
@@ -144,7 +153,7 @@ export class MemoryRebuildService {
         const addedIds = added.flatMap(round => round.messageIds);
         const offset = history.findIndex(message => message.id === addedIds[0]);
         const instruction = `Return only a JSON object with timeSpan, location, chronicle (objective chronology, target 400 Chinese characters), dialogue (up to 3 strings), overview (at most 40 characters). Rebuild stage ${index + 1}. The history array contains context for this group; summarize ONLY the newly covered messages at array indexes ${offset} through ${history.length - 1} (zero-based), rounds ${batch.newFrom}–${batch.to}. Earlier messages and all previous stages are context only; do not repeat or rewrite their summaries. Background, identities and pinned facts are not evidence that an event happened. Preserve the language of the story. Do not invent events. No AM codes.`;
-        const request = { ...base, recordRebuild: true, history, fixedHistory: true, latestUserText: '',
+        const request = { ...base, trace, recordRebuild: true, history, fixedHistory: true, latestUserText: '',
           signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
           dynamicContext: [...base.dynamicContext.filter(item => item.required), ...draft.stages.map((stage, i) => ({ source: 'memory' as const, title: `Stage ${i + 1}`, content: stage.content, priority: 100 + i / 1_000_000 }))] };
         assertRecordBudget(request, instruction);
@@ -163,13 +172,14 @@ export class MemoryRebuildService {
         })();
       }
     } catch (error) {
+      if (currentTrace) this.repo.updateTrace(currentTrace, { status: signal.aborted ? 'cancelled' : 'failed', error: signal.aborted ? null : this.repo.redactError(error), completedAt: new Date().toISOString() });
       if (this.repo.getMemoryRebuild(chat)?.id !== draft.id) return;
       const stale = !this.valid(draft);
       const failure = stale ? new AppError('memoryRebuild.stale') : error;
       const paused = signal.aborted || (failure instanceof AppError && failure.uiText.key === 'memoryRebuild.budget');
       this.repo.saveMemoryRebuild({ ...draft, status: stale ? 'stale' : paused ? 'paused' : 'failed',
         error: signal.aborted && !stale ? null : this.repo.redactError(failure), errorText: signal.aborted && !stale ? undefined : this.repo.describeError(failure), updatedAt: new Date().toISOString() });
-    }
+    } finally { trace.flush(); }
   }
   async stop(chat: string, id: string) {
     this.require(chat, id);

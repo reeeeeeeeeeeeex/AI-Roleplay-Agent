@@ -76,6 +76,27 @@ it('Memory rebuild sends cumulative groups and new stages through the real Gatew
   expect(repo.getActiveBranch(chat)).toEqual(messages);
   expect(repo.listMemoryStages(chat).map(memory => memory.id)).toEqual([old.id]);
   expect(saved.id).toBe(draft.id);
+  const traces = repo.listTraces(draft.id);
+  expect(traces.map(trace => [trace.phase, trace.requestIndex, trace.status])).toEqual([0, 1, 2, 3].map(index => ['memory-rebuild', index, 'completed']));
+  expect(traces.every(trace => trace.request && trace.response && trace.events.some(event => event.type === 'message_end'))).toBe(true);
+  const listed = await server.app.inject({ url: `/api/conversations/${chat}/traces?view=summary` });
+  expect(listed.json().filter((trace: any) => trace.turnId === draft.id)).toHaveLength(4);
+});
+
+it('Memory rebuild keeps failed attempts in Trace and continues request numbering on resume', async () => {
+  const head = rebuildHistory(1);
+  const repo = server.repository;
+  const record = repo.createConnection(connectionInputSchema.parse({ name: 'Records', model: 'record-test', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', apiKey: 'offline', maxTokens: 1000 }));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), recordConnectionId: record.id, streaming: false });
+  let calls = 0;
+  const gateway = new PiAgentRuntime(new PiModelGateway(async () => Response.json({ id: 'offline', object: 'chat.completion', model: 'record-test', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: ++calls === 1 ? 'invalid JSON' : JSON.stringify({ timeSpan: '', location: '', chronicle: 'Valid stage', dialogue: [], overview: '' }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } })));
+  vi.spyOn(runtime, 'maintain').mockImplementation((request, instruction) => gateway.maintain(request, instruction));
+  const draft = server.memoryRebuild.start(chat, head, { rounds: 1, groups: 1, batchRounds: 1 });
+  await server.memoryRebuild.idle(chat);
+  expect(repo.listTraces(draft.id)[0]).toMatchObject({ status: 'failed', requestIndex: 0 });
+  expect(repo.listTraces(draft.id)[0]!.error).toContain('结构化 Memory');
+  server.memoryRebuild.resume(chat, draft.id); await server.memoryRebuild.idle(chat);
+  expect(repo.listTraces(draft.id).map(trace => [trace.requestIndex, trace.status])).toEqual([[0, 'failed'], [1, 'completed']]);
 });
 
 it('Memory rebuild persists successful batches and resumes after failure and restart', async () => {
