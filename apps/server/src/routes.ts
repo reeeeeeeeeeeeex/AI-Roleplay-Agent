@@ -238,6 +238,11 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     return reply.code(202).send(memoryRebuild.start(idOf(req), input.head, input.options));
   });
   const rebuildParams = z.object({ id: z.string().min(1), draftId: z.string().min(1) });
+  app.patch('/api/conversations/:id/memory/rebuild/:draftId/stages/:index', async req => {
+    const { id, draftId, index } = rebuildParams.extend({ index: z.coerce.number().int().nonnegative() }).parse(req.params);
+    const input = z.object({ content: z.string().max(200_000), previous: z.string().max(200_000), head: z.string().nullable() }).strict().parse(req.body);
+    return memoryRebuild.editStage(id, draftId, index, input);
+  });
   app.post('/api/conversations/:id/memory/rebuild/:draftId/:action', async req => {
     const { id, draftId, action } = rebuildParams.extend({ action: z.enum(['resume', 'stop', 'apply']) }).parse(req.params);
     return action === 'resume' ? memoryRebuild.resume(id, draftId) : action === 'stop' ? memoryRebuild.stop(id, draftId) : memoryRebuild.apply(id, draftId);

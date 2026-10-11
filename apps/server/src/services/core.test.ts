@@ -112,7 +112,7 @@ it('Memory generation and rebuild both request speaker-labelled important dialog
   }
 });
 
-it('Memory rebuild persists successful batches and resumes after failure and restart', async () => {
+it('Memory rebuild persists edited batches and resumes after failure and restart', async () => {
   const head = rebuildHistory(4);
   let calls = 0;
   const maintain = runtime.maintain.bind(runtime);
@@ -124,8 +124,12 @@ it('Memory rebuild persists successful batches and resumes after failure and res
   await server.memoryRebuild.idle(chat);
   const failed = server.memoryRebuild.get(chat)!;
   expect(failed.status).toBe('failed'); expect(failed.stages).toHaveLength(1); expect(calls).toBe(2);
+  const edited = JSON.stringify({ ...JSON.parse(failed.stages[0]!.content), chronicle: 'Manually edited previous stage' }, null, 2);
+  const saved = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/rebuild/${draft.id}/stages/0`, payload: { content: edited, previous: failed.stages[0]!.content, head } });
+  expect(saved.statusCode).toBe(200);
+  const updated = server.memoryRebuild.get(chat)!;
   // A process may die after persisting the running marker. Startup must pause it.
-  server.repository.saveMemoryRebuild({ ...failed, status: 'running' });
+  server.repository.saveMemoryRebuild({ ...updated, status: 'running' });
   const config = server.config;
   await server.app.close();
   runtime = new InspectRuntime(); server = await createApp(config, runtime); await server.listen();
@@ -137,9 +141,34 @@ it('Memory rebuild persists successful batches and resumes after failure and res
   server.memoryRebuild.resume(chat, draft.id); await server.memoryRebuild.idle(chat);
   const ready = server.memoryRebuild.get(chat)!;
   expect(ready.status).toBe('ready'); expect(ready.stages).toHaveLength(4);
-  expect(ready.stages[0]).toEqual(failed.stages[0]); expect(resumedRequests).toHaveLength(3);
+  expect(ready.stages[0]).toEqual(updated.stages[0]); expect(resumedRequests).toHaveLength(3);
+  expect(resumedRequests[0]!.dynamicContext.find(item => item.source === 'memory')?.content).toBe(edited);
   expect(resumedRequests[0]!.history.map(message => message.content)).toContain('round-1-user');
   expect(resumedRequests[0]!.history.at(-1)?.content).toBe('round-2-assistant');
+});
+
+it('Memory rebuild stage edits reject stale versions and apply the saved draft content', async () => {
+  const head = rebuildHistory(1);
+  const draft = server.memoryRebuild.start(chat, head, { rounds: 1, groups: 1, batchRounds: 1 }); await server.memoryRebuild.idle(chat);
+  const ready = server.memoryRebuild.get(chat)!;
+  const original = ready.stages[0]!.content;
+  const content = JSON.stringify({ ...JSON.parse(original), dialogue: ['Sina：“明天见。”'], chronicle: 'Edited draft, not yet active' }, null, 2);
+  const url = `/api/conversations/${chat}/memory/rebuild/${draft.id}/stages/0`;
+  const saved = await server.app.inject({ method: 'PATCH', url, payload: { head, previous: original, content } });
+  expect(saved.statusCode).toBe(200); expect(server.repository.listMemoryStages(chat)).toEqual([]);
+  const conflict = await server.app.inject({ method: 'PATCH', url, payload: { head, previous: original, content: original } });
+  expect(conflict.statusCode).toBe(400); expect(conflict.json().errorText.key).toBe('memoryRebuild.stageChanged');
+  const applied = server.memoryRebuild.apply(chat, draft.id);
+  expect(applied[0]!.content).toBe(content);
+});
+
+it('Memory rebuild stage edits preserve saved content when validation fails', async () => {
+  const head = rebuildHistory(1);
+  const draft = server.memoryRebuild.start(chat, head, { rounds: 1, groups: 1, batchRounds: 1 }); await server.memoryRebuild.idle(chat);
+  const original = server.memoryRebuild.get(chat)!.stages[0]!.content;
+  const invalid = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/rebuild/${draft.id}/stages/0`, payload: { head, previous: original, content: JSON.stringify({ ...JSON.parse(original), chronicle: '' }) } });
+  expect(invalid.statusCode).toBe(400); expect(invalid.json().errorText.key).toBe('memoryRebuild.invalidEdit');
+  expect(server.memoryRebuild.get(chat)!.stages[0]!.content).toBe(original);
 });
 
 it('Memory rebuild pauses before a model request when the exact batch exceeds its budget', async () => {

@@ -23,6 +23,7 @@ export default function MemoryRebuild({ chat, disabled, onClose, onChanged }: {
   const [copied, setCopied] = useState(false);
   const revision = useRef(0);
   const mounted = useRef(true);
+  const discarded = useRef<string | null>(null);
   const draft = result?.draft;
   const plan = draft?.plan ?? result?.plan;
   const backdrop = useBackdropClose(close);
@@ -61,9 +62,11 @@ export default function MemoryRebuild({ chat, disabled, onClose, onChanged }: {
     revision.current++;
     setBusy(true); setError('');
     try {
-      if (action === 'start' || action === 'resume' || action === 'apply') await flushContentEdits();
+      if (action === 'start' || action === 'resume' || action === 'apply' || action === 'copy') await flushContentEdits();
       if (action === 'copy') {
-        await copyText(draft!.stages.map((stage, index) => `[Stage ${index + 1}]:\n${stage.content}`).join('\n\n'));
+        const latest = (await api<Result>(endpoint)).draft;
+        if (!latest || latest.id !== draft?.id) throw new Error(t('重建草稿已变化，请重新打开。'));
+        await copyText(latest.stages.map((stage, index) => `[Stage ${index + 1}]:\n${stage.content}`).join('\n\n'));
         setCopied(true); return;
       }
       if (action === 'apply' && !confirm(t('覆盖后，当前全部 Memory 将替换为所选范围的新阶段，范围外的旧记忆不再发送。固定事实和主角状态不变。确认覆盖？'))) return;
@@ -76,6 +79,12 @@ export default function MemoryRebuild({ chat, disabled, onClose, onChanged }: {
         onChanged();
       } else if (draft) {
         await api(`${endpoint}/${draft.id}${action === 'discard' ? '' : `/${action}`}`, action === 'discard' ? 'DELETE' : 'POST', {});
+        if (action === 'discard') {
+          discarded.current = draft.id;
+          for (let index = 0; index < draft.stages.length; index++) {
+            try { sessionStorage.removeItem(`content-draft:rebuild:${draft.id}:${index}`); } catch { /* Keep the server-side discard usable without browser storage. */ }
+          }
+        }
         if (action === 'apply') { onChanged(); onClose(); return; }
         await load();
         onChanged();
@@ -111,6 +120,7 @@ export default function MemoryRebuild({ chat, disabled, onClose, onChanged }: {
           {draft.status === 'running' && draft.plan.batches[draft.stages.length] && <p>{t('第 {0} 组：第 {1}–{2} 轮', draft.plan.batches[draft.stages.length]!.group, draft.plan.batches[draft.stages.length]!.from, draft.plan.batches[draft.stages.length]!.to)}</p>}
           <progress aria-label={t('重建进度')} max={draft.plan.batches.length} value={draft.stages.length} />
           {draft.error && <p className="error" role="alert">{diagnosticText(draft.errorText, draft.error)}</p>}
+          {draft.stages.length > 0 && draft.status !== 'stale' && <p className="muted">{t('阶段可直接编辑，离开自动保存；运行中请先停止重建。')}</p>}
           <div className="memory-rebuild-actions">
             {draft.status === 'running' && <button disabled={busy} onClick={() => void act('stop')}>{t('停止')}</button>}
             {['paused', 'failed'].includes(draft.status) && <button disabled={busy || disabled} onClick={() => void act('resume')}>{t('继续重建')}</button>}
@@ -119,7 +129,14 @@ export default function MemoryRebuild({ chat, disabled, onClose, onChanged }: {
             <button disabled={busy} onClick={() => void act('discard')}>{t('丢弃草稿')}</button>
           </div>
           {draft.stages.map((stage, index) => <details key={index}><summary>{t('阶段 {0}', index + 1)}</summary>
-            <MemoryContent draftKey={`rebuild:${draft.id}:${index}`} initial={stage.content} label={t('阶段 {0}', index + 1)} disabled onSave={async content => content} onError={setError} />
+            <MemoryContent draftKey={`rebuild:${draft.id}:${index}`} initial={stage.content} label={t('阶段 {0}', index + 1)}
+              disabled={disabled || draft.status === 'running' || draft.status === 'stale'}
+              onSave={async (content, previous) => {
+                if (discarded.current === draft.id) return previous;
+                const saved = await api<{ content: string }>(`${endpoint}/${draft.id}/stages/${index}`, 'PATCH', { content, previous, head: draft.head }, { keepalive: true });
+                setResult(current => current?.draft?.id === draft.id ? { ...current, draft: { ...current.draft, stages: current.draft.stages.map((entry, i) => i === index ? { ...entry, content: saved.content } : entry) } } : current);
+                setCopied(false); return saved.content;
+              }} onError={message => { if (discarded.current !== draft.id) setError(message); }} />
           </details>)}
         </>}
         {loading && !draft && <p role="status">{t('正在读取记录…')}</p>}

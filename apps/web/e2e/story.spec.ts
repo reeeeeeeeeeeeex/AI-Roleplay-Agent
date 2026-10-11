@@ -1212,7 +1212,39 @@ test('Memory rebuild keeps an unapplied draft across reopening on a narrow Engli
   await page.getByRole('button', { name: 'Rebuild Memory', exact: true }).click();
   dialog = page.getByRole('dialog', { name: 'Rebuild Memory', exact: true });
   await expect(dialog.getByText('Rebuild complete, not applied · 2 / 2 stages saved')).toBeVisible();
+  await dialog.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^Stage 1$/ }) }).locator('summary').click();
+  const chronicle = dialog.getByRole('textbox', { name: 'Stage 1 Chronicle', exact: true });
+  await expect(chronicle).toBeEditable();
+  await chronicle.fill('直接修改的重建纪要');
+  await dialog.getByRole('heading', { name: 'Rebuild Memory', exact: true }).click();
+  await expect.poll(async () => JSON.parse((await (await request.get(`/api/conversations/${chat.id}/memory/rebuild`)).json()).draft.stages[0].content).chronicle).toBe('直接修改的重建纪要');
   expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('原有 Memory 仍生效');
+});
+
+test('Memory rebuild stage autosave failure preserves edits and stops applying', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const settings = await (await request.get('/api/settings/general')).json();
+  await request.put('/api/settings/general', { data: { ...settings, manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 } });
+  const user = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: chat.headMessageId, input: { voice: 'protagonist', text: 'Draft editing input' } } })).json();
+  const assistant = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: user.message.id, speaker: { kind: 'narrator' }, text: 'Draft editing response' } })).json();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/last-turn`)).json()).recordsStatus).toBe('completed');
+  await request.post(`/api/conversations/${chat.id}/memory/rebuild`, { data: { head: assistant.message.id, options: { rounds: 1, groups: 1, batchRounds: 1 } } });
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/memory/rebuild`)).json()).draft.status).toBe('ready');
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await page.getByRole('button', { name: '手动重建 Memory', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '手动重建 Memory', exact: true });
+  await dialog.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^阶段 1$/ }) }).locator('summary').click();
+  await page.route('**/memory/rebuild/*/stages/*', route => route.fulfill({ status: 500, json: { error: 'Offline draft save failure' } }));
+  let applies = 0;
+  page.on('request', req => { if (req.url().endsWith('/apply')) applies++; });
+  const chronicle = dialog.getByRole('textbox', { name: '阶段 1 纪要', exact: true });
+  await chronicle.fill('保存失败仍保留的草稿');
+  await dialog.getByRole('button', { name: '覆盖当前 Memory', exact: true }).click();
+  await expect(dialog.locator('.record-field').getByRole('alert')).toContainText('Offline draft save failure');
+  await expect(chronicle).toHaveValue('保存失败仍保留的草稿');
+  expect(applies).toBe(0); expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())).toEqual([]);
 });
 
 test('record fields save directly on blur and when the drawer closes', async ({ page, request }, info) => {

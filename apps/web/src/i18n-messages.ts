@@ -2,6 +2,8 @@
 export const english = {
   '手动重建 Memory': 'Rebuild Memory',
   'Memory 重建': 'Memory rebuild',
+  '重建草稿已变化，请重新打开。': 'The rebuild draft changed. Please reopen it.',
+  '阶段可直接编辑，离开自动保存；运行中请先停止重建。': 'Edit stages directly; changes save when you leave the fields. Stop a running rebuild before editing.',
   '停止': 'Stop',
   '重建中': 'Rebuilding',
   '已暂停': 'Paused',

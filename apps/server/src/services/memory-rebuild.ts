@@ -189,6 +189,22 @@ export class MemoryRebuildService {
   async discard(chat: string, id: string) {
     await this.stop(chat, id); this.repo.deleteMemoryRebuild(chat); return { deleted: true };
   }
+  editStage(chat: string, id: string, index: number, input: { content: string; previous: string; head: string | null }) {
+    this.turns.assertIdle(chat);
+    return this.repo.database.sqlite.transaction(() => {
+      const draft = this.require(chat, id);
+      if (this.active.has(chat) || draft.status === 'running') throw new AppError('memoryRebuild.running');
+      if (draft.status === 'stale' || input.head !== draft.head || !this.valid(draft)) throw new AppError('memoryRebuild.stale');
+      const stage = draft.stages[index];
+      if (!stage || stage.content !== input.previous) throw new AppError('memoryRebuild.stageChanged');
+      let content: string;
+      try { content = JSON.stringify(chronicle.parse(parseModelJson(input.content)), null, 2); }
+      catch { throw new AppError('memoryRebuild.invalidEdit'); }
+      const stages = [...draft.stages]; stages[index] = { ...stage, content };
+      this.repo.saveMemoryRebuild({ ...draft, stages, updatedAt: new Date().toISOString() });
+      return { content };
+    })();
+  }
   apply(chat: string, id: string) {
     this.turns.assertIdle(chat);
     if (this.active.has(chat) || this.records.busy(chat)) throw new AppError('memoryRebuild.running');
