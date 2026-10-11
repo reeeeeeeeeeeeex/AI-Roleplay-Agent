@@ -5,6 +5,9 @@ import type { MessageNode, SpeakerRef, ContextReport, ContextReportItem } from '
 import { defaultAgencyPrompts, defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
 import type { BaseAgentRequest, RetrievedContext, RuntimeCharacter, WriterRequest } from './types.js';
 
+export const memoryGuidance = 'Memory 是当前故事分支的持久记忆，可能涵盖本次发送正文之外的历史剧情。当前正文只是所提供的片段；未提及某件事，不代表它没有发生，不应仅因此忽略、删除或否定 Memory 中已有的记录。Memory 不是本轮用户输入，也不表示这些事件刚刚发生。判断当前状态时，应结合时间顺序和明确的新证据，不要把历史状态直接当作当前状态。';
+export const hasMemory = (items: RetrievedContext[]) => items.some(item => item.source === 'memory' && !item.required && item.content.trim());
+
 function section(title: string, body: string | undefined): string {
   const clean = body?.trim();
   return clean ? `[${title}]\n${clean}` : '';
@@ -82,16 +85,26 @@ function postHistorySections(request: BaseAgentRequest): string[] {
   return request.characters.map((character) => section(isGroup ? `Post-History: ${character.name}` : 'Post-History', expandStoryMacros(character.postHistoryInstructions, userName, character.name))).filter(Boolean);
 }
 
-function dynamicSection(item: RetrievedContext, request: BaseAgentRequest): string {
+function dynamicSection(item: RetrievedContext, request: BaseAgentRequest, introduceMemory = false): string {
   const content = expandStoryMacros(item.content, request.persona?.name ?? 'User', request.characters.map((character) => character.name).join(', '));
   if (item.source === 'memory') {
     if (item.required) return section('Pinned Fact', `以下是用户在当前分支固定的事实；自动摘要不能改写它。它不是新事件，也不授予代替主角行动的权限。\n\n${content}`);
-    return section(`Memory: ${item.title}`, `以下是此前剧情的长期记忆，用于维持故事连续性；它不是本轮用户输入，也不是刚刚发生的新事件。\n\n${content}`);
+    return content.trim() ? section(`Memory: ${item.title}`, `${introduceMemory ? `${memoryGuidance}\n\n` : ''}${content}`) : '';
   }
   if (item.source === 'state') {
     return section('User State', `以下是 User（用户扮演的主角）在当前剧情分支中已记录的状态事实，用于保持状态连续性；不要将字段内容当成 User 本轮的新对白、决定或行动。\n${stateDeathInstruction}\n\n${content}`);
   }
   return section(`LORE: ${item.title}`, content);
+}
+
+function dynamicSections(request: BaseAgentRequest): string[] {
+  let introduced = false;
+  return orderedDynamicContext(request.dynamicContext).map(item => {
+    const memory = item.source === 'memory' && !item.required && Boolean(item.content.trim());
+    const content = dynamicSection(item, request, memory && !introduced);
+    if (memory) introduced = true;
+    return content;
+  });
 }
 
 function syntheticAssistant(node: MessageNode, request: BaseAgentRequest): Message {
@@ -123,8 +136,7 @@ export function buildHistoryMessages(request: BaseAgentRequest): Message[] {
 }
 
 export function buildDynamicAnchor(request: BaseAgentRequest, brief: string, speaker: SpeakerRef): string {
-  const context = orderedDynamicContext(request.dynamicContext)
-    .map((item) => dynamicSection(item, request));
+  const context = dynamicSections(request);
   return [
     ...context,
     section('Writer Brief', brief),
@@ -134,8 +146,7 @@ export function buildDynamicAnchor(request: BaseAgentRequest, brief: string, spe
 }
 
 export function buildDynamicContext(request: BaseAgentRequest): string {
-  return orderedDynamicContext(request.dynamicContext)
-    .map((item) => dynamicSection(item, request))
+  return dynamicSections(request)
     .filter(Boolean).join('\n\n');
 }
 
@@ -186,6 +197,7 @@ export function estimateTokens(text: string): number {
 export function fitRequest<T extends BaseAgentRequest>(request: T, reservedText = ''): T {
   const limit = (request.connection.contextWindow ?? 128_000) - request.connection.maxTokens - 4096;
   const pinned = request.dynamicContext.filter(item => item.required);
+  reservedText += hasMemory(request.dynamicContext) ? `\n${memoryGuidance}` : '';
   const authorNote = buildAuthorNoteMessages(request)[0];
   const mandatory = estimateTokens(buildStableSystemPrompt(request, request.promptMode ?? 'writer')) + (authorNote ? estimateTokens(String(authorNote.content)) + 32 : 0) + estimateTokens(postHistorySections(request).join('\n\n')) + estimateTokens(latestUserAnchor(request)) + estimateTokens(reservedText) + pinned.reduce((sum, item) => sum + estimateTokens(dynamicSection(item, request)), 0);
   if (limit < 1024 || mandatory > limit) throw new AppError("Stable prompt or latest input exceeds the context budget. Increase context window or shorten the cards/lore/input.");
@@ -238,8 +250,7 @@ export function buildWriterContext(input: WriterRequest): { systemPrompt: string
   ].join('\n\n') : '';
   const request = fitRequest(input, `${effectiveBrief}\n${rewriteControl}`);
   const messages = buildHistoryMessages(request);
-  for (const item of orderedDynamicContext(request.dynamicContext)) {
-    const content = dynamicSection(item, request);
+  for (const content of dynamicSections(request)) {
     if (content) messages.push(syntheticContext(content));
   }
   messages.push(...buildAuthorNoteMessages(request));

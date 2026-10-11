@@ -30,6 +30,8 @@
 
 ## 工程边界
 
+- 所有实际携带 Memory 的请求和记忆工具返回共用持久记忆说明：覆盖范围可能大于当前正文窗口，不能仅因正文未重述而否定旧经历，历史状态也不直接等于当前状态。说明只进入模型可见包装、计入预算，每个区块一次；不写入 Memory 正文或随界面语言改变。
+
 - 全 TypeScript：pnpm monorepo，React + Vite 前端，Fastify 后端，SQLite + Drizzle；Node 24。
 - 只支持 Chat Completions、Anthropic Messages、OpenAI Responses；Pi 通过自有接口隔离。
 - 核心是 Planner / Writer、常驻旁白、分支聊天、Lore、Memory 和主角状态。默认普通写作；Writer Agent 仅在选择该模式时自动路由。

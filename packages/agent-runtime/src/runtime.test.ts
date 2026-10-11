@@ -3,6 +3,7 @@ import { defaultPromptSettings, errorText, formatUiText, type TurnPlan } from '@
 import { PiAgentRuntime } from './runtime.js';
 import { PiModelGateway } from './pi-gateway.js';
 import type { BaseAgentRequest, RuntimeTraceSink } from './types.js';
+import { memoryGuidance } from './prompt.js';
 
 const character = { id: 'character-a', name: '自由扮演', description: 'Describe the scene.', personality: '', scenario: '', exampleDialogue: '', systemPrompt: '', postHistoryInstructions: '' };
 const fixedPlan: TurnPlan = {
@@ -98,6 +99,8 @@ it('sends memories from oldest to newest before state in the plain request body 
   await runtime.writeTurn(request, { mode: 'plain', onDelta: () => {}, onOutputComplete: async () => {} });
   expect(bodies[0]).toBe(preview.requestBody);
   const body = JSON.parse(bodies[0]!);
+  expect(bodies[0]!.split(memoryGuidance)).toHaveLength(2);
+  expect(request.dynamicContext.filter(item => !item.required && item.source === 'memory').map(item => item.content)).toEqual(['Past stage 3.', 'Past stage 1.', 'Past stage 2.']);
   expect(body.messages.slice(1, -1).map((message: { content: string }) => message.content.match(/^\[([^\]]+)\]/u)?.[1]))
     .toEqual(['Pinned Fact', 'Memory: Stage 1', 'Memory: Stage 2', 'Memory: Stage 3', 'User State']);
 });
@@ -120,6 +123,17 @@ it('action choice requests omit writing instructions and history reasoning, and 
   expect(traces.map(trace => trace.status)).toEqual(['completed', 'failed']);
   expect(traces[0]!.response).toContain('当前选择思考');
   expect(traces[1]!.response).toContain('重复');
+});
+
+it('record maintenance explains persistent Memory without changing its JSON content', async () => {
+  const { runtime, request, bodies } = setup([{ text: '[]' }]);
+  const content = JSON.stringify({ chronicle: '正文窗口之前的故事', dialogue: [] });
+  request.dynamicContext = [{ source: 'memory', title: 'Stage 1', content, priority: 100 }];
+  await runtime.maintain(request, 'Update protagonist state from available evidence; return operations.');
+  const body = JSON.parse(bodies[0]!);
+  expect(body.messages[0].content).toContain(memoryGuidance);
+  expect(JSON.parse(body.messages[1].content).context[0].content).toBe(content);
+  expect(bodies[0]!.split(memoryGuidance)).toHaveLength(2);
 });
 
 describe('Agent tool lifecycle', () => {
@@ -154,6 +168,7 @@ describe('Agent tool lifecycle', () => {
       { text: 'I will inspect memory.', calls: [{ name: 'read_memory', args: {} }] },
       { text: 'Character prose.' }, { text: 'Narrator prose.' },
     ]);
+    request.source.readMemory = async () => [{ source: 'memory', title: 'Stage 1', content: 'Earlier life.', priority: 100 }];
     const preview = await runtime.previewFirstRequest(request, 'writer-agent');
     const onDelta = vi.fn(), onOutputComplete = vi.fn();
     const result = await runtime.writeTurn(request, { mode: 'writer-agent', prefix: '', onDelta, onOutputComplete });
@@ -165,6 +180,9 @@ describe('Agent tool lifecycle', () => {
     expect(bodies[1]).toContain('Write only the first selected voice now');
     expect(traces[0]?.tools[0]).toMatchObject({ name: 'select_output_voices', ok: true });
     expect(traces[1]?.tools[0]).toMatchObject({ name: 'read_memory', ok: true });
+    const memoryResult = JSON.parse(bodies[2]!).messages.filter((message: any) => message.role === 'tool').at(-1);
+    expect(memoryResult.content).toContain(memoryGuidance);
+    expect(memoryResult.content).toContain('Earlier life.');
     expect(onDelta.mock.calls.map(call => call[2])).toEqual(['Character prose.', 'Narrator prose.']);
     expect(result.results.map(output => output.speaker)).toEqual(voices.map(output => output.speaker));
     expect(onOutputComplete.mock.calls.map(call => call[1])).toEqual([0, 1]);
