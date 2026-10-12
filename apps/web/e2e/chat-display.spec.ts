@@ -33,12 +33,11 @@ function portraitSvg(width: number, height: number) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="#508080"/><path d="M0 0L${width} ${height}M${width} 0L0 ${height}" stroke="white" stroke-width="4"/></svg>`;
 }
 
-async function readingStory(page: Page, request: APIRequestContext) {
+async function readingStory(page: Page, request: APIRequestContext, body = 'Distant lights reflect on the cobblestones. 远处的灯光映在石板路上。\n'.repeat(8).trim()) {
   const characters = await (await request.get('/api/characters')).json();
   await request.put('/api/settings/general', { data: { ...defaultGeneralSettings, manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 } });
   const chat = await (await request.post('/api/conversations', { data: { title: 'Reading appearance fixture', kind: 'solo', characterId: characters[0].id } })).json();
   const user = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: null, input: { voice: 'protagonist', text: '雨停了，我们继续走吧。' } } })).json();
-  const body = 'Distant lights reflect on the cobblestones. 远处的灯光映在石板路上。\n'.repeat(8).trim();
   const reply = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: user.message.id, speaker: { kind: 'narrator' }, text: body } });
   expect(reply.ok()).toBe(true);
   await page.addInitScript(id => localStorage.setItem('selected-chat', id), chat.id);
@@ -65,6 +64,86 @@ async function insideViewport(page: Page, locator: Locator) {
   expect(rect!.x + rect!.width).toBeLessThanOrEqual(size.width + 1);
   expect(rect!.y + rect!.height).toBeLessThanOrEqual(size.height + 1);
 }
+
+test('deleting prose keeps the editing height and reading position until blur', async ({ page, request }) => {
+  const original = Array.from({ length: 60 }, (_, i) => `正文第 ${i + 1} 行，保留阅读位置。`).join('\n');
+  await readingStory(page, request, original);
+  const field = page.getByRole('textbox', { name: 'AI 回复正文', exact: true });
+  let writes = 0;
+  page.on('request', req => { if (req.method() === 'POST' && req.url().includes('/edit')) writes++; });
+  const before = await field.evaluate(element => {
+    const field = element as HTMLTextAreaElement;
+    field.focus({ preventScroll: true }); field.setSelectionRange(field.value.lastIndexOf('\n'), field.value.length);
+    const scroller = field.closest('.messages')!;
+    scroller.scrollTop = scroller.scrollHeight;
+    return { scroll: scroller.scrollTop, height: field.getBoundingClientRect().height };
+  });
+  await page.keyboard.press('Backspace');
+  await expect(field).toHaveValue(original.slice(0, original.lastIndexOf('\n')));
+  await expect.poll(() => field.evaluate(element => element.closest('.messages')!.scrollTop)).toBeCloseTo(before.scroll, 0);
+  expect((await field.boundingBox())!.height).toBeCloseTo(before.height, 0);
+  expect(writes).toBe(0);
+  await field.evaluate(element => (element as HTMLTextAreaElement).blur());
+  await expect.poll(() => writes).toBe(1);
+  await expect(field).toHaveValue(original.slice(0, original.lastIndexOf('\n')));
+  await expect.poll(async () => (await field.boundingBox())?.height ?? Infinity).toBeLessThan(before.height - 5);
+  const id = await page.evaluate(() => localStorage.getItem('selected-chat'));
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${id}/messages`)).json()).branch.at(-1).content).toBe(original.slice(0, original.lastIndexOf('\n')));
+});
+
+test('deleting structured Memory keeps the records panel still and can grow again', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await readingStory(page, request);
+  const id = await page.evaluate(() => localStorage.getItem('selected-chat'));
+  const memory = { timeSpan: '清晨', location: '书店', chronicle: '这是待修改的纪要。\n'.repeat(60).trim(), dialogue: ['角色：“保留原话。”'], overview: '纪要概览' };
+  const endpoint = `/api/conversations/${id}/memory`;
+  expect((await request.post(endpoint, { data: { content: JSON.stringify(memory) } })).ok()).toBe(true);
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  const field = page.getByRole('textbox', { name: '阶段 1 纪要', exact: true });
+  await expect(field).toHaveValue(memory.chronicle);
+  const before = await field.evaluate(element => {
+    const field = element as HTMLTextAreaElement;
+    field.focus({ preventScroll: true }); field.setSelectionRange(field.value.lastIndexOf('\n'), field.value.length);
+    const scroller = field.closest('.records-content')!;
+    scroller.scrollTop = scroller.scrollHeight;
+    return { scroll: scroller.scrollTop, height: field.getBoundingClientRect().height };
+  });
+  await page.keyboard.press('Backspace');
+  await expect.poll(() => field.evaluate(element => element.closest('.records-content')!.scrollTop)).toBeCloseTo(before.scroll, 0);
+  expect((await field.boundingBox())!.height).toBeCloseTo(before.height, 0);
+  await page.keyboard.insertText('\n' + '继续补充纪要。\n'.repeat(8).trim());
+  await expect.poll(async () => (await field.boundingBox())!.height).toBeGreaterThan(before.height);
+  expect(await field.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+  await page.getByRole('heading', { name: '故事记录', exact: true }).click();
+  await expect.poll(async () => JSON.parse((await (await request.get(endpoint)).json())[0].content).chronicle).toBe(await field.inputValue());
+});
+
+test('persona draft deletion stays in place and resizes to a narrower editor', async ({ page, request }) => {
+  await readingStory(page, request);
+  const description = '主角描述：在安静的书店中等待，保留这份正在修改的资料。\n'.repeat(40).trim();
+  const persona = await (await request.post('/api/personas', { data: { name: 'Editing position fixture', description } })).json();
+  await page.reload();
+  await page.locator('.studio-nav button').filter({ hasText: /^主角\s/ }).click();
+  await page.getByRole('button', { name: persona.name, exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '编辑主角', exact: true });
+  const field = dialog.getByRole('textbox', { name: '描述', exact: true });
+  const before = await field.evaluate(element => {
+    const field = element as HTMLTextAreaElement;
+    field.focus({ preventScroll: true }); field.setSelectionRange(field.value.lastIndexOf('\n'), field.value.length);
+    const scroller = field.closest('form')!;
+    scroller.scrollTop += field.getBoundingClientRect().bottom - scroller.getBoundingClientRect().bottom + 60;
+    return { scroll: scroller.scrollTop, height: field.getBoundingClientRect().height };
+  });
+  await page.keyboard.press('Backspace');
+  await expect.poll(() => field.evaluate(element => element.closest('form')!.scrollTop)).toBeCloseTo(before.scroll, 0);
+  expect((await field.boundingBox())!.height).toBeCloseTo(before.height, 0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => (await field.boundingBox())!.height).toBeGreaterThan(before.height);
+  expect(await field.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+  await field.evaluate(element => (element as HTMLTextAreaElement).blur());
+  await expect.poll(async () => (await (await request.get(`/api/personas/${persona.id}`)).json()).description).toBe(description.slice(0, description.lastIndexOf('\n')));
+});
 
 test('compact chat header opens character and story details separately', async ({ page, request }) => {
   await readingStory(page, request);

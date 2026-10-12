@@ -1,12 +1,13 @@
 import { reasoningLabel } from './ui-labels.js';
 import { t } from './i18n.js';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import AvatarField from './AvatarField';
 import PersonaPicker from './PersonaPicker';
 import LorebookEditor from './LorebookEditor';
 import { useContentAutosave } from './useContentAutosave';
 import { useBackdropClose } from './useBackdropClose';
+import { useAutoSizeTextareas } from './useAutoSizeTextareas.js';
 
 export type Collection = 'characters' | 'personas' | 'connections' | 'lorebooks' | 'groups' | 'conversations';
 
@@ -384,20 +385,7 @@ export default function Editor({
 
 function PersonaTextarea({ value, rows, onChange }: { value: string; rows: number; onChange: (text: string) => void }) {
   const field = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const element = field.current!;
-    const resize = () => {
-      element.style.height = 'auto';
-      element.style.height = `${element.scrollHeight + element.offsetHeight - element.clientHeight}px`;
-    };
-    resize();
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (width !== element.clientWidth) { width = element.clientWidth; resize(); }
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [value, rows]);
+  useAutoSizeTextareas(field, value, rows);
   return <textarea className="persona-textarea" ref={field} rows={rows} value={value} onChange={event => onChange(event.target.value)} />;
 }
 

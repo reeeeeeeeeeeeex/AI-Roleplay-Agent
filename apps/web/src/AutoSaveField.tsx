@@ -1,6 +1,7 @@
 import { t } from './i18n.js';
-import { useLayoutEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { useContentAutosave } from './useContentAutosave.js';
+import { useAutoSizeTextareas } from './useAutoSizeTextareas.js';
 import SearchHighlights from './SearchHighlights.js';
 
 export default function AutoSaveField({ draftKey, initial, label, disabled, placeholder = '—', onSave, onError, resetOnSave = false, singleLine = false, autoFocus = false, lockWhileSaving = false, layoutKey, highlight = '' }: {
@@ -15,15 +16,7 @@ export default function AutoSaveField({ draftKey, initial, label, disabled, plac
     return { saved: typeof saved === 'string' ? saved : value };
   } });
   const field = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const element = field.current!;
-    const resize = () => { if (!element.clientWidth) return; element.style.height = '0px'; element.style.height = `${element.scrollHeight}px`; };
-    resize();
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => { if (width !== element.clientWidth) { width = element.clientWidth; resize(); } });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [value, layoutKey]);
+  useAutoSizeTextareas(field, value, layoutKey);
   return <div className="record-field">
     <textarea ref={field} aria-label={label} placeholder={placeholder} rows={1} value={value} readOnly={disabled || (lockWhileSaving && status === 'saving')} autoFocus={autoFocus}
       onChange={event => change(singleLine ? event.target.value.replace(/[\r\n]+/g, ' ') : event.target.value)}

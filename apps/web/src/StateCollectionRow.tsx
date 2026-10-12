@@ -1,10 +1,11 @@
 import { stateLabel } from './state-labels.js';
 import { t } from './i18n.js';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { stateColumns } from '@new-ai-chat/contracts/client';
 import type { StateRow, StateTableName } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import { useContentAutosave } from './useContentAutosave.js';
+import { useAutoSizeTextareas } from './useAutoSizeTextareas.js';
 
 export default function StateCollectionRow({ chatId, head, table, row, disabled, onSaved, onError }: {
   chatId: string; head: string | null; table: StateTableName; row: StateRow; disabled: boolean;
@@ -21,15 +22,7 @@ export default function StateCollectionRow({ chatId, head, table, row, disabled,
       return { saved: saved.tables[table].find((item: StateRow) => item.row_id === row.row_id) as StateRow };
     },
   });
-  useLayoutEffect(() => {
-    const element = container.current!;
-    const resize = () => element.querySelectorAll('textarea').forEach(field => { if (!field.clientWidth) return; field.style.height = '0px'; field.style.height = `${field.scrollHeight}px`; });
-    resize();
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => { if (width !== element.clientWidth) { width = element.clientWidth; resize(); } });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [edit.value]);
+  useAutoSizeTextareas(container, edit.value);
   const locked = disabled || deleting || edit.status === 'saving';
   async function remove() {
     setDeleting(true);

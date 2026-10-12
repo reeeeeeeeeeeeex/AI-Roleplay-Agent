@@ -1,6 +1,7 @@
 import { t } from './i18n.js';
 import { useLayoutEffect, useRef, useState } from 'react';
 import './inline-edit.css';
+import { useAutoSizeTextareas } from './useAutoSizeTextareas.js';
 
 export default function InlineEdit({ initial, label, onSave, onCancel, disabled = false, singleLine = false, saveLabel = t("保存") }: {
   initial: string; label: string; onSave: (text: string) => Promise<void>; onCancel: () => void;
@@ -11,21 +12,9 @@ export default function InlineEdit({ initial, label, onSave, onCancel, disabled 
   const [error, setError] = useState('');
   const pending = useRef(false);
   const field = useRef<HTMLTextAreaElement>(null);
+  useAutoSizeTextareas(field, value);
   useLayoutEffect(() => {
-    const element = field.current;
-    if (element) { element.style.height = '0px'; element.style.height = `${element.scrollHeight}px`; }
-  }, [value]);
-  useLayoutEffect(() => {
-    const element = field.current!;
-    element.focus({ preventScroll: true });
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (element.clientWidth === width) return;
-      width = element.clientWidth;
-      element.style.height = '0px'; element.style.height = `${element.scrollHeight}px`;
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
+    field.current!.focus({ preventScroll: true });
   }, []);
   async function save() {
     if (disabled || pending.current || !value.trim()) return;

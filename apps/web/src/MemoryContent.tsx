@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { t } from './i18n.js';
 import { useContentAutosave } from './useContentAutosave.js';
+import { useAutoSizeTextareas } from './useAutoSizeTextareas.js';
 
 const labels = { timeSpan: '时间跨度', location: '地点', chronicle: '纪要', dialogue: '重要对话', overview: '概览' } as const;
 type MemoryContent = { timeSpan: string; location: string; chronicle: string; dialogue: string[]; overview: string };
@@ -33,20 +34,7 @@ export default function MemoryContent({ draftKey, initial, label, disabled, onSa
     return { saved: await onSave(value, previous) };
   } });
   const container = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const element = container.current!;
-    const resize = () => element.querySelectorAll('textarea').forEach(field => {
-      if (!field.clientWidth) return;
-      field.style.height = '0px'; field.style.height = `${field.scrollHeight}px`;
-    });
-    resize();
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (width !== element.clientWidth) { width = element.clientWidth; resize(); }
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [edit.value]);
+  useAutoSizeTextareas(container, edit.value);
   const memory = parseMemory(edit.value);
   return <div ref={container} className="record-field" onBlur={event => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void edit.flush();
