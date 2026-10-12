@@ -53,7 +53,9 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 | macOS | 双击 [Start.command](Start.command)，或在终端运行 `sh ./Start.command` |
 | Linux | 在终端运行 `sh ./Start.sh` |
 
-首次启动会联网准备固定版本的依赖，随后打开 **[http://127.0.0.1:4310](http://127.0.0.1:4310)**。浏览器未自动打开时，请手动访问此地址。保持启动窗口开启，按 **Ctrl+C** 停止。SQLite 通常下载对应平台的预编译组件；没有匹配组件的设备可能需要本机编译工具。
+首次启动会联网准备固定版本的依赖，随后打开 **[http://127.0.0.1:14310](http://127.0.0.1:14310)**。浏览器未自动打开时，请手动访问此地址。保持启动窗口开启，按 **Ctrl+C** 停止。SQLite 通常下载对应平台的预编译组件；没有匹配组件的设备可能需要本机编译工具。
+
+当前源码默认使用端口 `14310`，可通过根目录 `.env` 的 `PORT` 自定义；旧发布包按对应版本的发布说明操作。改变端口不影响数据库中的故事，但浏览器偏好、未发送草稿和已安装的 PWA 按地址独立保存，不会自动迁移到新地址。
 
 下载源码或克隆仓库也可使用这些入口，首次会额外构建应用。所有系统均可在项目根目录运行 `node scripts/start.mjs`。开发用 pnpm 版本由 [package.json](package.json) 的 `packageManager` 固定。
 
@@ -61,7 +63,7 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 2. **准备角色。** 创建角色和主角资料，或导入已有内容，然后开启一个故事。
 3. **开始创作。** 使用 API 时，先在「设置 → 模型」添加并选择连接；手动创作时，开启输入框上方的手动输入开关。世界书、场景和作者注释可以随故事逐步补充。
 
-想先看看界面？完成首次准备后，Windows 可使用 [Demo.cmd](Demo.cmd)，访问 4310；开发环境也可运行 `pnpm demo`，访问 [http://127.0.0.1:5173](http://127.0.0.1:5173)。演示使用独立数据和假模型，回复是测试文本，不需要 API 密钥。演示与正式服务默认共用后端端口，请勿同时启动。
+想先看看界面？完成首次准备后，Windows 可使用 [Demo.cmd](Demo.cmd)，访问 14310；开发环境也可运行 `pnpm demo`，访问 [http://127.0.0.1:5173](http://127.0.0.1:5173)。演示使用独立数据和假模型，回复是测试文本，不需要 API 密钥。演示与正式服务默认共用后端端口，请勿同时启动。
 
 ### 编辑、保存与数据
 
@@ -150,7 +152,9 @@ Install **[Node.js 24 with npm](https://nodejs.org/)**, then download `AI-Rolepl
 | macOS | Double-click [Start.command](Start.command), or run `sh ./Start.command` |
 | Linux | Run `sh ./Start.sh` in a terminal |
 
-The first launch downloads pinned dependencies, then opens **[http://127.0.0.1:4310](http://127.0.0.1:4310)**. If the browser does not open, visit that address manually. Keep the terminal open and press **Ctrl+C** to stop. SQLite normally downloads a prebuilt native component; devices without a matching component may need a local compiler toolchain.
+The first launch downloads pinned dependencies, then opens **[http://127.0.0.1:14310](http://127.0.0.1:14310)**. If the browser does not open, visit that address manually. Keep the terminal open and press **Ctrl+C** to stop. SQLite normally downloads a prebuilt native component; devices without a matching component may need a local compiler toolchain.
+
+Current source defaults to port `14310`; set `PORT` in the root `.env` to use another port. Follow the matching release notes for older packages. Changing the port preserves stories in the database, but browser preferences, unsent drafts, and installed PWAs belong to their original address and do not migrate automatically.
 
 These launchers also work with a source download or clone, building the app on first launch. On any system you can run `node scripts/start.mjs` from the project root. The development pnpm version is pinned in the `packageManager` field of [package.json](package.json).
 
@@ -158,7 +162,7 @@ These launchers also work with a source download or clone, building the app on f
 2. **Prepare your cast.** Create character and protagonist profiles, or import existing content, then start a story.
 3. **Start writing.** For API writing, add and select a connection in **Settings → Models**. For manual writing, enable the switch above the composer. Add lorebooks, scene details, and an author's note as your story develops.
 
-Want to explore first? After the initial setup, Windows users can run [Demo.cmd](Demo.cmd) on port 4310. Developers can also run `pnpm demo` and visit [http://127.0.0.1:5173](http://127.0.0.1:5173). The demo uses separate data and a fake model with test replies; no API key is needed. Demo and normal mode share the backend port by default, so run only one at a time.
+Want to explore first? After the initial setup, Windows users can run [Demo.cmd](Demo.cmd) on port 14310. Developers can also run `pnpm demo` and visit [http://127.0.0.1:5173](http://127.0.0.1:5173). The demo uses separate data and a fake model with test replies; no API key is needed. Demo and normal mode share the backend port by default, so run only one at a time.
 
 ### Editing, saving, and data
 

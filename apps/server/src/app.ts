@@ -113,6 +113,9 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
       return address;
     } catch (error) {
       await app.close();
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'EADDRINUSE') {
+        throw new Error(`Port ${config.port} is already in use. Stop the other service or set PORT in .env. / 端口 ${config.port} 已被占用，请关闭占用程序或在 .env 中设置其他 PORT。`, { cause: error });
+      }
       throw error;
     }
   }

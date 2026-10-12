@@ -103,7 +103,7 @@ SillyTavern 导入采用白名单扫描、路径／大小校验、预览确认�
 
 | 配置 | 默认值 / 用途 |
 | --- | --- |
-| `HOST` / `PORT` | `127.0.0.1` / `4310` |
+| `HOST` / `PORT` | `127.0.0.1` / `14310` |
 | `DATABASE_PATH` | `./data/new-ai-chat.db` |
 | `ASSET_DIR` | `./data/assets` |
 | `WEB_DIST` | `../web/dist` |
@@ -215,7 +215,7 @@ Task scripts load the root `.env`; use [`.env.example`](../.env.example) as a re
 
 | Setting | Default / purpose |
 | --- | --- |
-| `HOST` / `PORT` | `127.0.0.1` / `4310` |
+| `HOST` / `PORT` | `127.0.0.1` / `14310` |
 | `DATABASE_PATH` | `./data/new-ai-chat.db` |
 | `ASSET_DIR` | `./data/assets` |
 | `WEB_DIST` | `../web/dist` |
