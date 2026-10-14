@@ -723,6 +723,94 @@ test('web copy saves User and manual Assistant replies reappear in the next prom
   expect(proseRequests).toBe(0);
 });
 
+async function prepareManualVersion(page: Page, request: APIRequestContext, title: string) {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${title}`);
+  const settings = await (await request.get('/api/settings/general')).json();
+  await request.put('/api/settings/general', { data: { ...settings, manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 } });
+  const user = (await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: null, input: { voice: 'protagonist', text: 'USER_FOR_VERSION' } } })).json()).message;
+  const original = (await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: user.id, speaker: { kind: 'character', characterId: chat.characterId }, text: 'ORIGINAL_REPLY' } })).json()).message;
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/last-turn`)).json()).recordsStatus).toBe('completed');
+  await page.reload(); await expect(page.locator('article.message')).toHaveCount(2);
+  return { chat, user, original };
+}
+
+test('manual versions save and switch siblings without disturbing composer drafts or calling prose APIs', async ({ page, request }, info) => {
+  const { chat, user, original } = await prepareManualVersion(page, request, info.title);
+  let modelRequests = 0;
+  page.on('request', req => { if (req.method() === 'POST' && /\/(turns|swipe)$/.test(new URL(req.url()).pathname)) modelRequests++; });
+  const composer = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await composer.fill('主角草稿保留');
+  await page.getByRole('button', { name: '角色', exact: true }).click();
+  await composer.fill('角色草稿保留');
+  await page.getByRole('textbox', { name: 'AI 回复正文', exact: true }).fill('EDITED_ORIGINAL_REPLY');
+  await page.getByRole('button', { name: '新版本', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: '新版本回复', exact: true });
+  await expect(editor).toHaveValue('');
+  await editor.fill('MANUAL_ALTERNATIVE');
+  await page.getByRole('button', { name: '保存新版本', exact: true }).click();
+  await expect(editor).toHaveCount(0); await expect(page.locator('article.message')).toHaveCount(2);
+  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('MANUAL_ALTERNATIVE');
+  await expect(composer).toHaveValue('角色草稿保留');
+  await page.getByRole('button', { name: '上一个版本', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('EDITED_ORIGINAL_REPLY');
+  await page.getByRole('button', { name: '下一个版本', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('MANUAL_ALTERNATIVE');
+  await page.locator('.voice-switch').getByRole('button', { name: '主角', exact: true }).click();
+  await expect(composer).toHaveValue('主角草稿保留');
+  const history = (await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).branch;
+  expect(history).toHaveLength(2); expect(history[0].id).toBe(user.id);
+  expect(history[1]).toMatchObject({ parentId: user.id, storyTurnId: original.storyTurnId, speaker: original.speaker });
+  expect(modelRequests).toBe(0);
+});
+
+test('version web copy in narrow English UI excludes the old reply and keeps the unsent draft', async ({ page, request }, info) => {
+  const { chat, original } = await prepareManualVersion(page, request, info.title);
+  await englishInterface(page);
+  await page.getByRole('button', { name: 'Close records panel', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).__copiedPrompt = text; } } }));
+  let modelRequests = 0;
+  page.on('request', req => { if (req.method() === 'POST' && /\/(turns|swipe)$/.test(new URL(req.url()).pathname)) modelRequests++; });
+  const composer = page.getByRole('textbox', { name: 'Message input', exact: true });
+  await composer.fill('UNSENT_DRAFT_EXCLUDED');
+  await page.getByRole('button', { name: 'Preview prompt before sending', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Preview action', exact: true }).selectOption('regenerate');
+  const web = page.getByRole('region', { name: 'Web prompt', exact: true });
+  await expect(web.locator('pre')).toContainText('USER_FOR_VERSION');
+  await expect(web.locator('pre')).not.toContainText('ORIGINAL_REPLY');
+  await expect(web.locator('pre')).not.toContainText('UNSENT_DRAFT_EXCLUDED');
+  await web.getByRole('button', { name: 'Copy web prompt and enter a new version', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'New reply version', exact: true });
+  await expect(editor).toBeVisible(); await expect(editor).toHaveValue('');
+  const copied = await page.evaluate(() => (window as any).__copiedPrompt);
+  expect(copied).toContain('USER_FOR_VERSION'); expect(copied).not.toContain('ORIGINAL_REPLY'); expect(copied).not.toContain('UNSENT_DRAFT_EXCLUDED');
+  await editor.fill('WEB_ALTERNATIVE');
+  await page.getByRole('button', { name: 'Save new version', exact: true }).click();
+  await expect(editor).toHaveCount(0); await expect(composer).toHaveValue('UNSENT_DRAFT_EXCLUDED');
+  const history = (await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).branch;
+  expect(history).toHaveLength(2); expect(history[1]).toMatchObject({ content: 'WEB_ALTERNATIVE', parentId: original.parentId, storyTurnId: original.storyTurnId, speaker: original.speaker });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  expect(modelRequests).toBe(0);
+});
+
+test('manual version failure retains the new text and original reply for retry', async ({ page, request }, info) => {
+  const { chat, original } = await prepareManualVersion(page, request, info.title);
+  await page.getByRole('button', { name: '新版本', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: '新版本回复', exact: true });
+  await editor.fill('RETRY_ALTERNATIVE');
+  await page.route('**/api/conversations/*/manual-messages', route => route.fulfill({ status: 500, json: { error: 'Offline version save failure' } }));
+  await page.getByRole('button', { name: '保存新版本', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Offline version save failure');
+  await expect(editor).toHaveValue('RETRY_ALTERNATIVE');
+  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).headMessageId).toBe(original.id);
+  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('ORIGINAL_REPLY');
+  await page.unroute('**/api/conversations/*/manual-messages');
+  await page.getByRole('button', { name: '保存新版本', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('RETRY_ALTERNATIVE');
+});
+
 test('manual reply save failure preserves separate User and Assistant drafts', async ({ page }) => {
   const manualToggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
   await manualToggle.click();

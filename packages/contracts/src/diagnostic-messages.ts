@@ -1,5 +1,9 @@
 // Application diagnostics only; never translate provider payloads or model instructions.
 export const diagnosticMessages = {
+  '新版本必须保留原回复的发言者。': { original: '新版本必须保留原回复的发言者。', zh: '新版本必须保留原回复的发言者。', en: 'A new version must keep the original reply speaker.' },
+  '预览仅支持发送、自动继续和最新回复的新版本。': { original: '预览仅支持发送、自动继续和最新回复的新版本。', zh: '预览仅支持发送、自动继续和最新回复的新版本。', en: 'Preview supports sending, automatic continuation, and a new version of the latest reply only.' },
+  '只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。': { original: '只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。', zh: '只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。', en: 'Only the trailing Assistant reply can be previewed as a new version. Check the current message position.' },
+  '目标回复缺少发言者信息，无法创建新版本。': { original: '目标回复缺少发言者信息，无法创建新版本。', zh: '目标回复缺少发言者信息，无法创建新版本。', en: 'The target reply has no speaker information, so a new version cannot be created.' },
   'memoryRebuild.stageChanged': { original: '重建阶段已在别处修改，未覆盖现有内容。草稿已保留，请重新打开核对。', zh: '重建阶段已在别处修改，未覆盖现有内容。草稿已保留，请重新打开核对。', en: 'This rebuild stage changed elsewhere. Existing content was not overwritten. Your edits are preserved; reopen to review.' },
   'memoryRebuild.invalidEdit': { original: '请保留 Memory 的五个字段，纪要不能为空、重要对话最多三条、概览最多 40 字。未保存修改。', zh: '请保留 Memory 的五个字段，纪要不能为空、重要对话最多三条、概览最多 40 字。未保存修改。', en: 'Keep all five Memory fields: a nonempty chronicle, up to three important dialogue entries, and an overview of at most 40 characters. Edits were not saved.' },
   'memoryRebuild.budget': { original: '重建范围超过预算：估算输入 {0}、最大输出 {1}、上下文窗口 {2} token。草稿已保留；请增大窗口、减少最大输出，或重新配置分组。没有自动裁剪。', zh: '重建范围超过预算：估算输入 {0}、最大输出 {1}、上下文窗口 {2} token。草稿已保留；请增大窗口、减少最大输出，或重新配置分组。没有自动裁剪。', en: 'Rebuild exceeds the budget: estimated input {0}, maximum output {1}, context window {2} tokens. Draft preserved. Increase the window, reduce maximum output, or start with different groups. Nothing was truncated.' },

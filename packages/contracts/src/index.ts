@@ -100,7 +100,7 @@ export type TurnRequest = z.infer<typeof turnRequestSchema>;
 
 export const manualMessageSchema = z.discriminatedUnion('role', [
   z.object({ role: z.literal('user'), head: z.string().nullable(), input: z.object({ voice: userVoiceSchema, text: z.string().trim().min(1).max(100_000) }) }),
-  z.object({ role: z.literal('assistant'), head: z.string().nullable(), speaker: speakerRefSchema, text: z.string().trim().min(1).max(100_000) }),
+  z.object({ role: z.literal('assistant'), head: z.string().nullable(), speaker: speakerRefSchema, text: z.string().trim().min(1).max(100_000), targetMessageId: z.string().min(1).optional() }),
 ]);
 export type ManualMessageInput = z.infer<typeof manualMessageSchema>;
 

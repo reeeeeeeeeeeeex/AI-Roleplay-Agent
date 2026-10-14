@@ -420,8 +420,7 @@ export class Repository {
     const selected = nodes ?? this.database.db.select().from(messages).where(inArray(messages.id, branchIds(conversationId, headMessageId))).all().map(mapMessage);
     return orderedBranch(selected, headMessageId);
   }
-  activeMessageIds(conversationId: string): Set<string> {
-    const head = this.getConversation(conversationId)?.headMessageId;
+  activeMessageIds(conversationId: string, head = this.getConversation(conversationId)?.headMessageId): Set<string> {
     if (!head) return new Set();
     const links = this.database.db.select({ id: messages.id, parentId: messages.parentId }).from(messages)
       .where(inArray(messages.id, branchIds(conversationId, head))).all();
@@ -546,12 +545,12 @@ export class Repository {
       if (draft.status === 'running') this.saveMemoryRebuild({ ...draft, status: 'paused' });
     }
   }
-  listMemories(conversationId: string, limit = 20): MemoryEntry[] {
-    const active = this.checkpointFilter(conversationId);
+  listMemories(conversationId: string, limit = 20, headMessageId?: string | null): MemoryEntry[] {
+    const active = this.checkpointFilter(conversationId, headMessageId);
     const selected = this.database.db.select({ id: memories.id }).from(memories).where(eq(memories.conversationId, conversationId))
       .orderBy(desc(sql`rowid`)).all().filter(row => active(row.id)).slice(0, limit).map(row => row.id);
     if (!selected.length) return [];
-    const heads = this.activeMessageIds(conversationId);
+    const heads = this.activeMessageIds(conversationId, headMessageId);
     const edits = new Map<string, string>();
     for (const event of this.events(conversationId, ['memory.edited'])) {
       const edit = event.payload as { id: string; head: string | null; content: string };
@@ -564,11 +563,11 @@ export class Repository {
     const row = { ...input, coverage: input.coverage ?? null, id: id(), createdAt: now() }; this.database.db.insert(memories).values(row).run();
     this.addEvent(input.conversationId, null, 'checkpoint', { id: row.id, head: this.getConversation(input.conversationId)?.headMessageId ?? null }); return row;
   }
-  listMemoryStages(conversationId: string) {
-    return projectMemoryStages(this.listMemories(conversationId, Infinity));
+  listMemoryStages(conversationId: string, headMessageId?: string | null) {
+    return projectMemoryStages(this.listMemories(conversationId, Infinity, headMessageId));
   }
-  latestState(conversationId: string): ProtagonistStateSnapshot | null {
-    const active = this.checkpointFilter(conversationId);
+  latestState(conversationId: string, headMessageId?: string | null): ProtagonistStateSnapshot | null {
+    const active = this.checkpointFilter(conversationId, headMessageId);
     // Find the branch's checkpoint before decoding potentially large historical state tables.
     const selected = this.database.db.select({ id: stateSnapshots.id }).from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().find((item) => active(item.id));
     const row = selected ? this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.id, selected.id)).get() : null;
@@ -625,8 +624,8 @@ export class Repository {
   checkpointActive(conversationId: string, checkpointId: string): boolean {
     return this.checkpointFilter(conversationId)(checkpointId);
   }
-  listPinnedFacts(conversationId: string): PinnedFact[] {
-    const heads = this.activeMessageIds(conversationId);
+  listPinnedFacts(conversationId: string, headMessageId?: string | null): PinnedFact[] {
+    const heads = this.activeMessageIds(conversationId, headMessageId);
     const facts = new Map<string, PinnedFact>();
     for (const event of this.events(conversationId, ['fact.saved', 'fact.removed'])) {
       const value = event.payload as PinnedFact;
@@ -676,15 +675,15 @@ export class Repository {
       importantCharacters: (state?.important_characters ?? []).map(row => String(row.name ?? '')).filter(Boolean),
     } };
   }
-  private checkpointFilter(conversationId: string) {
-    const heads = this.activeMessageIds(conversationId);
+  private checkpointFilter(conversationId: string, headMessageId?: string | null) {
+    const heads = this.activeMessageIds(conversationId, headMessageId);
     const checkpoints = new Map(this.events(conversationId, ['checkpoint']).map((event) => {
       const value = event.payload as { id: string; head: string | null }; return [value.id, value.head];
     }));
     return (checkpointId: string) => { const head = checkpoints.get(checkpointId); return !head || heads.has(head); };
   }
-  currentWorld(conversationId: string): Array<{ summary: string; evidence: string }> {
-    const heads = this.activeMessageIds(conversationId);
+  currentWorld(conversationId: string, headMessageId?: string | null): Array<{ summary: string; evidence: string }> {
+    const heads = this.activeMessageIds(conversationId, headMessageId);
     const applied = new Map<string, { summary: string; evidence: string }>();
     for (const event of this.events(conversationId, ['world.applied', 'world.undone'])) {
       const value = event.payload as { head: string | null; proposalId: string; summary: string; evidence: string };

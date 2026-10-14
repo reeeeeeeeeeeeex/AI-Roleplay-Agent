@@ -1,5 +1,16 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  '新版本回复': 'New reply version',
+  '保存新版本': 'Save new version',
+  '手动填写新版本 · 保留原回复和发言者，不调用模型': 'Enter a new version · keeps the original reply and speaker; no model call',
+  '预览动作': 'Preview action',
+  '本次发送': 'Current send',
+  '最新回复的新版本': 'New version of the latest reply',
+  '复制网页提示词并填写新版本': 'Copy web prompt and enter a new version',
+  '使用最新回复之前的正文和记录，不包含待替换的回复，也不发送或保存输入框草稿。复制后可手动填写新版本。': 'Uses the story and records before the latest reply, excluding the reply being replaced. The composer draft is neither sent nor saved. After copying, enter the new version manually.',
+  '新版本提示词已复制。把网页生成的回复粘贴到空白回复框，再保存为新版本。': 'New-version prompt copied. Paste the web reply into the blank reply field, then save it as a new version.',
+  '只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。': 'Only the trailing Assistant reply can be previewed as a new version. Check the current message position.',
+  '目标回复缺少发言者信息，无法创建新版本。': 'The target reply has no speaker information, so a new version cannot be created.',
   '手动重建 Memory': 'Rebuild Memory',
   'Memory 重建': 'Memory rebuild',
   '重建草稿已变化，请重新打开。': 'The rebuild draft changed. Please reopen it.',

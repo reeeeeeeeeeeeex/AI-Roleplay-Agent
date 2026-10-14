@@ -442,6 +442,99 @@ it('web copy previews plain prose and saves one User at the expected head withou
   expect(network).not.toHaveBeenCalled(); expect(runtime.requests).toEqual([]);
 });
 
+it('manual versions retain siblings, speaker and turn without a model or repeated records', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 });
+  const user = server.turns.appendManual(chat, { role: 'user', head: null, input: { voice: 'protagonist', text: 'Open the door.' } }).message;
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'manual', content: 'Before reply' });
+  const original = server.turns.appendManual(chat, { role: 'assistant', head: user.id, speaker: { kind: 'character', characterId: character }, text: 'Original reply' }).message;
+  await server.turns.idle(chat);
+  repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: original.storyTurnId, source: 'manual', content: 'After reply' });
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), connectionId: null, memoryTurnInterval: 1, stateTurnInterval: 1 });
+  const maintain = vi.spyOn(runtime, 'maintain');
+  const network = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', network);
+  const saved = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/manual-messages`, payload: {
+    role: 'assistant', head: original.id, targetMessageId: original.id, speaker: original.speaker, text: 'Alternative reply',
+  } });
+  expect(saved.statusCode).toBe(201);
+  const variant = saved.json().message;
+  expect(variant).toMatchObject({ parentId: user.id, storyTurnId: original.storyTurnId, speaker: original.speaker, content: 'Alternative reply', generationInfo: { mode: 'manual', usage: null, requestCount: 0 } });
+  expect(repo.getMessage(original.id)).toEqual(original);
+  expect(repo.getActiveBranch(chat).map(message => message.id)).toEqual([user.id, variant.id]);
+  expect(settledStoryIds(repo, chat)).toEqual([user.storyTurnId]);
+  expect(repo.listMemories(chat).map(memory => memory.content)).toEqual(['Before reply']);
+  repo.setHead(chat, original.id);
+  expect(repo.listMemories(chat).map(memory => memory.content)).toEqual(['After reply', 'Before reply']);
+  expect(saved.json().turn).toMatchObject({ status: 'completed', recordsStatus: 'completed' });
+  expect(maintain).not.toHaveBeenCalled(); expect(network).not.toHaveBeenCalled(); expect(runtime.requests).toEqual([]);
+});
+
+it('manual versions reject stale heads, inactive targets and changed speakers without writing', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), memoryTurnInterval: 0, stateTurnInterval: 0 });
+  const original = server.turns.appendManual(chat, { role: 'assistant', head: null, speaker: { kind: 'narrator' }, text: 'Original' }).message;
+  await server.turns.idle(chat);
+  const payload = { role: 'assistant', head: original.id, targetMessageId: original.id, speaker: original.speaker, text: 'Alternative' };
+  const post = (data: Record<string, unknown>) => server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/manual-messages`, payload: data });
+  expect((await post({ ...payload, head: null })).statusCode).toBe(409);
+  expect((await post({ ...payload, speaker: { kind: 'character', characterId: character } })).statusCode).toBe(400);
+  const variant = (await post(payload)).json().message;
+  expect((await post({ ...payload, head: variant.id })).statusCode).toBe(409);
+  expect(repo.listMessages(chat)).toHaveLength(2);
+  expect(repo.getConversation(chat)!.headMessageId).toBe(variant.id);
+});
+
+it('version preview uses parent records and matches the real swipe Gateway body without moving the head', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'plain', streaming: false, memoryTurnInterval: 0, stateTurnInterval: 0 });
+  repo.updateConnection(connection, connectionInputSchema.parse({ ...repo.listConnections()[0]!, protocol: 'openai-chat-completions' }));
+  const user = server.turns.appendManual(chat, { role: 'user', head: null, input: { voice: 'narrator', text: 'USER_ANCHOR' } }).message;
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'manual', content: 'MEMORY_BEFORE' });
+  const before = blankState(); before.global_state[0]!.current_location = 'STATE_BEFORE'; repo.createState(chat, null, before);
+  repo.savePinnedFact(chat, 'FACT_BEFORE');
+  const original = server.turns.appendManual(chat, { role: 'assistant', head: user.id, speaker: { kind: 'character', characterId: character }, text: 'REPLY_EXCLUDED' }).message;
+  await server.turns.idle(chat);
+  repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: original.storyTurnId, source: 'manual', content: 'MEMORY_EXCLUDED' });
+  const after = blankState(); after.global_state[0]!.current_location = 'STATE_EXCLUDED'; repo.createState(chat, null, after);
+  repo.savePinnedFact(chat, 'FACT_EXCLUDED');
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: 'offline-version', object: 'chat.completion', created: 0, model: 'test',
+    choices: [{ index: 0, message: { role: 'assistant', content: 'New response' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 } }));
+  vi.stubGlobal('fetch', fetchMock);
+  const capture = runtime.previewFirstRequest.bind(runtime);
+  vi.spyOn(runtime, 'previewFirstRequest').mockImplementation(async (...args) => {
+    expect(repo.getConversation(chat)!.headMessageId).toBe(original.id);
+    return capture(...args);
+  });
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'regenerate', targetMessageId: original.id } });
+  expect(response.statusCode).toBe(200);
+  const preview = response.json();
+  expect(preview).toMatchObject({ headMessageId: original.id, targetMessageId: original.id, webSpeaker: original.speaker });
+  expect(preview.webPrompt).toContain('MEMORY_BEFORE'); expect(preview.webPrompt).toContain('STATE_BEFORE'); expect(preview.webPrompt).toContain('FACT_BEFORE');
+  expect(preview.webPrompt).toContain('以下是用户本轮输入：\n“USER_ANCHOR”');
+  expect(preview.webPrompt).not.toContain('_EXCLUDED');
+  expect(repo.getConversation(chat)!.headMessageId).toBe(original.id); expect(fetchMock).not.toHaveBeenCalled();
+  const pi = new PiAgentRuntime(); runtime.writeTurn = pi.writeTurn.bind(pi);
+  const generated = await server.app.inject({ method: 'POST', url: `/api/messages/${original.id}/swipe`, payload: {} });
+  expect(generated.statusCode).toBe(202); await server.turns.idle(chat);
+  expect(repo.getTurn(generated.json().id)?.status).toBe('completed');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))).toEqual(JSON.parse(preview.requestBody));
+});
+
+it('version preview excludes the first Assistant at a null parent and rejects non-tail targets', async () => {
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), memoryTurnInterval: 0, stateTurnInterval: 0 });
+  const first = server.turns.appendManual(chat, { role: 'assistant', head: null, speaker: { kind: 'narrator' }, text: 'FIRST_REPLY_EXCLUDED' }).message;
+  await server.turns.idle(chat);
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: first.storyTurnId, source: 'manual', content: 'FIRST_MEMORY_EXCLUDED' });
+  const preview = () => server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'regenerate', targetMessageId: first.id } });
+  const response = await preview(); expect(response.statusCode).toBe(200);
+  expect(response.json().webPrompt).not.toContain('_EXCLUDED');
+  expect(repo.getConversation(chat)!.headMessageId).toBe(first.id);
+  server.turns.appendManual(chat, { role: 'user', head: first.id, input: { voice: 'protagonist', text: 'Later input' } });
+  expect((await preview()).statusCode).toBe(409);
+});
+
 it('manual input setting persists without replacing other general settings', async () => {
   const original = server.repository.getGeneralSettings();
   expect(original.manualInput).toBe(false);

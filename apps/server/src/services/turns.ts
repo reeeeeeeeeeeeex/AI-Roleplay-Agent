@@ -102,17 +102,25 @@ export class TurnService {
     const chat = this.repository.getConversation(chatId);
     if (!chat) throw new AppError("Conversation not found.");
     if (chat.headMessageId !== input.head) throw Object.assign(new AppError("当前消息位置已变化，请重新预览或核对后再保存。"), { statusCode: 409 });
+    const target = input.role === 'assistant' && input.targetMessageId ? this.repository.getMessage(input.targetMessageId) : null;
+    if (input.role === 'assistant' && input.targetMessageId) {
+      if (!target || target.conversationId !== chatId || target.role !== 'assistant' || !this.repository.activeMessageIds(chatId).has(target.id)) {
+        throw Object.assign(new AppError("Target must be an assistant message on the current branch."), { statusCode: 409 });
+      }
+      if (target.speaker?.kind !== input.speaker.kind || (target.speaker.kind === 'character' && input.speaker.kind === 'character' && target.speaker.characterId !== input.speaker.characterId)) throw new AppError("新版本必须保留原回复的发言者。");
+    }
     if (input.role === 'assistant' && input.speaker.kind === 'character') {
       const speakerId = input.speaker.characterId;
       if (!new StoryContext(this.repository, chatId).cast.some(character => character.id === speakerId)) throw new AppError("Speaker is not in this conversation.");
     }
     const result = this.repository.database.sqlite.transaction(() => {
-      const head = chat.headMessageId ? this.repository.getMessage(chat.headMessageId) : null;
-      const storyTurnId = head?.role === 'user' ? head.storyTurnId ?? randomUUID() : randomUUID();
+      const parent = target ? target.parentId : chat.headMessageId;
+      const head = parent ? this.repository.getMessage(parent) : null;
+      const storyTurnId = target?.storyTurnId ?? (head?.role === 'user' ? head.storyTurnId : null) ?? randomUUID();
       if (head?.role === 'user' && !head.storyTurnId) {
         this.repository.database.sqlite.prepare('UPDATE messages SET story_turn_id = ? WHERE id = ?').run(storyTurnId, head.id);
       }
-      const message = this.repository.createMessage({ conversationId: chatId, parentId: chat.headMessageId, storyTurnId,
+      const message = this.repository.createMessage({ conversationId: chatId, parentId: parent, storyTurnId,
         role: input.role, authorKind: input.role === 'user' ? input.input.voice === 'narrator' ? 'user_narrator' : 'protagonist' : input.speaker.kind,
         speaker: input.role === 'assistant' ? input.speaker : null, content: input.role === 'user' ? input.input.text : input.text,
         providerState: null, legacyPayload: null, generationInfo: input.role === 'assistant'
@@ -125,12 +133,12 @@ export class TurnService {
       let turn: TurnRecord | null = null;
       if (input.role === 'assistant') {
         turn = this.repository.createTurn(chatId, storyTurnId, 'manual');
-        this.repository.addEvent(chatId, turn.id, 'story.settled', { storyTurnId, head: message.id });
-        turn = this.repository.updateTurn(turn.id, { status: 'completed', recordsStatus: 'running', completedAt: new Date().toISOString() });
+        this.repository.addEvent(chatId, turn.id, 'story.settled', { storyTurnId, head: message.id, variant: Boolean(target) });
+        turn = this.repository.updateTurn(turn.id, { status: 'completed', recordsStatus: target ? 'completed' : 'running', completedAt: new Date().toISOString() });
       }
       return { message, conversation: this.repository.getConversation(chatId)!, turn };
     })();
-    if (result.turn) this.launch(result.turn);
+    if (result.turn && !target) this.launch(result.turn);
     return result;
   }
 
@@ -143,7 +151,7 @@ export class TurnService {
     return turn;
   }
 
-  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input'], maintenance?: 'memory' | 'state' | 'memory-rebuild'): Promise<BaseAgentRequest> {
+  async request(chatId: string, storyTurnId: string, signal: AbortSignal, auto = false, virtualInput?: TurnRequest['input'], maintenance?: 'memory' | 'state' | 'memory-rebuild', headMessageId?: string | null): Promise<BaseAgentRequest> {
     const chat = this.repository.getConversation(chatId)!;
     const settings = this.repository.getGeneralSettings();
     const connection = this.repository.resolveConnection(maintenance ? settings.recordConnectionId : null);
@@ -151,8 +159,8 @@ export class TurnService {
     const virtualMessage = virtualInput ? { id: `preview-${storyTurnId}`, conversationId: chatId, parentId: chat.headMessageId, storyTurnId, role: 'user' as const,
       authorKind: virtualInput.voice === 'narrator' ? 'user_narrator' as const : 'protagonist' as const, speaker: null, content: virtualInput.text,
       providerState: null, generationInfo: null, legacyPayload: null, createdAt: new Date().toISOString() } : undefined;
-    const source = new StoryContext(this.repository, chatId, virtualMessage, { maintenance });
-    const latest = virtualMessage ?? [...(source.fixedHistory ? source.history : this.repository.getActiveBranch(chatId))].reverse().find((m) => m.role === 'user');
+    const source = new StoryContext(this.repository, chatId, virtualMessage, { maintenance, headMessageId });
+    const latest = virtualMessage ?? [...(source.fixedHistory ? source.history : this.repository.getActiveBranch(chatId, headMessageId))].reverse().find((m) => m.role === 'user');
     const persona = this.repository.resolvePersona(chat.personaId);
     const request: BaseAgentRequest = { connection, conversationId: chatId, storyTurnId,
       conversationKind: chat.kind, scenario: chat.scenario, streaming: settings.streaming,
@@ -166,13 +174,19 @@ export class TurnService {
   }
 
   async preview(input: TurnRequest, signal: AbortSignal) {
-    if (input.trigger !== 'normal' && input.trigger !== 'auto') throw new AppError("Prompt preview supports normal send and auto continue only.");
+    if (!['normal', 'auto', 'regenerate'].includes(input.trigger)) throw new AppError("预览仅支持发送、自动继续和最新回复的新版本。");
     const chat = this.repository.getConversation(input.conversationId);
     if (!chat) throw new AppError("Conversation not found.");
     this.assertIdle(chat.id);
     this.existingUserInput(input);
-    const request = await this.request(chat.id, `preview-${Date.now()}`, signal, input.trigger === 'auto', input.trigger === 'normal' ? input.input : undefined);
-    const forced = input.replyTarget.mode === 'explicit' ? input.replyTarget.speaker : null;
+    const target = input.trigger === 'regenerate' && input.targetMessageId ? this.repository.getMessage(input.targetMessageId) : null;
+    if (input.trigger === 'regenerate' && (!target || target.conversationId !== chat.id || target.id !== chat.headMessageId || target.role !== 'assistant')) {
+      throw Object.assign(new AppError("只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。"), { statusCode: 409 });
+    }
+    if (target && !target.speaker) throw new AppError("目标回复缺少发言者信息，无法创建新版本。");
+    const request = await this.request(chat.id, target?.storyTurnId ?? `preview-${Date.now()}`, signal, input.trigger === 'auto', input.trigger === 'normal' ? input.input : undefined, undefined, target ? target.parentId : undefined);
+    if (target && input.rewriteInstruction) request.rewrite = { instruction: input.rewriteInstruction, originalText: target.content };
+    const forced = target?.speaker ?? (input.replyTarget.mode === 'explicit' ? input.replyTarget.speaker : null);
     if (forced?.kind === 'character' && !request.characters.some((character) => character.id === forced.characterId)) throw new AppError("Speaker is not in this conversation.");
     const mode = this.repository.getGeneralSettings().generationMode;
     if (mode === 'plain' && !forced && chat.kind === 'group') throw new AppError("普通写作的群聊需要先手动选择角色或旁白。");
@@ -181,7 +195,7 @@ export class TurnService {
     const webPreview = mode === 'plain' ? preview : await this.runtime.previewFirstRequest(request, 'plain', plan);
     if (this.repository.getConversation(chat.id)?.headMessageId !== chat.headMessageId) throw Object.assign(new AppError("消息位置已变化，请重新预览。"), { statusCode: 409 });
     return { action: input.trigger, generationMode: mode, protocol: request.connection.protocol, personaName: request.persona?.name ?? null, ...preview,
-      headMessageId: chat.headMessageId, webPrompt: formatWebPrompt(webPreview.requestBody, request.connection.protocol), webSpeaker: webPreview.speaker };
+      headMessageId: chat.headMessageId, targetMessageId: target?.id, webPrompt: formatWebPrompt(webPreview.requestBody, request.connection.protocol), webSpeaker: webPreview.speaker };
   }
 
   private async finishRecords(turn: TurnRecord, signal: AbortSignal, trace: ReturnType<typeof createTraceSink>) {

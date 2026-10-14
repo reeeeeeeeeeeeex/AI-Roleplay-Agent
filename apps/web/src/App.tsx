@@ -71,7 +71,7 @@ export default function App() {
   const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
   const [copyingProfile, setCopyingProfile] = useState(false);
-  const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark'; initial: string } | null>(null);
+  const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark' | 'manual-version'; initial: string; head?: string | null } | null>(null);
   const [inputDrafts, setInputDrafts] = useState(readComposerDrafts);
   const savedInputDrafts = useRef({ ...inputDrafts });
   const inputDraftsRef = useRef(inputDrafts);
@@ -201,7 +201,10 @@ export default function App() {
   const historyStart = nodes.find(message => message.id === chat?.historyStartMessageId);
   const historyStartPosition = historyStart ? historyStartIndex(branch, historyStart) : -1;
   const activePersona = data.personas?.find(p => p.id === (chat?.personaId ?? generalSettings.defaultPersonaId));
-  useEffect(() => { setMessageEdit(null); }, [chatId, chat?.headMessageId]);
+  useEffect(() => {
+    // An autosave may finish just before this editor opens at the new head.
+    setMessageEdit(current => current?.action === 'manual-version' && current.head && current.head === chat?.headMessageId ? current : null);
+  }, [chatId, chat?.headMessageId]);
   const cast = chat?.kind === 'group'
     ? (data.groups ?? []).find((v) => v.id === chat.groupId)?.memberIds ?? []
     : chat?.characterId ? [chat.characterId] : [];
@@ -529,11 +532,30 @@ export default function App() {
 
   async function swipe(message: MessageNode, instruction?: string) {
     await flushContentEdits();
+    if (generalSettings.manualInput && !instruction) {
+      if (!message.speaker) throw new Error(t("目标回复缺少发言者信息，无法创建新版本。"));
+      const id = savedMessageId(message.id)!;
+      setMessageEdit({ id, action: 'manual-version', initial: '', head: savedMessageId(chat?.headMessageId ?? undefined) ?? null });
+      scrollToMessage(id);
+      return;
+    }
     const result = await api(`/messages/${savedMessageId(message.id)}/swipe`, 'POST', instruction ? { instruction } : {});
     await follow(result.id, message.conversationId);
   }
 
-  async function saveMessageEdit(message: MessageNode, action: 'fact' | 'rewrite' | 'bookmark', value: string) {
+  async function saveMessageEdit(message: MessageNode, action: 'fact' | 'rewrite' | 'bookmark' | 'manual-version', value: string) {
+    if (action === 'manual-version') {
+      if (!messageEdit || messageEdit.head === undefined || !message.speaker) throw new Error(t("消息位置已变化，请重新预览。"));
+      await flushContentEdits();
+      const result = await api(`/conversations/${message.conversationId}/manual-messages`, 'POST', {
+        role: 'assistant', head: messageEdit.head, targetMessageId: message.id, speaker: message.speaker, text: value,
+      });
+      setMessageEdit(null); setPromptPreview(null);
+      updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === result.conversation.id ? result.conversation : item) }));
+      await refreshMessages(message.conversationId);
+      setRecordsVersion(version => version + 1);
+      return;
+    }
     if (action === 'rewrite') {
       await flushContentEdits();
       const result = await api(`/messages/${savedMessageId(message.id)}/swipe`, 'POST', { instruction: value });
@@ -605,16 +627,31 @@ export default function App() {
     setPromptPreview(null);
   }
 
-  async function showPromptPreview() {
-    if (!chat) return;
+  async function showPromptPreview(newVersion = false) {
+    if (!chat || turn || sendPending.current || messageEdit) return;
+    sendPending.current = true; setSending(true);
     try {
       await flushContentEdits();
-      const { conversationId: _conversationId, ...payload } = await turnPayload('normal');
+      let payload: Omit<TurnRequest, 'conversationId'>;
+      if (newVersion) {
+        const current = await api<{ branch: MessageNode[] }>(`/conversations/${chat.id}/messages?view=chat`);
+        const last = current.branch.at(-1);
+        if (last?.role !== 'assistant') throw new Error(t("只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。"));
+        payload = { trigger: 'regenerate', targetMessageId: last.id, replyTarget: { mode: 'auto' } };
+      } else {
+        const { conversationId: _conversationId, ...normal } = await turnPayload('normal');
+        payload = normal;
+      }
       if (chatRef.current !== chat.id) return;
       const preview = await api(`/conversations/${chat.id}/prompt-preview`, 'POST', payload);
-      if (chatRef.current === chat.id) setPromptPreview({ ...preview, conversationId: chat.id, input: payload.input, draftText: text, existingUserInput: Boolean(payload.targetMessageId) });
+      if (chatRef.current === chat.id) setPromptPreview({ ...preview, conversationId: chat.id, input: payload.input, draftText: text, existingUserInput: payload.trigger === 'normal' && Boolean(payload.targetMessageId) });
     }
-    catch (err: any) { setError(err.message || t("预览失败")); }
+    catch (err: any) {
+      const message = err.message || t("预览失败");
+      if (promptPreview) setPromptPreview((old: any) => old ? { ...old, copyError: message } : old);
+      else setError(message);
+    }
+    finally { sendPending.current = false; setSending(false); }
   }
 
   async function copyWebPrompt() {
@@ -641,6 +678,12 @@ export default function App() {
         if (current.headMessageId !== preview.headMessageId) throw new Error(t("消息位置已变化，请重新预览。"));
       }
       if (chatRef.current !== chat.id) return;
+      if (preview.action === 'regenerate') {
+        setMessageEdit({ id: preview.targetMessageId, action: 'manual-version', initial: '', head: preview.headMessageId });
+        scrollToMessage(preview.targetMessageId); setPromptPreview(null);
+        setNotice(t("新版本提示词已复制。把网页生成的回复粘贴到空白回复框，再保存为新版本。"));
+        return;
+      }
       setReplyTarget(preview.webSpeaker.kind === 'narrator' ? 'narrator' : preview.webSpeaker.characterId);
       setVoice('assistant'); setPromptPreview(null);
       setNotice(t("网页提示词已复制。粘贴到 AI 网页后，把回复填入“角色”模式保存。"));
@@ -846,7 +889,7 @@ export default function App() {
                 </button>
                 <button ref={searchButton} title={t('搜索正文（Ctrl / ⌘ + F）')} aria-label={t('搜索正文')} aria-keyshortcuts="Control+f Meta+f" aria-expanded={showSearch}
                   onClick={() => showSearch ? closeSearch() : setShowSearch(true)}><Search size={14} /></button>
-                <button title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
+                <button disabled={sending || !!turn || !!messageEdit} title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
                 <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => panel ? act(closeRecords()) : setPanel(true)}>
                   {panel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
                   <span>{t("记录")}</span>
@@ -913,9 +956,9 @@ export default function App() {
                 const avatar = avatarFor(m);
                 const info = m.generationInfo;
                 const editing = messageEdit?.id === m.id ? messageEdit : null;
-                const inlineEditor = editing && (editing.action === 'rewrite'
-                  ? <InlineEdit key={`${m.id}:rewrite`} initial={editing.initial} label={t("改写要求")} disabled={!!turn || sending} saveLabel={t("开始改写")}
-                      onCancel={() => setMessageEdit(null)} onSave={value => saveMessageEdit(m, 'rewrite', value)} />
+                const inlineEditor = editing && (editing.action === 'rewrite' || editing.action === 'manual-version'
+                  ? <InlineEdit key={`${m.id}:${editing.action}`} initial={editing.initial} label={editing.action === 'manual-version' ? t("新版本回复") : t("改写要求")} disabled={!!turn || sending} saveLabel={editing.action === 'manual-version' ? t("保存新版本") : t("开始改写")}
+                      onCancel={() => setMessageEdit(null)} onSave={value => saveMessageEdit(m, editing.action, value)} />
                   : <><AutoSaveField key={`${m.id}:${editing.action}`} draftKey={`${m.id}:new-${editing.action}`} initial="" label={editing.action === 'bookmark' ? t("书签名称") : t("摘录固定事实")} singleLine={editing.action === 'bookmark'} autoFocus disabled={!!turn || sending} lockWhileSaving
                       onError={setError} onSave={value => saveMessageEdit(m, editing.action, value)} /><button onClick={() => setMessageEdit(null)}>{t("关闭窗口")}</button></>);
                 const totalInput = info?.usage ? info.usage.input + info.usage.cacheRead + info.usage.cacheWrite : null;
@@ -952,7 +995,7 @@ export default function App() {
                         <summary>{t("模型思考")}</summary>
                         <pre>{info.thinking || t("模型未返回可见思考内容。")}</pre>
                       </details>}
-                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending} lockWhileSaving onError={setError} layoutKey={`${readingAppearance.font}:${readingAppearance.fontSize}`} highlight={showSearch && m.role !== 'system' ? searchQuery : ''}
+                      <div className="prose"><AutoSaveField key={m.id} draftKey={`message:${m.id}`} initial={m.content} label={m.role === 'assistant' ? t("AI 回复正文") : m.role === 'user' ? t("用户消息正文") : t("消息正文")} disabled={!!turn || sending || messageEdit?.action === 'manual-version'} lockWhileSaving onError={setError} layoutKey={`${readingAppearance.font}:${readingAppearance.fontSize}`} highlight={showSearch && m.role !== 'system' ? searchQuery : ''}
                         onSave={async (content, previous) => {
                           const saved = await api<MessageNode>(`/messages/${m.id}/edit`, 'POST', { content, previous, head: chat.headMessageId }, { keepalive: true });
                           if (saved.id !== m.id) editedMessageIds.current.set(m.id, saved.id);
@@ -960,7 +1003,7 @@ export default function App() {
                           await refresh().catch(error => setError(error.message)); setRecordsVersion(version => version + 1);
                         }} /></div>
                       {editing && <div className="message-inline-action">
-                        <small>{{ fact: t("固定事实 · 保存到当前分支"), rewrite: t("一次性改写要求 · 不作为剧情输入"), bookmark: t("给这条消息命名书签") }[editing.action]}</small>
+                        <small>{{ fact: t("固定事实 · 保存到当前分支"), rewrite: t("一次性改写要求 · 不作为剧情输入"), bookmark: t("给这条消息命名书签"), 'manual-version': t("手动填写新版本 · 保留原回复和发言者，不调用模型") }[editing.action]}</small>
                         {inlineEditor}
                       </div>}
                       {m.role === 'assistant' && <small className="generation-info">{info?.mode === 'manual' ? t("手动录入 · 未调用正文模型") : info
@@ -998,7 +1041,7 @@ export default function App() {
                         )}
                         {m.role === 'assistant' && (
                           <>
-                            <button disabled={!!turn} title={t("只重新生成这一条，保持当前发言者；原文保留为其他版本")} onClick={() => act(swipe(m))}>
+                            <button disabled={!!turn || sending || !!messageEdit} title={generalSettings.manualInput ? t("手动填写新版本 · 保留原回复和发言者，不调用模型") : t("只重新生成这一条，保持当前发言者；原文保留为其他版本")} onClick={() => act(swipe(m))}>
                               <RotateCw size={12} />{t("新版本")}</button>
                             {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title={t("重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留")} onClick={() => act(send('regenerate', m.id))}>{t("重做整轮（2 条）")}</button>}
                             <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>{t("续写")}</button>
@@ -1471,7 +1514,11 @@ export default function App() {
           <section className="modal prompt-preview" role="dialog" aria-modal="true" aria-label={t("提示词预览")} onClick={e => e.stopPropagation()}>
             <header><h2>{t("发送提示词预览 · Raw input")}</h2><button aria-label={t("关闭窗口")} onClick={() => setPromptPreview(null)}>✕</button></header>
             <div className="prompt-preview-body">
-              <p className="muted">{t("动作：")}{promptPreview.action === 'auto' ? t("自动继续") : promptPreview.existingUserInput ? t("回复已有 User 消息") : t("普通发送")}  {t("· 模式：")}{generationLabel(promptPreview.generationMode)}  {t("· 阶段：")}{phaseLabel(promptPreview.phase)}  {t("· 协议：")}{promptPreview.protocol}</p>
+              <label>{t("预览动作")}<select aria-label={t("预览动作")} value={promptPreview.action === 'regenerate' ? 'regenerate' : 'normal'} disabled={sending || !!turn} onChange={event => void showPromptPreview(event.target.value === 'regenerate')}>
+                <option value="normal">{t("本次发送")}</option>
+                <option value="regenerate" disabled={branch.at(-1)?.role !== 'assistant'}>{t("最新回复的新版本")}</option>
+              </select></label>
+              <p className="muted">{t("动作：")}{promptPreview.action === 'regenerate' ? t("最新回复的新版本") : promptPreview.action === 'auto' ? t("自动继续") : promptPreview.existingUserInput ? t("回复已有 User 消息") : t("普通发送")}  {t("· 模式：")}{generationLabel(promptPreview.generationMode)}  {t("· 阶段：")}{phaseLabel(promptPreview.phase)}  {t("· 协议：")}{promptPreview.protocol}</p>
               {promptPreview.action === 'auto' && <p className="muted">{t("草稿为空，末尾没有待回复的 User 消息，正在预览自动继续；不重复上一轮用户输入。")}</p>}
               <p className="muted">{t("身份：")}{promptPreview.pendingSelection ? t("待选择") : promptPreview.speaker?.kind === 'narrator' ? generalSettings.narrator.name : speakerName(promptPreview.speaker)}  {t("· 主角：")}{promptPreview.personaName ?? t("未选择（请求使用 User）")}{promptPreview.clipped ? t(" · 已按上下文预算裁剪") : ''}</p>
               <p className="muted">{t("以下是发送边界捕获的首请求原始 JSON Body，未发送、未重新格式化。修改草稿、设置或聊天内容后请重新预览；Agent 后续请求可在 Trace 中查看。")}</p>
@@ -1481,9 +1528,10 @@ export default function App() {
               </section>
               <section className="prompt-json" aria-label={t("网页提示词")}>
                 <header><strong>{t("网页提示词 ·")} {speakerName(promptPreview.webSpeaker)}</strong>
-                  <button disabled={sending || !!turn} onClick={() => void copyWebPrompt()}>{promptPreview.input ? t("复制网页提示词并保存 User 输入") : t("复制网页提示词")}</button></header>
+                  <button disabled={sending || !!turn} onClick={() => void copyWebPrompt()}>{promptPreview.action === 'regenerate' ? t("复制网页提示词并填写新版本") : promptPreview.input ? t("复制网页提示词并保存 User 输入") : t("复制网页提示词")}</button></header>
                 <p className="muted">{t("适用于手动粘贴到 Gemini、ChatGPT、Claude 等网页。整理为普通写作的单条文本，角色标签不等于网页端真正的 System 消息。建议在新对话中粘贴。")}</p>
                 {promptPreview.input && <p className="muted">{t("复制成功后同步保存本轮主角／用户旁白内容，不调用正文模型。")}</p>}
+                {promptPreview.action === 'regenerate' && <p className="muted">{t("使用最新回复之前的正文和记录，不包含待替换的回复，也不发送或保存输入框草稿。复制后可手动填写新版本。")}</p>}
                 {promptPreview.copyError && <p className="error" role="alert">{promptPreview.copyError}</p>}
                 <pre tabIndex={0}>{promptPreview.webPrompt}</pre>
               </section>
