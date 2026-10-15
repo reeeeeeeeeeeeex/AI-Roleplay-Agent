@@ -63,7 +63,10 @@ test('lorebook search and collapsing keep hidden drafts in the saved book', asyn
   expect(saved.legacyPayload).toEqual({ original: true });
 });
 
-test('lorebook copies, toggles and deletes the selected entry without shifting drafts', async ({ page, request }) => {
+test('lorebook copies, toggles and deletes entries without shifting drafts when randomUUID is unavailable', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined });
+  });
   const book = await openFixture(page, request, '条目操作世界');
   const editor = dialog(page);
   await editor.getByRole('searchbox', { name: '搜索条目' }).fill('灯塔');

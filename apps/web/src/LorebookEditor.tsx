@@ -11,7 +11,8 @@ type Entry = Omit<LoreEntry, 'id' | 'lorebookId'>;
 type DraftEntry = Entry & { localId: string; keyInput: string; secondaryInput: string; orderInput: string };
 
 const emptyEntry: Entry = { title: '', keys: [], secondaryKeys: [], content: '', enabled: true, constant: false, order: 100, position: 'depth', depth: 0, legacyPayload: null };
-const draftEntry = (entry: Entry): DraftEntry => ({ ...entry, localId: crypto.randomUUID(), keyInput: '', secondaryInput: '', orderInput: String(entry.order) });
+// Draft IDs must also work over LAN HTTP, where randomUUID is unavailable.
+const draftEntry = (entry: Entry): DraftEntry => ({ ...entry, localId: crypto.getRandomValues(new Uint32Array(4)).join('-'), keyInput: '', secondaryInput: '', orderInput: String(entry.order) });
 const withKeyword = (keys: string[], input: string) => input.trim() && !keys.includes(input.trim()) ? [...keys, input.trim()] : keys;
 const entryTitle = (entry: Entry) => entry.title.trim() || entry.keys.find(key => key.trim()) || entry.content.trim().split('\n')[0]?.slice(0, 80) || t("未命名条目");
 function entryValue(entry: DraftEntry): Entry {
