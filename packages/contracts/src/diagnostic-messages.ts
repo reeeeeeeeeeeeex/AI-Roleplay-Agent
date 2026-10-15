@@ -91,11 +91,6 @@ export const diagnosticMessages = {
     "zh": "PAIRING_TOKEN 必须为 24–256 位 URL-safe 字母、数字、下划线或连字符。",
     "en": "PAIRING_TOKEN must be 24–256 URL-safe letters, numbers, underscores or hyphens."
   },
-  "LAN mode requires PAIRING_TOKEN with at least 24 characters.": {
-    "original": "LAN mode requires PAIRING_TOKEN with at least 24 characters.",
-    "zh": "局域网模式需要配置至少 24 位的 PAIRING_TOKEN。",
-    "en": "LAN mode requires PAIRING_TOKEN with at least 24 characters."
-  },
   "Connection not found.": {
     "original": "Connection not found.",
     "zh": "模型连接不存在。",

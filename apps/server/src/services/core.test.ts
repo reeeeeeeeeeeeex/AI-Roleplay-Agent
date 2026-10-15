@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../app.js';
+import { loadConfig } from '../config.js';
 import { FakeRuntime, PiAgentRuntime, PiModelGateway, buildWriterContext, type BaseAgentRequest, type WriterRequest } from '@new-ai-chat/agent-runtime';
 import { characterInputSchema, connectionInputSchema, conversationInputSchema, turnRequestSchema, lorebookInputSchema, blankState, defaultAgencyPrompts, defaultPromptSettings, promptSettingsSchema } from '@new-ai-chat/contracts';
 import { settledStoryIds, applyProposal, memoryRecordInstruction } from './records.js';
@@ -375,11 +376,31 @@ it('local image caching keeps uploaded replacements at distinct URLs', async () 
   expect((await server.app.inject({ url: firstUrl })).rawPayload).toEqual(original);
 });
 
+it('LAN access works without pairing when enabled in configuration', async () => {
+  vi.stubEnv('HOST', '0.0.0.0');
+  vi.stubEnv('PAIRING_TOKEN', '');
+  let config;
+  try { config = loadConfig(); } finally { vi.unstubAllEnvs(); }
+  expect(config).toMatchObject({ host: '0.0.0.0', pairingToken: null });
+  const fixture = server.config;
+  await server.app.close();
+  server = await createApp({ ...fixture, host: config.host, pairingToken: config.pairingToken }, runtime);
+  const address = new URL(await server.listen());
+  // Use a local interface address outside the hardcoded localhost Host allowlist.
+  address.hostname = '127.0.0.2';
+  const session = await fetch(new URL('/api/session', address));
+  expect((await session.json()).requiresPairing).toBe(false);
+  const settings = await fetch(new URL('/api/settings/general', address), { headers: { origin: address.origin } });
+  expect(settings.status).toBe(200);
+  await settings.json();
+  expect((await server.app.inject({ url: '/api/settings/general', headers: { host: 'evil.example' } })).statusCode).toBe(403);
+});
+
 it('local image caching preserves pairing and no-store responses for private APIs and errors', async () => {
   const config = server.config;
   await server.app.close();
   const token = 'offline-pairing-fixture-token';
-  server = await createApp({ ...config, pairingToken: token }, runtime);
+  server = await createApp({ ...config, host: '0.0.0.0', pairingToken: token }, runtime);
   const name = 'b'.repeat(64) + '.png';
   writeFileSync(join(work, 'assets', name), Buffer.from('image-fixture'));
   const denied = await server.app.inject({ url: `/api/assets/${name}` });

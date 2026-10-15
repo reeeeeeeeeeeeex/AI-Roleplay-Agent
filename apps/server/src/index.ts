@@ -6,9 +6,11 @@ const {app,config}=server;
 const url=await server.listen();
 console.log(`AI Roleplay Agent: ${url}${config.fakeModel?' (offline demo)':''}`);
 if (process.env.OPEN_BROWSER === '1') {
+  const browserUrl = new URL(url);
+  if (['0.0.0.0', '[::]'].includes(browserUrl.hostname)) browserUrl.hostname = '127.0.0.1';
   const command=process.platform==='win32'?'explorer.exe':process.platform==='darwin'?'open':'xdg-open';
-  const browser=spawn(command,[url],{detached:true,stdio:'ignore',windowsHide:true});
-  browser.once('error',()=>console.log(`Open / 请打开: ${url}`));
+  const browser=spawn(command,[browserUrl.href],{detached:true,stdio:'ignore',windowsHide:true});
+  browser.once('error',()=>console.log(`Open / 请打开: ${browserUrl.href}`));
   browser.unref();
 }
 for(const event of ['SIGINT','SIGTERM'] as const) process.once(event,()=>{ void app.close(); });

@@ -36,8 +36,10 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
   const memoryRebuild = new MemoryRebuildService(repository,gateway,turns,records,events);
   app.addHook('onRequest',async (req,reply) => {
     const host = req.headers.host ?? '';
-    const hostname = host.startsWith('[') ? host.slice(0,host.indexOf(']')+1) : host.split(':')[0];
-    if (!config.pairingToken && !['localhost','127.0.0.1','[::1]'].includes(hostname ?? '')) return reply.code(403).send({ error: 'Untrusted host.', errorText: uiText('Untrusted host.') });
+    const hostname = host.startsWith('[') ? host.slice(1,host.indexOf(']')) : host.split(':')[0];
+    // LAN HTTP may use the interface receiving this request; arbitrary domains stay blocked.
+    const localAddress = req.socket.localAddress?.replace(/^::ffff:/u, '');
+    if (!config.pairingToken && !['localhost','127.0.0.1','::1',localAddress].includes(hostname ?? '')) return reply.code(403).send({ error: 'Untrusted host.', errorText: uiText('Untrusted host.') });
     const origin = req.headers.origin;
     if (origin) {
       const allowed = new Set([`http://${host}`,`https://${host}`, 'http://127.0.0.1:5173','http://localhost:5173']);
