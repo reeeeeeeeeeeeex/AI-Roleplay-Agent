@@ -5,6 +5,7 @@ import { defaultAgencyPrompts, defaultPromptSettings } from '@new-ai-chat/contra
 import type { GeneralSettings, PromptSettings, PromptPreset } from '@new-ai-chat/contracts';
 import { api } from './api';
 import AvatarField from './AvatarField';
+import Notice from './Notice.js';
 import ActionChoiceSettings from './ActionChoiceSettings';
 import { useLanguage } from './LanguageProvider.js';
 import type { Locale } from './i18n.js';
@@ -114,8 +115,8 @@ export default function SettingsModal({
           ))}
         </nav>
         <div className="settings-content">
-          {error && <p className="banner error" role="alert">{error}</p>}
-          {notice && <p className="banner" role="status">{notice}</p>}
+          {error && <Notice className="banner error" role="alert" onDismiss={() => setError('')}>{error}</Notice>}
+          {notice && <Notice onDismiss={() => setNotice('')}>{notice}</Notice>}
           {generationActive && !['appearance', 'language'].includes(tab) && <p className="muted">{t("生成结束后可保存运行设置。")}</p>}
 
           {tab === 'language' && <form className="settings-form" onSubmit={event => {

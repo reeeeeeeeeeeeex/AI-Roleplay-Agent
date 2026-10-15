@@ -388,6 +388,46 @@ test('persona copies preserve the starting template without changing the default
   expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).personaId).toBe(source.id);
 });
 
+for (const outcome of ['failed', 'partial', 'cancelled', 'records'] as const) test(`dismissible turn feedback keeps messages and shows new ${outcome} results`, async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: {
+    role: 'user', head: null, input: { voice: 'protagonist', text: '已保留的用户消息。' },
+  } });
+  const other = await (await request.post('/api/conversations', { data: { title: `Other ${outcome}`, kind: 'solo', characterId: chat.characterId } })).json();
+  let result = { id: 'notice-1', conversationId: chat.id, storyTurnId: 'fixture-turn', trigger: 'normal', plan: null, progress: null,
+    status: outcome === 'records' ? 'completed' : outcome, recordsStatus: outcome === 'records' ? 'failed' : 'idle',
+    error: null, createdAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:01Z' };
+  await page.route(`**/api/conversations/${chat.id}/last-turn`, route => route.fulfill({ json: result }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  const feedback = page.locator(outcome === 'records' ? '.records-notice' : '.turn-recovery');
+  await expect(feedback).toBeVisible();
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true });
+  await input.fill('尚未发送的草稿。');
+  const before = await (await request.get(`/api/conversations/${chat.id}/messages`)).json();
+  let writes = 0;
+  page.on('request', req => { if (req.url().includes('/api/') && req.method() !== 'GET') writes++; });
+  const close = feedback.getByRole('button', { name: '关闭提示', exact: true });
+  await expect(close).toBeInViewport();
+  await close.focus(); await close.press('Enter');
+  await expect(feedback).toHaveCount(0);
+  await expect(input).toHaveValue('尚未发送的草稿。');
+  const select = async (title: string) => {
+    await page.getByRole('button', { name: '打开导航', exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(`^${title} `) }).click();
+  };
+  await select(other.title); await select(chat.title);
+  await expect(page.locator('article.message')).toHaveCount(1);
+  await expect(feedback).toHaveCount(0);
+  result = { ...result, id: 'notice-2', completedAt: '2026-01-01T00:00:02Z' };
+  await select(other.title); await select(chat.title);
+  await expect(feedback).toBeVisible();
+  await expect(input).toHaveValue('尚未发送的草稿。');
+  expect(await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).toEqual(before);
+  expect(writes).toBe(0);
+});
+
 test('app update waits for the user and retains the composer through reload', async ({ page }) => {
   await enableUpdateNotification(page);
   const input = page.getByRole('textbox', { name: '输入消息', exact: true });
@@ -399,6 +439,11 @@ test('app update waits for the user and retains the composer through reload', as
   await expect(page.locator('.app-update')).toContainText('新版本已就绪');
   await expect(settings.getByRole('textbox', { name: '附加指令', exact: true })).toHaveValue('尚未保存的设置，不应被后台更新丢弃。');
   await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+  await page.locator('.app-update').getByRole('button', { name: '关闭提示', exact: true }).click();
+  await expect(page.locator('.app-update')).toHaveCount(0);
+  await expect(input).toHaveValue('刷新后还要继续写的草稿。');
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new Event('controllerchange')));
+  await expect(page.locator('.app-update')).toBeVisible();
   const reloaded = page.waitForResponse(response => response.url().endsWith('/api/session'));
   await page.getByRole('button', { name: '刷新应用', exact: true }).click();
   await reloaded;
@@ -678,6 +723,9 @@ test('web copy without clipboard access keeps its draft and creates no User', as
   const web = page.getByRole('region', { name: '网页提示词', exact: true });
   await web.getByRole('button', { name: '复制网页提示词并保存 User 输入', exact: true }).click();
   await expect(web.getByRole('alert')).toContainText('请选择文字后手动复制');
+  await web.getByRole('button', { name: '关闭提示', exact: true }).click();
+  await expect(web.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '提示词预览', exact: true })).toBeVisible();
   await expect(page.locator('article.message')).toHaveCount(0);
   await expect(input).toHaveValue('复制失败时仍保留这份输入。');
   expect(writes).toBe(0);
@@ -1158,9 +1206,16 @@ test('prompt presets load drafts and only apply after saving, preserving failed 
   await settings.getByRole('button', { name: '保存提示词', exact: true }).click();
   await expect(settings.getByRole('alert')).toContainText('测试保存失败');
   await expect(additional).toHaveValue('修改后要应用的内容');
+  await settings.getByRole('alert').getByRole('button', { name: '关闭提示', exact: true }).click();
+  await expect(settings.getByRole('alert')).toHaveCount(0);
+  await expect(additional).toHaveValue('修改后要应用的内容');
+  await settings.getByRole('button', { name: '保存提示词', exact: true }).click();
+  await expect(settings.getByRole('alert')).toContainText('测试保存失败');
   await page.unroute('**/api/settings/prompts');
   await settings.getByRole('button', { name: '保存提示词', exact: true }).click();
   await expect(settings.getByRole('status')).toContainText('提示词已保存');
+  await settings.getByRole('status').getByRole('button', { name: '关闭提示', exact: true }).click();
+  await expect(settings.getByRole('status')).toHaveCount(0);
   expect((await (await request.get('/api/settings/prompt-presets')).json()).find((item: any) => item.id === saved.id).prompts.additionalInstruction).toBe('来自预设的附加指令');
   await page.reload();
   await page.getByRole('button', { name: '设置 / Settings', exact: true }).click();

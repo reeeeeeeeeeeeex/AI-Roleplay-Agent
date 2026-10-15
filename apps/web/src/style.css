@@ -590,6 +590,9 @@ main {
 }
 .turn-recovery pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
 .turn-recovery button { margin: 6px; }
+.dismissible-notice { display: flex; align-items: flex-start; gap: 8px; }
+.notice-content { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dismissible-notice > .notice-close { flex-shrink: 0; width: 32px; min-height: 32px; margin: 0; padding: 4px; border: 0; background: transparent; color: inherit; }
 
 .messages {
   flex: 1;

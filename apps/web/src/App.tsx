@@ -14,6 +14,7 @@ import StoryNavigation from './StoryNavigation.js';
 import StoryImport from './StoryImport.js';
 import InlineEdit from './InlineEdit.js';
 import SettingsModal, { type AvatarMode } from './SettingsModal.js';
+import Notice from './Notice.js';
 import MessageNavigation from './MessageNavigation.js';
 import MessageSearch from './MessageSearch.js';
 import { useChatWindow } from './useChatWindow.js';
@@ -103,6 +104,8 @@ export default function App() {
   const [drafts, setDrafts] = useState<Record<number, LiveDraft>>({});
   const pendingDraft = useRef<Record<number, LiveDraft>>({});
   const [lastTurn, setLastTurn] = useState<TurnRecord | null>(null);
+  const [dismissedTurnNotice, setDismissedTurnNotice] = useState('');
+  const turnNoticeKey = lastTurn ? `${lastTurn.id}:${lastTurn.status}:${lastTurn.recordsStatus}:${lastTurn.completedAt}` : '';
   const draftFrame = useRef<number | null>(null);
   const [activity, setActivity] = useState<any[]>([]);
   const [phase, setPhase] = useState<{ key: MessageKey; values?: unknown[] } | null>(null);
@@ -899,22 +902,12 @@ export default function App() {
           </div>
         </header>
 
-        {updateReady && <div className="banner app-update" role="status">
+        {updateReady && <Notice className="banner app-update" onDismiss={() => setUpdateReady(false)}>
           <span>{t('新版本已就绪，可在完成当前编辑后刷新。')}</span>
           <button disabled={!!turn || sending || choicesBusy || refreshingApp} onClick={() => act(refreshUpdatedApp())}>{refreshingApp ? t('保存中…') : t('刷新应用')}</button>
-        </div>}
-        {error && (
-          <div className="banner error" role="alert">
-            <span>{error}</span>
-            <button aria-label={t('关闭提示')} onClick={() => setError('')}>✕</button>
-          </div>
-        )}
-        {notice && (
-          <div className="banner">
-            <span>{notice}</span>
-            <button aria-label={t('关闭提示')} onClick={() => setNotice('')}>✕</button>
-          </div>
-        )}
+        </Notice>}
+        {error && <Notice className="banner error" role="alert" onDismiss={() => setError('')}>{error}</Notice>}
+        {notice && <Notice onDismiss={() => setNotice('')}>{notice}</Notice>}
 
         {page === 'chat' && !chat && (
           <section className="welcome">
@@ -1086,7 +1079,7 @@ export default function App() {
                   <span>{t("单人创作／网页聊天手动输入")}</span><small>{t("全局")}</small>
                 </label>} />
               {awayFromBottom && <button onClick={scrollToLatest}>{t("回到最新 ↓")}</button>}
-              {!turn && lastTurn && ['partial', 'failed', 'cancelled'].includes(lastTurn.status) && <div className="turn-recovery">
+              {!turn && lastTurn && dismissedTurnNotice !== turnNoticeKey && ['partial', 'failed', 'cancelled'].includes(lastTurn.status) && <Notice className="turn-recovery" onDismiss={() => setDismissedTurnNotice(turnNoticeKey)}>
                 <strong>{lastTurn.status === 'partial' ? t("本轮部分完成，已完成回复已保留。") : t("本轮未完成，用户消息已保留。")}</strong>
                 {lastTurn.progress && <button disabled={sending} onClick={() => act(retryRemaining())}>{t("重试剩余回复")}</button>}
                 {lastTurn.progress?.interruptedOutputs.map(output => <details key={output.outputIndex}>
@@ -1095,8 +1088,8 @@ export default function App() {
                   {output.thinking && <details><summary>{t("已返回的思考")}</summary><pre>{output.thinking}</pre></details>}
                   <button onClick={() => act(copyText(output.text))}>{t("复制片段")}</button>
                 </details>)}
-              </div>}
-              {!turn && lastTurn?.status === 'completed' && ['failed', 'cancelled'].includes(lastTurn.recordsStatus) && <small>{t("正文已完成；记录更新")}{lastTurn.recordsStatus === 'failed' ? t("失败") : t("已取消")}{t("，可在 Memory／状态面板重试。")}</small>}
+              </Notice>}
+              {!turn && lastTurn?.status === 'completed' && dismissedTurnNotice !== turnNoticeKey && ['failed', 'cancelled'].includes(lastTurn.recordsStatus) && <Notice className="records-notice" onDismiss={() => setDismissedTurnNotice(turnNoticeKey)}><small>{t("正文已完成；记录更新")}{lastTurn.recordsStatus === 'failed' ? t("失败") : t("已取消")}{t("，可在 Memory／状态面板重试。")}</small></Notice>}
               {turn && <div className="generation-status"><i />{phase ? t(phase.key, ...(phase.values ?? [])) : t("正在生成…")}</div>}
               <form className="composer" onSubmit={(e) => {
                 e.preventDefault();
@@ -1504,7 +1497,7 @@ export default function App() {
               />
             </label>}
             <p className="muted">{t("新故事和未绑定的故事使用全局默认主角；绑定后切换故事会恢复各自的身份。")}</p>
-            {error && <p className="banner error" role="alert">{error}</p>}
+            {error && <Notice className="banner error" role="alert" onDismiss={() => setError('')}>{error}</Notice>}
           </div>
         </section>
       </div>}
@@ -1532,7 +1525,7 @@ export default function App() {
                 <p className="muted">{t("适用于手动粘贴到 Gemini、ChatGPT、Claude 等网页。整理为普通写作的单条文本，角色标签不等于网页端真正的 System 消息。建议在新对话中粘贴。")}</p>
                 {promptPreview.input && <p className="muted">{t("复制成功后同步保存本轮主角／用户旁白内容，不调用正文模型。")}</p>}
                 {promptPreview.action === 'regenerate' && <p className="muted">{t("使用最新回复之前的正文和记录，不包含待替换的回复，也不发送或保存输入框草稿。复制后可手动填写新版本。")}</p>}
-                {promptPreview.copyError && <p className="error" role="alert">{promptPreview.copyError}</p>}
+                {promptPreview.copyError && <Notice className="error" role="alert" onDismiss={() => setPromptPreview((current: any) => current ? { ...current, copyError: null } : current)}>{promptPreview.copyError}</Notice>}
                 <pre tabIndex={0}>{promptPreview.webPrompt}</pre>
               </section>
               <ContextReport report={promptPreview.contextReport} />

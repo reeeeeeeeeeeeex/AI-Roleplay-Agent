@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Pencil, Square } from 'lucide-react';
 import type { ActionChoiceCache } from '@new-ai-chat/contracts';
 import { api } from './api.js';
+import Notice from './Notice.js';
 import { flushContentEdits, registerContentEditor } from './useContentAutosave.js';
 import './action-choices.css';
 
@@ -115,7 +116,7 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
     {open && <>
       {busy && <small role="status">{t("正在生成行动选项…")}</small>}
       {saving && <small role="status">{t("保存中…")}</small>}
-      {error && <p className="error" role="alert">{error}</p>}
+      {error && <Notice className="error" role="alert" onDismiss={() => setError('')}>{error}</Notice>}
       <div className="action-choice-grid">
         {group?.choices.map((text, index) => <div className="action-choice-bubble" key={`${group.id}:${index}`}>
           {edit?.groupId === group.id && edit.index === index

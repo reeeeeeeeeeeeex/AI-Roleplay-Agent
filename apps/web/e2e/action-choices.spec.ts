@@ -23,8 +23,12 @@ test('failed action edits block composer sending until the draft saves', async (
   await edit.fill('保留这个修改后的选项。');
   await input.click();
   await expect(panel.getByRole('alert')).toContainText('选项暂时无法保存');
+  await panel.getByRole('alert').getByRole('button', { name: '关闭提示', exact: true }).click();
+  await expect(panel.getByRole('alert')).toHaveCount(0);
+  await expect(edit).toHaveValue('保留这个修改后的选项。');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.getByRole('alert').filter({ hasText: '内容尚未保存' })).toBeVisible();
+  await expect(panel.getByRole('alert')).toContainText('选项暂时无法保存');
   await expect(edit).toHaveValue('保留这个修改后的选项。');
   await expect(input).toHaveValue('正文也需要等待保存。');
   expect(turns).toBe(0);
