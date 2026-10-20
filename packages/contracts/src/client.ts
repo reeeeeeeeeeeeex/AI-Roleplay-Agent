@@ -37,6 +37,8 @@ export const stateColumns: Record<StateTableName, string[]> = {
   protagonist_skills: ['skill_name', 'skill_type', 'skill_level', 'effect_description'],
   inventory: ['item_name', 'quantity', 'description', 'category'],
   quests_events: ['quest_name', 'quest_type', 'issuer', 'detail_description', 'current_progress', 'time_limit', 'reward', 'penalty'],
+  locations_and_factions: ['type', 'name', 'description'],
+  other: ['name', 'description'],
 };
 export { historyStartIndex } from './history.js';
 export { formatUiText, type UiText } from './diagnostics.js';

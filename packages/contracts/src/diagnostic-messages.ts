@@ -1,5 +1,7 @@
 // Application diagnostics only; never translate provider payloads or model instructions.
 export const diagnosticMessages = {
+  'Location, faction and other fields must be text.': { original: 'Location, faction and other fields must be text.', zh: '地点、势力与其他记录的字段必须是文本。', en: 'Location, faction and other fields must be text.' },
+  'Location or faction type must be location or faction.': { original: 'Location or faction type must be location or faction.', zh: '地点与势力的类型必须是 location（地点）或 faction（势力）。', en: 'Location or faction type must be location or faction.' },
   "只能修改当前历史中的消息版本。": { original: "只能修改当前历史中的消息版本。", zh: "只能修改当前历史中的消息版本。", en: "Only messages in the current history can be edited or switched." },
   "所选消息不是同一位置的版本。": { original: "所选消息不是同一位置的版本。", zh: "所选消息不是同一位置的版本。", en: "The selected message is not a version of the same position." },
   '新版本必须保留原回复的发言者。': { original: '新版本必须保留原回复的发言者。', zh: '新版本必须保留原回复的发言者。', en: 'A new version must keep the original reply speaker.' },

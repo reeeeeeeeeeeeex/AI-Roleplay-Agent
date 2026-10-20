@@ -21,6 +21,8 @@ const tableNames: Record<string, string> = {
   get protagonist_skills() { return t("主角技能"); },
   get inventory() { return t("背包物品"); },
   get quests_events() { return t("任务与事件"); },
+  get locations_and_factions() { return t("地点与势力"); },
+  get other() { return t("其他"); },
 };
 export default function Records({
   chat,

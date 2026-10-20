@@ -1,4 +1,4 @@
-import { AppError, errorText, uiText, type UiText } from '@new-ai-chat/contracts';
+import { AppError, errorText, uiText, normalizeState, type UiText } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { defaultPromptSettings, generalSettingsSchema, personaInputSchema, personaStateTemplateSchema, promptSettingsSchema, promptPresetSchema, type GeneralSettings, type PromptSettings, type PromptPreset, type PromptPresetInput, type PromptPresetPatch, type TurnTrace } from '@new-ai-chat/contracts';
@@ -571,16 +571,16 @@ export class Repository {
     // Find the branch's checkpoint before decoding potentially large historical state tables.
     const selected = this.database.db.select({ id: stateSnapshots.id }).from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().find((item) => active(item.id));
     const row = selected ? this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.id, selected.id)).get() : null;
-    return row ? { ...row, version: row.version as 1 | 2 } : null;
+    return row ? { ...row, tables: normalizeState(row.tables), version: row.version as 1 | 2 } : null;
   }
   createState(conversationId: string, storyTurnId: string | null, tables: ProtagonistTables): ProtagonistStateSnapshot {
-    const row = { id: id(), conversationId, storyTurnId, version: 2 as const, tables, createdAt: now() };
+    const row = { id: id(), conversationId, storyTurnId, version: 2 as const, tables: normalizeState(tables), createdAt: now() };
     this.database.db.insert(stateSnapshots).values(row).run();
     this.addEvent(conversationId, null, 'checkpoint', { id: row.id, head: this.getConversation(conversationId)?.headMessageId ?? null }); return row;
   }
   listStateSnapshots(conversationId: string): ProtagonistStateSnapshot[] {
     const active = this.checkpointFilter(conversationId);
-    return this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter((row) => active(row.id)).map((row) => ({ ...row, version: row.version as 1 | 2 }));
+    return this.database.db.select().from(stateSnapshots).where(eq(stateSnapshots.conversationId, conversationId)).orderBy(desc(sql`rowid`)).all().filter((row) => active(row.id)).map((row) => ({ ...row, tables: normalizeState(row.tables), version: row.version as 1 | 2 }));
   }
   listStateCheckpoints(conversationId: string) {
     const active = this.checkpointFilter(conversationId);
@@ -590,7 +590,7 @@ export class Repository {
   getStateSnapshot(conversationId: string, snapshotId: string): ProtagonistStateSnapshot | null {
     if (!this.checkpointActive(conversationId, snapshotId)) return null;
     const row = this.database.db.select().from(stateSnapshots).where(and(eq(stateSnapshots.conversationId, conversationId), eq(stateSnapshots.id, snapshotId))).get();
-    return row ? { ...row, version: row.version as 1 | 2 } : null;
+    return row ? { ...row, tables: normalizeState(row.tables), version: row.version as 1 | 2 } : null;
   }
 
   createProposals(conversationId: string, plan: TurnPlan): void {

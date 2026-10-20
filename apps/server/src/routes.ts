@@ -342,7 +342,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
   app.route({ method: ['PATCH', 'DELETE'], url: '/api/conversations/:id/state/row', handler: async req => {
     const chat = idOf(req); turns.assertIdle(chat);
     const value = z.object({
-      head: z.string().nullable(), table: z.enum(['important_characters', 'protagonist_skills', 'inventory', 'quests_events']),
+      head: z.string().nullable(), table: z.enum(['important_characters', 'protagonist_skills', 'inventory', 'quests_events', 'locations_and_factions', 'other']),
       rowId: z.number().int().positive(), previous: z.record(z.string(), z.unknown()), cells: z.record(z.string(), z.unknown()).optional(),
     }).parse(req.body);
     const tables = repo.latestState(chat)?.tables ?? blankState();

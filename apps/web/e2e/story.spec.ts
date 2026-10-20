@@ -1431,6 +1431,43 @@ test('record fields save directly on blur and when the drawer closes', async ({ 
   await expect(page.getByRole('textbox', { name: '全局状态 1 当前地点', exact: true })).toHaveValue('旧书店');
 });
 
+test('location faction and other rows edit directly in Chinese and English', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: {
+    locations_and_factions: [{ row_id: 1, type: 'location', name: '旧港区', description: '北门封锁' }],
+    other: [{ row_id: 1, name: '通缉状态', description: '未知' }],
+  } } });
+  await page.reload();
+  if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
+  await page.getByRole('button', { name: '主角状态', exact: true }).click();
+  await page.locator('summary').filter({ hasText: '地点与势力' }).click();
+  const location = page.locator('.state-row[data-table="locations_and_factions"]');
+  await expect(location.getByRole('combobox', { name: '类型', exact: true })).toHaveValue('location');
+  await location.getByRole('combobox', { name: '类型', exact: true }).selectOption('faction');
+  await location.getByRole('textbox', { name: '名称', exact: true }).fill('商会');
+  await location.getByRole('textbox', { name: '描述', exact: true }).fill('控制运输');
+  await page.getByRole('heading', { name: '故事记录', exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.locations_and_factions[0]).toMatchObject({ type: 'faction', name: '商会', description: '控制运输' });
+  await englishInterface(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('summary').filter({ hasText: 'Locations and factions' })).toBeVisible();
+  await expect(location.getByRole('combobox', { name: 'Type', exact: true })).toHaveValue('faction');
+  await expect(location.getByRole('combobox').locator('option:checked')).toHaveText('Faction');
+  await expect(location.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('商会');
+  await page.locator('summary').filter({ hasText: /^Other/ }).click();
+  const other = page.locator('.state-row[data-table="other"]');
+  await other.getByRole('textbox', { name: 'Description', exact: true }).fill('Patrols increased');
+  await page.getByRole('heading', { name: 'Story records', exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.other[0].description).toBe('Patrols increased');
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.reload();
+  if (!await page.getByRole('button', { name: 'Close records panel' }).isVisible()) await page.getByRole('button', { name: 'Records panel', exact: true }).click();
+  await page.getByRole('button', { name: 'Protagonist state', exact: true }).click();
+  await page.locator('summary').filter({ hasText: /^Other/ }).click();
+  await expect(other.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue('Patrols increased');
+});
+
 test('collection rows edit together and delete invalid drafts without saving them', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
@@ -1469,23 +1506,23 @@ test('collection rows edit together and delete invalid drafts without saving the
 test('collection row save failure retains the whole draft for retry', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
-  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { protagonist_skills: [{ row_id: 1, skill_name: '飞行', skill_type: '魔法' }] } } });
+  await request.post(`/api/conversations/${chat.id}/state`, { data: { tables: { other: [{ row_id: 1, name: '通行限制', description: '未知' }] } } });
   await page.reload();
   await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toBeVisible();
   if (!await page.getByRole('button', { name: '关闭记录面板' }).isVisible()) await page.getByRole('button', { name: '记录面板', exact: true }).click();
   await page.getByRole('button', { name: '主角状态', exact: true }).click();
-  await page.locator('summary').filter({ hasText: '主角技能' }).click();
-  const row = page.locator('.state-row[data-table="protagonist_skills"]');
+  await page.locator('summary').filter({ hasText: /^其他/ }).click();
+  const row = page.locator('.state-row[data-table="other"]');
   await expect(row.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
-  await row.getByRole('textbox', { name: '效果描述', exact: true }).fill('暂时悬浮');
+  await row.getByRole('textbox', { name: '描述', exact: true }).fill('夜间禁止通行');
   await page.route('**/api/conversations/*/state/row', route => route.fulfill({ status: 500, json: { error: '测试保存失败' } }));
   await page.getByRole('heading', { name: '故事记录', exact: true }).click();
   await expect(row.getByRole('alert')).toContainText('草稿已保留');
-  await expect(row.getByRole('textbox', { name: '效果描述', exact: true })).toHaveValue('暂时悬浮');
+  await expect(row.getByRole('textbox', { name: '描述', exact: true })).toHaveValue('夜间禁止通行');
   await page.unroute('**/api/conversations/*/state/row');
-  await row.getByRole('textbox', { name: '效果描述', exact: true }).focus();
+  await row.getByRole('textbox', { name: '描述', exact: true }).focus();
   await page.getByRole('heading', { name: '故事记录', exact: true }).click();
-  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.protagonist_skills[0].effect_description).toBe('暂时悬浮');
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/state`)).json()).tables.other[0].description).toBe('夜间禁止通行');
 });
 
 for (const closeBy of ['panel', 'toolbar'] as const) test(`failed record autosave keeps the drawer open when closing from its ${closeBy}`, async ({ page, request }, info) => {

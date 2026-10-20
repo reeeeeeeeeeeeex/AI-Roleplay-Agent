@@ -928,6 +928,78 @@ it('record send switches gate injected context and tool reads while keeping fixe
   expect(await request.source.readState()).toBeNull();
 });
 
+it('state collections: AI maintenance creates and updates evidenced locations, factions and other facts', async () => {
+  await normal();
+  const maintain = vi.spyOn(runtime, 'maintain').mockResolvedValueOnce(JSON.stringify([
+    { op: 'insertRow', table: 'locations_and_factions', cells: { type: 'location', name: '旧港区', description: '北门封锁' } },
+    { op: 'insertRow', table: 'locations_and_factions', cells: { type: 'faction', name: '商会', description: '控制运输' } },
+    { op: 'insertRow', table: 'other', cells: { name: '通缉状态', description: '尚未被通缉' } },
+  ])).mockResolvedValueOnce(JSON.stringify([
+    { op: 'updateRow', table: 'locations_and_factions', rowId: 1, cells: { description: '北门重新开放' } },
+    { op: 'updateRow', table: 'other', rowId: 1, cells: { description: '城卫开始搜捕' } },
+  ]));
+  expect((await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/state/generate` })).statusCode).toBe(200);
+  const instruction = maintain.mock.calls[0]![1];
+  expect(instruction).toContain('"locations_and_factions":["type","name","description"]');
+  expect(instruction).toContain('"other":["name","description"]');
+  expect(instruction).toContain('type must be location or faction');
+  expect(instruction).toContain('language of the story');
+  expect(instruction).toContain('only established story evidence');
+  const repo = server.repository;
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), stateTurnInterval: 1, memoryTurnInterval: 0 });
+  await normal();
+  expect(maintain).toHaveBeenCalledTimes(2);
+  expect(maintain.mock.calls[1]![0].dynamicContext.find(item => item.source === 'state')?.content).toContain('旧港区');
+  expect(repo.latestState(chat)?.tables.locations_and_factions).toMatchObject([
+    { row_id: 1, type: 'location', name: '旧港区', description: '北门重新开放' },
+    { row_id: 2, type: 'faction', name: '商会', description: '控制运输' },
+  ]);
+  expect(repo.latestState(chat)?.tables.other).toMatchObject([{ row_id: 1, name: '通缉状态', description: '城卫开始搜捕' }]);
+});
+
+it('state collections: old snapshots remain unchanged and new entries survive forks and story archives', async () => {
+  const repo = server.repository;
+  await normal();
+  const { locations_and_factions: _locations, other: _other, ...legacy } = blankState();
+  legacy.global_state[0]!.current_location = '旧港区';
+  const snapshot = repo.createState(chat, null, blankState());
+  repo.database.sqlite.prepare('UPDATE state_snapshots SET tables = ? WHERE id = ?').run(JSON.stringify(legacy), snapshot.id);
+  const read = (await server.app.inject({ url: `/api/conversations/${chat}/state` })).json();
+  expect(read.tables).toMatchObject({ locations_and_factions: [], other: [], global_state: [{ current_location: '旧港区' }] });
+  expect(JSON.parse((repo.database.sqlite.prepare('SELECT tables FROM state_snapshots WHERE id = ?').get(snapshot.id) as { tables: string }).tables)).toEqual(legacy);
+  read.tables.locations_and_factions = [{ row_id: 1, type: 'faction', name: '商会', description: '控制运输' }];
+  read.tables.other = [{ row_id: 1, name: '通缉状态', description: '未被通缉' }];
+  expect((await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/state`, payload: read })).statusCode).toBe(200);
+  const head = repo.getConversation(chat)!.headMessageId;
+  const fork = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { head, messageId: head } });
+  expect(fork.statusCode).toBe(201);
+  expect(repo.latestState(fork.json().id)?.tables).toEqual(read.tables);
+  const archive = (await server.app.inject({ url: `/api/conversations/${chat}/export?format=native` })).json();
+  const restored = await server.app.inject({ method: 'POST', url: '/api/imports/story/execute', payload: archive });
+  expect(restored.statusCode, restored.body).toBe(201);
+  expect(repo.latestState(restored.json().id)?.tables).toEqual(read.tables);
+});
+
+it('state collections: direct row edits reject stale saves and invalid types without losing current facts', async () => {
+  const repo = server.repository, tables = blankState();
+  tables.locations_and_factions = [{ row_id: 1, type: 'location', name: '旧港区', description: '封锁' }];
+  tables.other = [{ row_id: 1, name: '通缉状态', description: '未知' }];
+  repo.createState(chat, null, tables);
+  const url = `/api/conversations/${chat}/state/row`;
+  const payload = { head: null, table: 'locations_and_factions', rowId: 1, previous: tables.locations_and_factions[0], cells: { name: '新港区', type: 'faction', description: '船工同盟' } };
+  const saved = await server.app.inject({ method: 'PATCH', url, payload });
+  expect(saved.statusCode, saved.body).toBe(200);
+  expect(saved.json().tables.locations_and_factions[0]).toMatchObject(payload.cells);
+  expect((await server.app.inject({ method: 'PATCH', url, payload })).statusCode).toBe(400);
+  const invalid = await server.app.inject({ method: 'PATCH', url, payload: { ...payload, previous: saved.json().tables.locations_and_factions[0], cells: { type: 'invalid' } } });
+  expect(invalid.statusCode).toBe(400);
+  expect(invalid.json().errorText.key).toBe('Location or faction type must be location or faction.');
+  expect(repo.latestState(chat)?.tables.locations_and_factions[0]).toMatchObject(payload.cells);
+  expect((await server.app.inject({ method: 'DELETE', url, payload: { head: null, table: 'other', rowId: 1, previous: tables.other[0] } })).statusCode).toBe(200);
+  expect(repo.latestState(chat)?.tables.other).toEqual([]);
+  expect(runtime.requests).toEqual([]);
+});
+
 it('record model: manual maintenance shares its connection and retains its own records', async () => {
   await normal();
   const repo = server.repository;

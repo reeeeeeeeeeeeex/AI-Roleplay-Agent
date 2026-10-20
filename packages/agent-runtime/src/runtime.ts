@@ -3,7 +3,7 @@ import { AppError } from '@new-ai-chat/contracts';
 import { Agent, type AgentEvent, type AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type AssistantMessage, type AssistantMessageEvent, type Context, type Message } from '@earendil-works/pi-ai';
 import type { RequestTiming, SpeakerRef, TurnPlan, ContextReport } from '@new-ai-chat/contracts';
-import { actionChoiceListSchema, defaultPromptSettings, stateDeathInstruction } from '@new-ai-chat/contracts';
+import { actionChoiceListSchema, defaultPromptSettings, modelStateColumns, stateCollectionInstruction, stateDeathInstruction } from '@new-ai-chat/contracts';
 import { assertRecordBudget, buildActionChoiceContext, buildRecordContext, memoryGuidance } from './prompt.js';
 import { buildAuthorNoteMessages, buildDynamicAnchor, buildHistoryMessages, buildStableSystemPrompt, buildWriterContext, fitRequest, latestUserAnchor, estimateTokens } from './prompt.js';
 import { fallbackPlan, validatePlan } from './plan.js';
@@ -157,7 +157,7 @@ function planTool(name: 'submit_turn_plan' | 'select_output_voices', request: Ro
         brief: Type.String({ maxLength: 4_000 }),
       }), { minItems: 1, maxItems: 2 }),
       worldEventProposals: Type.Optional(Type.Array(Type.Unknown())),
-      protagonistStateProposals: Type.Optional(Type.Array(Type.Unknown())),
+      protagonistStateProposals: Type.Optional(Type.Array(Type.Unknown(), { description: `Optional evidenced state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Allowed fields: ${JSON.stringify(modelStateColumns)}. ${stateCollectionInstruction}` })),
       warnings: Type.Optional(Type.Array(Type.String())),
     }),
     execute: async (_id, args) => {

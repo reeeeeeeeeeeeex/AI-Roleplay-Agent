@@ -1,6 +1,6 @@
 import { AppError } from '@new-ai-chat/contracts';
 import { z } from 'zod';
-import { applyStateOperations, blankState, modelStateColumns, stateColumnLabels, stateDeathInstruction, type ProtagonistTables, type MemoryCoverage, type MessageNode } from '@new-ai-chat/contracts';
+import { applyStateOperations, blankState, modelStateColumns, stateColumnLabels, stateDeathInstruction, stateCollectionInstruction, type ProtagonistTables, type MemoryCoverage, type MessageNode } from '@new-ai-chat/contracts';
 import { fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
 import type { Repository } from '../db/repository.js';
 
@@ -53,7 +53,7 @@ export class RecordService {
       if (trace) request.trace = trace;
       const instruction = kind === 'memory'
         ? `${memoryRecordInstruction} Append a new stage, preserve earlier memory, and avoid repeating details already summarized.`
-        : `Return only a JSON array of state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Never use SQL. Allowed fields: ${JSON.stringify(modelStateColumns)}. Field labels: ${JSON.stringify(stateColumnLabels)}. Past Experience Before Story / 故事前经历 is user-authored context and must never be changed. Occupation / 身份与地位 includes identity and social standing; Current Outfit / 当前穿搭 is current clothing, while appearance is stable physical appearance. Past Experience in Story / 故事中经历 starts with this chat. global_state/protagonist_info are update-only row 1. Do not delete important_characters. Maintain current facts and compact long-term conclusions; chronology belongs in Memory. Required insert identities: name+gender_age, skill_name+skill_type, item_name+quantity+category, quest_name+quest_type. Inventory quantity is a positive integer; ${stateDeathInstruction} Empty array if no evidenced change.`;
+        : `Return only a JSON array of state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Never use SQL. Allowed fields: ${JSON.stringify(modelStateColumns)}. Field labels: ${JSON.stringify(stateColumnLabels)}. Past Experience Before Story / 故事前经历 is user-authored context and must never be changed. Occupation / 身份与地位 includes identity and social standing; Current Outfit / 当前穿搭 is current clothing, while appearance is stable physical appearance. Past Experience in Story / 故事中经历 starts with this chat. global_state/protagonist_info are update-only row 1. Do not delete important_characters. Maintain current facts and compact long-term conclusions; chronology belongs in Memory. Required insert identities: name+gender_age, skill_name+skill_type, item_name+quantity+category, quest_name+quest_type, locations_and_factions: name+type, other: name. ${stateCollectionInstruction} Inventory quantity is a positive integer; ${stateDeathInstruction} Empty array if no evidenced change.`;
       let coverage: MemoryCoverage | null = null;
       if (kind === 'memory') {
         const branch = this.repository.getActiveBranch(chat);

@@ -523,6 +523,8 @@ export const stateTableNames = [
   'protagonist_skills',
   'inventory',
   'quests_events',
+  'locations_and_factions',
+  'other',
 ] as const;
 export type StateTableName = (typeof stateTableNames)[number];
 export type StateRow = { row_id: number } & Record<string, string | number | boolean | null>;

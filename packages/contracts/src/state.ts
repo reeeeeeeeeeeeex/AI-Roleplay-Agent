@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { stateColumns } from './client.js';
 export { stateColumns } from './client.js';
 import type { Persona, ProtagonistTables, StateRow, StateTableName } from './index.js';
-const stateTableNames = ['global_state', 'protagonist_info', 'important_characters', 'protagonist_skills', 'inventory', 'quests_events'] as const;
+const stateTableNames = ['global_state', 'protagonist_info', 'important_characters', 'protagonist_skills', 'inventory', 'quests_events', 'locations_and_factions', 'other'] as const;
 
 export const stateColumnLabels: Partial<Record<StateTableName, Record<string, string>>> = {
   global_state: { previous_scene_time: 'Previous Scene Time / 上一个场景的时间', elapsed_time: 'Elapsed Scene Time / 经过的时间' },
@@ -27,8 +27,14 @@ export function normalizeLegacyStateCells(table: string, input: Record<string, u
   return cells;
 }
 export const stateDeathInstruction = 'is_dead means confirmed death only: 是 = dead, 否 = not dead, empty = unknown. Leaving, absence, disappearance, or being off-screen is not evidence of death.';
+export const stateCollectionInstruction = 'locations_and_factions contains named locations and factions relevant to the story: type must be location or faction, with name and description as text. Keep global_state.current_location as the protagonist\'s current location. other contains name and description text for story-specific current facts that do not fit existing tables; choose meaningful names yourself. Use only established story evidence, not possible actions or background lore as proof that events happened. Update existing entries by rowId instead of inserting duplicates (same type and name for locations_and_factions; same name for other). Keep descriptions concise and in the language of the story.';
 export const singletons = new Set<StateTableName>(['global_state', 'protagonist_info']);
-const identities: Partial<Record<StateTableName, string[]>> = { important_characters: ['name', 'gender_age'], protagonist_skills: ['skill_name', 'skill_type'], inventory: ['item_name', 'quantity', 'category'], quests_events: ['quest_name', 'quest_type'] };
+const identities: Partial<Record<StateTableName, string[]>> = { important_characters: ['name', 'gender_age'], protagonist_skills: ['skill_name', 'skill_type'], inventory: ['item_name', 'quantity', 'category'], quests_events: ['quest_name', 'quest_type'], locations_and_factions: ['name', 'type'], other: ['name'] };
+function validateCollectionCells(table: StateTableName, row: StateRow) {
+  if (table !== 'locations_and_factions' && table !== 'other') return;
+  if (stateColumns[table].some(column => typeof row[column] !== 'string')) throw new AppError('Location, faction and other fields must be text.');
+  if (table === 'locations_and_factions' && row.type !== 'location' && row.type !== 'faction') throw new AppError('Location or faction type must be location or faction.');
+}
 const cellSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 export const stateOperationSchema = z.object({
   op: z.enum(['updateRow', 'insertRow', 'deleteRow']), table: z.enum(stateTableNames),
@@ -70,7 +76,9 @@ export function normalizeState(input: unknown): ProtagonistTables {
       if (Object.keys(row).some((c) => c !== 'row_id' && !stateColumns[table].includes(c))) throw new AppError("Unknown column in {0}.", table);
       let rowId = Number(row.row_id);
       if (!Number.isSafeInteger(rowId) || rowId <= 0 || used.has(rowId)) { rowId = 1; while (reserved.has(rowId) || used.has(rowId)) rowId++; }
-      used.add(rowId); return { ...Object.fromEntries(stateColumns[table].map((c) => [c, row[c] ?? ''])), row_id: rowId } as StateRow;
+      const normalized = { ...Object.fromEntries(stateColumns[table].map((c) => [c, row[c] ?? ''])), row_id: rowId } as StateRow;
+      validateCollectionCells(table, normalized);
+      used.add(rowId); return normalized;
     });
     if (!result[table].length && singletons.has(table)) result[table] = blankState()[table];
   }
@@ -96,13 +104,14 @@ export function applyStateOperations(input: ProtagonistTables, operations: unkno
     if (op === 'deleteRow') { tables[table].splice(index, 1); continue; }
     const original = op === 'insertRow' ? null : tables[table][index]!;
     const next: StateRow = original ? { ...original, ...cells } : { row_id: Math.max(0, ...tables[table].map((r) => r.row_id)) + 1, ...Object.fromEntries(stateColumns[table].map((c) => [c, ''])), ...(table === 'inventory' ? { quantity: '1' } : {}), ...cells };
+    validateCollectionCells(table, next);
     for (const column of identities[table] ?? []) if ((!original || column in cells!) && !key(next[column])) throw new AppError("Missing identity field: {0}", column);
     if (table === 'inventory' && (!original || 'quantity' in cells!)) {
       const quantity = Number(next.quantity); if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new AppError("Quantity must be a positive integer.");
     }
     if (table === 'important_characters' && (!original || 'is_dead' in cells!) && !['是', '否', ''].includes(String(next.is_dead))) throw new AppError("is_dead must be 是, 否, or empty (unknown).");
     const uniqueColumn = identities[table]?.[0];
-    if (uniqueColumn && (!original || key(next[uniqueColumn]) !== key(original[uniqueColumn])) && tables[table].some((row) => row !== original && key(row[uniqueColumn]) === key(next[uniqueColumn]))) throw new AppError("Duplicate identity.");
+    if (uniqueColumn && (!original || key(next[uniqueColumn]) !== key(original[uniqueColumn]) || (table === 'locations_and_factions' && next.type !== original.type)) && tables[table].some((row) => row !== original && key(row[uniqueColumn]) === key(next[uniqueColumn]) && (table !== 'locations_and_factions' || row.type === next.type))) throw new AppError("Duplicate identity.");
     if (original) tables[table][index] = next; else tables[table].push(next);
   }
   return { tables, changed: JSON.stringify(tables) !== JSON.stringify(input) };
