@@ -16,7 +16,7 @@ import type { AppConfig } from './config.js';
 import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
 import type { ActionChoiceService } from './services/action-choices.js';
-import { forkStory, deleteStoryFrom } from './services/story-branches.js';
+import { forkStory, deleteStoryFrom, selectMessageVersion } from './services/story-branches.js';
 import { projectMemoryStages, splitMemoryStages } from './memory-stages.js';
 import type { MemoryRebuildService } from './services/memory-rebuild.js';
 
@@ -191,14 +191,22 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const target = repo.getMessage(idOf(req)); if (!target) throw new AppError("Message not found."); turns.assertIdle(target.conversationId);
     const { content, previous, head } = z.object({ content: z.string().max(100_000), previous: z.string().optional(), head: z.string().nullable().optional() }).parse(req.body);
     if (head !== undefined && repo.getConversation(target.conversationId)?.headMessageId !== head) throw new AppError("分支已变化，未覆盖当前故事。请重新打开后核对草稿。");
+    if (!repo.activeMessageIds(target.conversationId).has(target.id)) throw new AppError("只能修改当前历史中的消息版本。");
     if (previous !== undefined && target.content !== previous) throw new AppError("消息已变化，未覆盖现有内容。");
     if (target.content === content) return target;
     const wasSettled = target.storyTurnId && settledStoryIds(repo, target.conversationId).includes(target.storyTurnId);
     return repo.database.sqlite.transaction(() => {
-      const message = repo.createMessage({ ...target, content, providerState: null, legacyPayload: null }); repo.setHead(target.conversationId, message.id);
+      const message = repo.createMessage({ ...target, content, providerState: null, legacyPayload: null });
+      selectMessageVersion(repo, target.conversationId, target.id, message.id, repo.getConversation(target.conversationId)!.headMessageId);
       if (wasSettled && target.role === 'assistant') repo.addEvent(target.conversationId, null, 'story.settled', { storyTurnId: target.storyTurnId, head: message.id, variant: true });
       return message;
     })();
+  });
+  app.post('/api/messages/:id/select-version', async req => {
+    const target = repo.getMessage(idOf(req)); if (!target) throw new AppError("Message not found.");
+    turns.assertIdle(target.conversationId);
+    const { versionId, head } = z.object({ versionId: z.string().min(1), head: z.string().nullable() }).parse(req.body);
+    return selectMessageVersion(repo, target.conversationId, target.id, versionId, head);
   });
   app.get('/api/messages/:id/swipes', async (req) => repo.listSwipes(idOf(req)).map((m) => ({ ...m, providerState: null, legacyPayload: null })));
   app.post('/api/messages/:id/swipe', async (req,reply) => {

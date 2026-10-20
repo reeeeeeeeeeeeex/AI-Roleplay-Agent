@@ -6,6 +6,7 @@ import type { Repository } from '../db/repository.js';
 import { EventBroker } from './events.js';
 import { createTraceSink } from './trace.js';
 import { StoryContext } from './context.js';
+import { selectMessageVersion } from './story-branches.js';
 import type { InternalPluginHost } from './plugins.js';
 
 export class TurnService {
@@ -67,7 +68,7 @@ export class TurnService {
       } else if (target && request.trigger === 'continue') {
         parent = target.parentId; continueText = target.content;
       }
-      this.repository.setHead(chat.id, request.trigger === 'continue' ? target!.id : parent);
+      if (!swipe) this.repository.setHead(chat.id, request.trigger === 'continue' ? target!.id : parent);
       if (request.input && request.trigger === 'normal' && !this.repository.latestState(chat.id)) {
         const persona = this.repository.resolvePersona(chat.personaId);
         if (persona) this.repository.createState(chat.id, null, seedStateFromPersona(persona));
@@ -88,7 +89,7 @@ export class TurnService {
     if (previous.plan) validatePlan(previous.plan, previous.storyTurnId, new StoryContext(this.repository, previous.conversationId).cast);
     const turn = this.repository.database.sqlite.transaction(() => {
       const next = this.repository.createTurn(previous.conversationId, previous.storyTurnId, previous.trigger);
-      if (!progress.completedMessageIds.length && previous.trigger !== 'continue') {
+      if (!progress.completedMessageIds.length && previous.trigger !== 'continue' && !progress.swipe) {
         progress.head = progress.parent; this.repository.setHead(previous.conversationId, progress.head);
       }
       progress.interruptedOutputs = [];
@@ -101,7 +102,7 @@ export class TurnService {
     this.assertIdle(chatId);
     const chat = this.repository.getConversation(chatId);
     if (!chat) throw new AppError("Conversation not found.");
-    if (chat.headMessageId !== input.head) throw Object.assign(new AppError("当前消息位置已变化，请重新预览或核对后再保存。"), { statusCode: 409 });
+    if (chat.headMessageId !== input.head || (input.expectedUpdatedAt !== undefined && chat.updatedAt !== input.expectedUpdatedAt)) throw Object.assign(new AppError("当前消息位置已变化，请重新预览或核对后再保存。"), { statusCode: 409 });
     const target = input.role === 'assistant' && input.targetMessageId ? this.repository.getMessage(input.targetMessageId) : null;
     if (input.role === 'assistant' && input.targetMessageId) {
       if (!target || target.conversationId !== chatId || target.role !== 'assistant' || !this.repository.activeMessageIds(chatId).has(target.id)) {
@@ -125,7 +126,8 @@ export class TurnService {
         speaker: input.role === 'assistant' ? input.speaker : null, content: input.role === 'user' ? input.input.text : input.text,
         providerState: null, legacyPayload: null, generationInfo: input.role === 'assistant'
           ? { mode: 'manual', model: '', streaming: false, thinking: null, usage: null, timing: null, requestCount: 0 } : null });
-      this.repository.setHead(chatId, message.id);
+      if (target) selectMessageVersion(this.repository, chatId, target.id, message.id, chat.headMessageId);
+      else this.repository.setHead(chatId, message.id);
       if (input.role === 'user' && !this.repository.latestState(chatId)) {
         const persona = this.repository.resolvePersona(chat.personaId);
         if (persona) this.repository.createState(chatId, null, seedStateFromPersona(persona));
@@ -193,9 +195,9 @@ export class TurnService {
     const plan = forced ? { ...fallbackPlan(request.storyTurnId, request.characters, { mode: 'explicit', speaker: forced }), warnings: [] } : undefined;
     const preview = await this.runtime.previewFirstRequest(request, mode, plan);
     const webPreview = mode === 'plain' ? preview : await this.runtime.previewFirstRequest(request, 'plain', plan);
-    if (this.repository.getConversation(chat.id)?.headMessageId !== chat.headMessageId) throw Object.assign(new AppError("消息位置已变化，请重新预览。"), { statusCode: 409 });
+    if (this.repository.getConversation(chat.id)?.headMessageId !== chat.headMessageId || this.repository.getConversation(chat.id)?.updatedAt !== chat.updatedAt) throw Object.assign(new AppError("消息位置已变化，请重新预览。"), { statusCode: 409 });
     return { action: input.trigger, generationMode: mode, protocol: request.connection.protocol, personaName: request.persona?.name ?? null, ...preview,
-      headMessageId: chat.headMessageId, targetMessageId: target?.id, webPrompt: formatWebPrompt(webPreview.requestBody, request.connection.protocol), webSpeaker: webPreview.speaker };
+      headMessageId: chat.headMessageId, sourceUpdatedAt: chat.updatedAt, targetMessageId: target?.id, webPrompt: formatWebPrompt(webPreview.requestBody, request.connection.protocol), webSpeaker: webPreview.speaker };
   }
 
   private async finishRecords(turn: TurnRecord, signal: AbortSignal, trace: ReturnType<typeof createTraceSink>) {
@@ -237,7 +239,7 @@ export class TurnService {
     const fresh = () => { signal.throwIfAborted(); if (this.repository.getConversation(turn.conversationId)?.headMessageId !== expectedHead) throw new AppError("Branch changed; discarded stale generation."); };
     try {
       this.repository.updateTurn(turn.id, { status: 'running' }); emit('turn.started');
-      const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto' || input.trigger === 'continue');
+      const request = await this.request(turn.conversationId, turn.storyTurnId, signal, input.trigger === 'auto' || input.trigger === 'continue', undefined, undefined, swipe && target ? target.parentId : undefined);
       if (input.rewriteInstruction && target) request.rewrite = { instruction: input.rewriteInstruction, originalText: target.content };
       const chat = this.repository.getConversation(turn.conversationId)!;
       const mode = this.repository.getGeneralSettings().generationMode;
@@ -273,9 +275,11 @@ export class TurnService {
             generationInfo: { mode: actualMode, model: request.connection.model, streaming: request.streaming ?? true, thinking: result.thinking || null,
               usage: [result.usage.input, result.usage.output, result.usage.cacheRead, result.usage.cacheWrite, result.usage.totalTokens].some(value => value > 0) ? result.usage : null,
               timing: result.timing, requestCount: result.requestCount }, legacyPayload: null });
-          parent = expectedHead = progress.parent = progress.head = message.id;
+          if (swipe && target) selectMessageVersion(this.repository, turn.conversationId, target.id, message.id, expectedHead);
+          else this.repository.setHead(turn.conversationId, message.id);
+          parent = progress.parent = message.id;
+          expectedHead = progress.head = this.repository.getConversation(turn.conversationId)!.headMessageId;
           progress.completedMessageIds.push(message.id);
-          this.repository.setHead(turn.conversationId, message.id);
           this.repository.updateTurn(turn.id, { progress });
           emit('message.completed', { message: { ...message, providerState: null }, outputIndex, usage: result.usage });
           live.delete(outputIndex); snapshot();
@@ -318,7 +322,7 @@ export class TurnService {
       this.repository.database.sqlite.transaction(() => {
         this.repository.createProposals(turn.conversationId, finalPlan);
         if (finalPlan.protagonistStateProposals.length || finalPlan.worldEventProposals.length) emit('proposals.ready', { plan: finalPlan });
-        emit('story.settled', { head: expectedHead, variant: input.trigger === 'continue' || swipe });
+        emit('story.settled', { head: swipe ? progress.completedMessageIds.at(-1) : expectedHead, variant: input.trigger === 'continue' || swipe });
         this.repository.updateTurn(turn.id, { status: 'completed', recordsStatus: input.trigger === 'continue' || swipe ? 'completed' : 'running', completedAt: new Date().toISOString() });
       })();
       settled = true;

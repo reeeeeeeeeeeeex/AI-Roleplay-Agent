@@ -463,7 +463,66 @@ it('web copy previews plain prose and saves one User at the expected head withou
   expect(network).not.toHaveBeenCalled(); expect(runtime.requests).toEqual([]);
 });
 
-it('manual versions retain siblings, speaker and turn without a model or repeated records', async () => {
+it('editing earlier messages retains later prose, record checkpoints and independent stories', async () => {
+  await normal(); const turn = await normal();
+  const repo = server.repository, branch = repo.getActiveBranch(chat), head = branch.at(-1)!.id;
+  repo.setHead(chat, branch[1]!.id);
+  const memory = repo.createMemory({ conversationId: chat, stage: 1, source: 'manual', storyTurnId: branch[0]!.storyTurnId, content: 'Keep this Memory', coverage: { startMessageId: branch[0]!.id, endMessageId: branch[1]!.id, storyTurnIds: [branch[0]!.storyTurnId!] } });
+  const state = blankState(); state.global_state[0]!.current_location = 'Keep this place';
+  const checkpoint = repo.createState(chat, branch[0]!.storyTurnId, state);
+  repo.saveBookmark(chat, 'Earlier reply', branch[1]!.id);
+  repo.setHead(chat, head); repo.setHistoryStart(chat, branch[0]!.id);
+  repo.createProposals(chat, { ...turn.plan!, worldEventProposals: [{ summary: 'Pending change from old prose', evidence: branch[0]!.content }] });
+  const pending = repo.listProposals(chat).find(row => row.status === 'pending')!;
+  const fork = (await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { messageId: head, head } })).json();
+  const edit = async (index: number, content: string) => {
+    const response = await server.app.inject({ method: 'POST', url: `/api/messages/${branch[index]!.id}/edit`, payload: { head, previous: branch[index]!.content, content } });
+    expect(response.statusCode, response.body).toBe(200); return response.json();
+  };
+  const user = await edit(0, 'Edited earlier User');
+  const assistant = await edit(1, 'Edited earlier Assistant');
+  expect(repo.getActiveBranch(chat).map(row => row.content)).toEqual([user.content, assistant.content, ...branch.slice(2).map(row => row.content)]);
+  expect(repo.getActiveBranch(chat).slice(2).map(row => row.id)).toEqual(branch.slice(2).map(row => row.id));
+  expect(repo.getConversation(chat)).toMatchObject({ headMessageId: head, historyStartMessageId: user.id });
+  expect(repo.listMemories(chat)[0]).toMatchObject({ id: memory.id, content: memory.content, coverage: { startMessageId: user.id, endMessageId: assistant.id } });
+  expect(repo.latestState(chat)).toEqual(checkpoint);
+  expect(() => applyProposal(repo, pending.id, 'apply')).toThrow('Proposal already handled.');
+  expect(repo.listBookmarks(chat)[0]?.messageId).toBe(assistant.id);
+  expect(repo.getActiveBranch(fork.id).map(row => row.content)).toEqual(branch.map(row => row.content));
+  const source = new StoryContext(repo, chat);
+  expect(source.history.map(row => row.content)).toEqual(repo.getActiveBranch(chat).map(row => row.content));
+  expect(source.memory[0]?.content).toBe(memory.content);
+});
+
+it('version selection preserves later versions and rejects obsolete or unrelated targets', async () => {
+  await normal(); const repo = server.repository, branch = repo.getActiveBranch(chat), head = branch.at(-1)!.id;
+  const first = branch[1]!;
+  const variant = repo.createMessage({ ...first, content: 'Earlier alternative' });
+  const laterVariant = repo.createMessage({ ...branch[2]!, content: 'Later alternative' });
+  const choose = (current: string, versionId: string, expectedHead = head) => server.app.inject({ method: 'POST', url: `/api/messages/${current}/select-version`, payload: { versionId, head: expectedHead } });
+  expect((await choose(first.id, branch[0]!.id)).statusCode).toBe(400);
+  expect((await choose(first.id, variant.id, first.id)).statusCode).toBe(400);
+  expect((await choose(first.id, variant.id)).statusCode).toBe(200);
+  expect(repo.getActiveBranch(chat).map(row => row.id)).toEqual([branch[0]!.id, variant.id, head]);
+  expect(repo.listSwipes(head).map(row => row.id)).toContain(laterVariant.id);
+  expect((await choose(first.id, variant.id)).statusCode).toBe(400);
+  expect((await choose(variant.id, first.id)).statusCode).toBe(200);
+  expect(repo.getActiveBranch(chat).map(row => row.id)).toEqual(branch.map(row => row.id));
+  expect(repo.listSwipes(head).map(row => row.id)).toContain(laterVariant.id);
+});
+
+it('web-copy source validation detects earlier edits even when the final message stays the same', async () => {
+  await normal(); const repo = server.repository, branch = repo.getActiveBranch(chat), head = branch.at(-1)!.id;
+  const preview = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/prompt-preview`, payload: { trigger: 'normal', input: { voice: 'protagonist', text: 'Unsent input' } } });
+  expect(preview.statusCode).toBe(200);
+  const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${branch[0]!.id}/edit`, payload: { head, content: 'New earlier input' } });
+  expect(edited.statusCode).toBe(200); expect(repo.getConversation(chat)?.headMessageId).toBe(head);
+  const stale = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/manual-messages`, payload: { role: 'user', head, expectedUpdatedAt: preview.json().sourceUpdatedAt, input: { voice: 'protagonist', text: 'Unsent input' } } });
+  expect(stale.statusCode).toBe(409);
+  expect(repo.getActiveBranch(chat)).toHaveLength(branch.length);
+});
+
+it('manual versions retain the continuation, records and turn without a model', async () => {
   const repo = server.repository;
   repo.setGeneralSettings({ ...repo.getGeneralSettings(), manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 });
   const user = server.turns.appendManual(chat, { role: 'user', head: null, input: { voice: 'protagonist', text: 'Open the door.' } }).message;
@@ -471,20 +530,25 @@ it('manual versions retain siblings, speaker and turn without a model or repeate
   const original = server.turns.appendManual(chat, { role: 'assistant', head: user.id, speaker: { kind: 'character', characterId: character }, text: 'Original reply' }).message;
   await server.turns.idle(chat);
   repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: original.storyTurnId, source: 'manual', content: 'After reply' });
+  const nextUser = server.turns.appendManual(chat, { role: 'user', head: original.id, input: { voice: 'protagonist', text: 'Later input' } }).message;
+  const tail = server.turns.appendManual(chat, { role: 'assistant', head: nextUser.id, speaker: original.speaker!, text: 'Later reply' }).message;
+  await server.turns.idle(chat);
   repo.setGeneralSettings({ ...repo.getGeneralSettings(), connectionId: null, memoryTurnInterval: 1, stateTurnInterval: 1 });
   const maintain = vi.spyOn(runtime, 'maintain');
   const network = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', network);
   const saved = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/manual-messages`, payload: {
-    role: 'assistant', head: original.id, targetMessageId: original.id, speaker: original.speaker, text: 'Alternative reply',
+    role: 'assistant', head: tail.id, targetMessageId: original.id, speaker: original.speaker, text: 'Alternative reply',
   } });
   expect(saved.statusCode).toBe(201);
   const variant = saved.json().message;
   expect(variant).toMatchObject({ parentId: user.id, storyTurnId: original.storyTurnId, speaker: original.speaker, content: 'Alternative reply', generationInfo: { mode: 'manual', usage: null, requestCount: 0 } });
   expect(repo.getMessage(original.id)).toEqual(original);
-  expect(repo.getActiveBranch(chat).map(message => message.id)).toEqual([user.id, variant.id]);
-  expect(settledStoryIds(repo, chat)).toEqual([user.storyTurnId]);
-  expect(repo.listMemories(chat).map(memory => memory.content)).toEqual(['Before reply']);
-  repo.setHead(chat, original.id);
+  expect(repo.getActiveBranch(chat).map(message => message.id)).toEqual([user.id, variant.id, nextUser.id, tail.id]);
+  expect(settledStoryIds(repo, chat)).toEqual([user.storyTurnId, nextUser.storyTurnId]);
+  expect(repo.listMemories(chat).map(memory => memory.content)).toEqual(['After reply', 'Before reply']);
+  const switched = await server.app.inject({ method: 'POST', url: `/api/messages/${variant.id}/select-version`, payload: { versionId: original.id, head: tail.id } });
+  expect(switched.statusCode).toBe(200);
+  expect(repo.getActiveBranch(chat).map(message => message.id)).toEqual([user.id, original.id, nextUser.id, tail.id]);
   expect(repo.listMemories(chat).map(memory => memory.content)).toEqual(['After reply', 'Before reply']);
   expect(saved.json().turn).toMatchObject({ status: 'completed', recordsStatus: 'completed' });
   expect(maintain).not.toHaveBeenCalled(); expect(network).not.toHaveBeenCalled(); expect(runtime.requests).toEqual([]);
@@ -1244,6 +1308,8 @@ describe('branches and records',()=>{
     repo.createMemory({ conversationId: chat, storyTurnId: full[0]!.storyTurnId, stage: 1, source: 'generated', content: '旧走向的未来记忆' });
     const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${full[0]!.id}/edit`, payload: { content: '修改后的 User 消息', head: full.at(-1)!.id } });
     const variant = edited.json();
+    // This fixture deliberately creates another old path; editing alone keeps its tail.
+    repo.setHead(chat, variant.id);
     server.turns.start(turnRequestSchema.parse({ conversationId: chat, targetMessageId: variant.id }));
     await server.turns.idle(chat);
     const current = repo.getActiveBranch(chat);
@@ -1301,18 +1367,18 @@ describe('branches and records',()=>{
     expect((await server.app.inject({ url: `/api/conversations/${copy.id}/export?format=native` })).statusCode).toBe(200);
   });
 
-  it('independent branches recover an old message path without moving the original chat', async () => {
+  it('independent branches copy an inactive reply version without moving the current tail', async () => {
     await normal(); const repo = server.repository; const old = repo.getActiveBranch(chat);
     const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${old[1]!.id}/edit`, payload: { content: '另一版本', head: old.at(-1)!.id } });
-    const currentHead = edited.json().id;
-    repo.setHistoryStart(chat, currentHead);
-    const result = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { messageId: old.at(-1)!.id, head: currentHead } });
+    const currentHead = repo.getConversation(chat)!.headMessageId;
+    repo.setHistoryStart(chat, edited.json().id);
+    const result = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/branches`, payload: { messageId: old[1]!.id, head: currentHead } });
     expect(result.statusCode, result.body).toBe(201);
     const copy = result.json();
-    expect(repo.getActiveBranch(copy.id).map(row => row.content)).toEqual(old.map(row => row.content));
+    expect(repo.getActiveBranch(copy.id).map(row => row.content)).toEqual(old.slice(0, 2).map(row => row.content));
     expect(repo.getConversation(chat)?.headMessageId).toBe(currentHead);
     expect(copy.historyStartMessageId).toBe(repo.getActiveBranch(copy.id)[1]!.id);
-    expect(settledStoryIds(repo, copy.id)).toHaveLength(1);
+    expect(settledStoryIds(repo, copy.id)).toHaveLength(0);
   });
 
   it('independent branches reject stale heads and messages from another chat', async () => {
@@ -1330,14 +1396,21 @@ describe('branches and records',()=>{
     repo.setGeneralSettings({ ...repo.getGeneralSettings(), generationMode: 'planner', memoryTurnInterval: 1 });
     const plan = vi.spyOn(runtime, 'plan'); const route = vi.spyOn(runtime, 'route'); const maintain = vi.spyOn(runtime, 'maintain');
     const instruction = '保留剧情，改成非常简短的对白';
+    vi.spyOn(runtime, 'writeTurn').mockRejectedValueOnce(new Error('Offline rewrite failure'));
     const response = await server.app.inject({ method: 'POST', url: `/api/messages/${old[1]!.id}/swipe`, payload: { instruction } });
     expect(response.statusCode).toBe(202); await server.turns.idle(chat);
+    expect(repo.getTurn(response.json().id)?.status).toBe('failed');
+    expect(repo.getActiveBranch(chat)).toEqual(old);
+    const retried = server.turns.retry(response.json().id); await server.turns.idle(chat);
+    expect(repo.getTurn(retried.id)?.status).toBe('completed');
     const branch = repo.getActiveBranch(chat);
-    expect(branch).toHaveLength(2); expect(branch[1]?.speaker).toEqual(old[1]?.speaker);
-    expect(repo.getMessage(old[2]!.id)).toEqual(old[2]);
+    expect(branch).toHaveLength(old.length); expect(branch[1]?.speaker).toEqual(old[1]?.speaker);
+    expect(branch.slice(2).map(row => row.id)).toEqual(old.slice(2).map(row => row.id));
+    expect(repo.getMessage(old[2]!.id)?.content).toBe(old[2]!.content);
     expect(settledStoryIds(repo, chat)).toHaveLength(1);
     expect(plan).not.toHaveBeenCalled(); expect(route).not.toHaveBeenCalled(); expect(maintain).not.toHaveBeenCalled();
     const request = runtime.requests.at(-1)!;
+    expect(request.history.map(row => row.id)).toEqual([old[0]!.id]);
     const context = buildWriterContext({ ...request, mode: 'plain', speaker: old[1]!.speaker!, outputIndex: 0, brief: '' });
     expect(String(context.messages.at(-1)?.content)).toContain(instruction);
     expect(String(context.messages.at(-1)?.content)).toContain('[Rewrite Source]');

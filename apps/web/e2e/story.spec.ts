@@ -784,31 +784,40 @@ async function prepareManualVersion(page: Page, request: APIRequestContext, titl
 }
 
 test('manual versions save and switch siblings without disturbing composer drafts or calling prose APIs', async ({ page, request }, info) => {
-  const { chat, user, original } = await prepareManualVersion(page, request, info.title);
+  const { chat, original } = await prepareManualVersion(page, request, info.title);
+  const laterUser = (await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: original.id, input: { voice: 'protagonist', text: 'LATER_USER' } } })).json()).message;
+  const tail = (await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: laterUser.id, speaker: original.speaker, text: 'LATER_REPLY' } })).json()).message;
+  await page.reload(); await expect(page.locator('article.message')).toHaveCount(4);
   let modelRequests = 0;
   page.on('request', req => { if (req.method() === 'POST' && /\/(turns|swipe)$/.test(new URL(req.url()).pathname)) modelRequests++; });
   const composer = page.getByRole('textbox', { name: '输入消息', exact: true });
   await composer.fill('主角草稿保留');
   await page.getByRole('button', { name: '角色', exact: true }).click();
   await composer.fill('角色草稿保留');
-  await page.getByRole('textbox', { name: 'AI 回复正文', exact: true }).fill('EDITED_ORIGINAL_REPLY');
-  await page.getByRole('button', { name: '新版本', exact: true }).click();
+  await page.getByRole('textbox', { name: '用户消息正文', exact: true }).first().fill('EDITED_USER');
+  await composer.click();
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).branch[0].content).toBe('EDITED_USER');
+  const reply = page.getByRole('textbox', { name: 'AI 回复正文', exact: true }).first();
+  await reply.fill('EDITED_ORIGINAL_REPLY');
+  await page.getByRole('button', { name: '新版本', exact: true }).first().click();
   const editor = page.getByRole('textbox', { name: '新版本回复', exact: true });
   await expect(editor).toHaveValue('');
   await editor.fill('MANUAL_ALTERNATIVE');
   await page.getByRole('button', { name: '保存新版本', exact: true }).click();
-  await expect(editor).toHaveCount(0); await expect(page.locator('article.message')).toHaveCount(2);
-  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('MANUAL_ALTERNATIVE');
+  await expect(editor).toHaveCount(0); await expect(page.locator('article.message')).toHaveCount(4);
+  await expect(reply).toHaveValue('MANUAL_ALTERNATIVE');
   await expect(composer).toHaveValue('角色草稿保留');
-  await page.getByRole('button', { name: '上一个版本', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('EDITED_ORIGINAL_REPLY');
-  await page.getByRole('button', { name: '下一个版本', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'AI 回复正文', exact: true })).toHaveValue('MANUAL_ALTERNATIVE');
+  const article = page.locator('article.message').nth(1);
+  await article.getByRole('button', { name: '上一个版本', exact: true }).click();
+  await expect(reply).toHaveValue('EDITED_ORIGINAL_REPLY');
+  await article.getByRole('button', { name: '下一个版本', exact: true }).click();
+  await expect(reply).toHaveValue('MANUAL_ALTERNATIVE');
   await page.locator('.voice-switch').getByRole('button', { name: '主角', exact: true }).click();
   await expect(composer).toHaveValue('主角草稿保留');
   const history = (await (await request.get(`/api/conversations/${chat.id}/messages`)).json()).branch;
-  expect(history).toHaveLength(2); expect(history[0].id).toBe(user.id);
-  expect(history[1]).toMatchObject({ parentId: user.id, storyTurnId: original.storyTurnId, speaker: original.speaker });
+  expect(history).toHaveLength(4); expect(history[0].content).toBe('EDITED_USER');
+  expect(history[1]).toMatchObject({ parentId: history[0].id, storyTurnId: original.storyTurnId, speaker: original.speaker });
+  expect(history.slice(2).map((row: any) => [row.id, row.content])).toEqual([[laterUser.id, 'LATER_USER'], [tail.id, 'LATER_REPLY']]);
   expect(modelRequests).toBe(0);
 });
 
@@ -1095,15 +1104,22 @@ test('switching versions reloads complete prose from compact navigation', async 
   const saved = await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: null, speaker: { kind: 'narrator' }, text: original } });
   expect(saved.status()).toBe(201);
   const { message } = await saved.json();
-  const edited = await request.post(`/api/messages/${message.id}/edit`, { data: { content: replacement, previous: original, head: message.id } });
+  await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/last-turn`)).json()).recordsStatus).toBe('completed');
+  const tail = (await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head: message.id, input: { voice: 'protagonist', text: '后续消息完整保留' } } })).json()).message;
+  const edited = await request.post(`/api/messages/${message.id}/edit`, { data: { content: replacement, previous: original, head: tail.id } });
   expect(edited.ok()).toBe(true);
   await page.reload();
-  const body = page.locator('article.message textarea');
+  const body = page.locator('article.message .prose textarea').first();
+  await expect(page.locator('article.message')).toHaveCount(2);
   await expect(body).toHaveValue(replacement);
   await page.getByTitle('上一个版本', { exact: true }).click();
   await expect(body).toHaveValue(original);
   await page.getByTitle('下一个版本', { exact: true }).click();
   await expect(body).toHaveValue(replacement);
+  await expect(page.getByRole('textbox', { name: '用户消息正文', exact: true })).toHaveValue('后续消息完整保留');
+  await page.reload();
+  await expect(page.locator('article.message')).toHaveCount(2);
+  expect((await (await request.get(`/api/conversations/${chat.id}`)).json()).headMessageId).toBe(tail.id);
 });
 
 test('global send count and fixed message start control the raw prompt range', async ({ page }) => {

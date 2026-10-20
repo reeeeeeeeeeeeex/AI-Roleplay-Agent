@@ -1,6 +1,6 @@
 import { AppError } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { historyStartIndex } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 import { conversations, memories, messages, proposals, sessionEvents, stateSnapshots, turns } from '../db/schema.js';
@@ -44,6 +44,49 @@ function sourceMessage(repo: Repository, chatId: string, messageId: string, head
   const message = repo.getMessage(messageId);
   if (!message || message.conversationId !== chatId) throw new AppError("消息不属于当前故事。");
   return { chat, message };
+}
+
+// Replace one position, carrying its existing continuation and records with it.
+// The alternate version keeps its own inactive continuation; no prose is copied.
+export function selectMessageVersion(repo: Repository, chatId: string, messageId: string, versionId: string, head: string | null) {
+  return repo.database.sqlite.transaction(() => {
+    const { chat, message } = sourceMessage(repo, chatId, messageId, head);
+    const version = repo.getMessage(versionId);
+    const active = [...repo.activeMessageIds(chatId)];
+    if (!active.includes(messageId)) throw new AppError("只能修改当前历史中的消息版本。");
+    if (!version || version.conversationId !== chatId || version.parentId !== message.parentId || version.role !== message.role) throw new AppError("所选消息不是同一位置的版本。");
+    if (versionId === messageId) return chat;
+    const changedContext = new Set([...active.slice(active.indexOf(messageId)), versionId]);
+    const mapped = (value: string | null) => value === messageId ? versionId : value === versionId ? messageId : value;
+    const db = repo.database.db;
+    db.update(messages).set({ parentId: sql`CASE WHEN ${messages.parentId} = ${messageId} THEN ${versionId} ELSE ${messageId} END` })
+      .where(and(eq(messages.conversationId, chatId), inArray(messages.parentId, [messageId, versionId]))).run();
+    // Keep record contents and their logical positions, including inactive versions.
+    // Raw generation events, Trace, and rebuild input snapshots are left untouched.
+    for (const event of repo.events(chatId)) {
+      if (!portableStoryEventTypes.has(event.type)) continue;
+      const value = { ...event.payload as Record<string, any> };
+      let changed = false;
+      for (const key of ['head', 'messageId', 'sourceMessageId']) {
+        if (value[key] === messageId || value[key] === versionId) { value[key] = mapped(value[key]); changed = true; }
+      }
+      if (changed) db.update(sessionEvents).set({ payload: value }).where(eq(sessionEvents.id, event.id)).run();
+    }
+    for (const row of db.select().from(memories).where(eq(memories.conversationId, chatId)).all()) {
+      if (!row.coverage || ![row.coverage.startMessageId, row.coverage.endMessageId].some(id => id === messageId || id === versionId)) continue;
+      db.update(memories).set({ coverage: { ...row.coverage, startMessageId: mapped(row.coverage.startMessageId)!, endMessageId: mapped(row.coverage.endMessageId)! } }).where(eq(memories.id, row.id)).run();
+    }
+    for (const row of repo.listProposals(chatId)) {
+      const snapshot = row.committedSnapshot as { head: string | null } | null;
+      if (row.status === 'pending' && row.originHead && changedContext.has(row.originHead)) { repo.updateProposal(row.id, 'rejected'); continue; }
+      if (![row.originHead, snapshot?.head].some(id => id === messageId || id === versionId)) continue;
+      if (row.status === 'pending') repo.updateProposal(row.id, 'rejected');
+      else db.update(proposals).set({ originHead: mapped(row.originHead), committedSnapshot: snapshot ? { ...snapshot, head: mapped(snapshot.head) } : null }).where(eq(proposals.id, row.id)).run();
+    }
+    repo.setHead(chatId, mapped(head));
+    db.update(conversations).set({ historyStartMessageId: mapped(chat.historyStartMessageId), updatedAt: new Date(Math.max(Date.now(), Date.parse(chat.updatedAt) + 1)).toISOString() }).where(eq(conversations.id, chatId)).run();
+    return repo.getConversation(chatId)!;
+  })();
 }
 
 export function forkStory(repo: Repository, chatId: string, messageId: string, head: string | null) {

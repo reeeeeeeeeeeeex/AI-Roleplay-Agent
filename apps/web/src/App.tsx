@@ -72,7 +72,7 @@ export default function App() {
   const editedMessageIds = useRef(new Map<string, string>());
   const [editor, setEditor] = useState<{ kind: Collection; value: any } | null>(null);
   const [copyingProfile, setCopyingProfile] = useState(false);
-  const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark' | 'manual-version'; initial: string; head?: string | null } | null>(null);
+  const [messageEdit, setMessageEdit] = useState<{ id: string; action: 'fact' | 'rewrite' | 'bookmark' | 'manual-version'; initial: string; head?: string | null; expectedUpdatedAt?: string } | null>(null);
   const [inputDrafts, setInputDrafts] = useState(readComposerDrafts);
   const savedInputDrafts = useRef({ ...inputDrafts });
   const inputDraftsRef = useRef(inputDrafts);
@@ -538,7 +538,9 @@ export default function App() {
     if (generalSettings.manualInput && !instruction) {
       if (!message.speaker) throw new Error(t("目标回复缺少发言者信息，无法创建新版本。"));
       const id = savedMessageId(message.id)!;
-      setMessageEdit({ id, action: 'manual-version', initial: '', head: savedMessageId(chat?.headMessageId ?? undefined) ?? null });
+      const current = await api<Conversation>(`/conversations/${message.conversationId}`);
+      if (chatRef.current !== message.conversationId) return;
+      setMessageEdit({ id, action: 'manual-version', initial: '', head: current.headMessageId, expectedUpdatedAt: current.updatedAt });
       scrollToMessage(id);
       return;
     }
@@ -551,7 +553,7 @@ export default function App() {
       if (!messageEdit || messageEdit.head === undefined || !message.speaker) throw new Error(t("消息位置已变化，请重新预览。"));
       await flushContentEdits();
       const result = await api(`/conversations/${message.conversationId}/manual-messages`, 'POST', {
-        role: 'assistant', head: messageEdit.head, targetMessageId: message.id, speaker: message.speaker, text: value,
+        role: 'assistant', head: messageEdit.head, expectedUpdatedAt: messageEdit.expectedUpdatedAt, targetMessageId: message.id, speaker: message.speaker, text: value,
       });
       setMessageEdit(null); setPromptPreview(null);
       updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === result.conversation.id ? result.conversation : item) }));
@@ -582,14 +584,18 @@ export default function App() {
     finally { sendPending.current = false; setSending(false); }
   }
 
-  async function setHead(messageId: string | null) {
-    await flushContentEdits();
-    await api(`/conversations/${chatId}/head`, 'POST', { messageId });
-    editedMessageIds.current.clear();
-    scrollToLatest();
-    await refreshMessages(chatId!);
-    await refresh();
-    setRecordsVersion((v) => v + 1);
+  async function selectVersion(messageId: string, versionId: string) {
+    if (!chat || turn || sendPending.current) return;
+    sendPending.current = true; setSending(true);
+    try {
+      await flushContentEdits();
+      await api(`/messages/${savedMessageId(messageId)}/select-version`, 'POST', {
+        versionId, head: savedMessageId(chat.headMessageId ?? undefined) ?? null,
+      });
+      editedMessageIds.current.clear(); setPromptPreview(null);
+      await refreshMessages(chat.id); await refresh();
+      setRecordsVersion((v) => v + 1);
+    } finally { sendPending.current = false; setSending(false); }
   }
   async function forkFrom(messageId: string) {
     if (!chat || turn || sendPending.current) return;
@@ -668,21 +674,21 @@ export default function App() {
       await copyText(preview.webPrompt);
       copied = true;
       if (preview.input) {
-        const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', { role: 'user', input: preview.input, head: preview.headMessageId });
+        const result = await api(`/conversations/${chat.id}/manual-messages`, 'POST', { role: 'user', input: preview.input, head: preview.headMessageId, expectedUpdatedAt: preview.sourceUpdatedAt });
         setInputDrafts(old => old[chat.id] === preview.draftText ? { ...old, [chat.id]: '' } : old);
         if (chatRef.current !== chat.id) return;
         updateData(old => ({ ...old, conversations: old.conversations!.map(item => item.id === chat.id ? result.conversation : item) }));
         // Clear this input before any refresh, so a retry never appends it twice.
-        setPromptPreview((old: any) => old ? { ...old, input: undefined, headMessageId: result.message.id, existingUserInput: true } : old);
+        setPromptPreview((old: any) => old ? { ...old, input: undefined, headMessageId: result.message.id, sourceUpdatedAt: result.conversation.updatedAt, existingUserInput: true } : old);
         await refreshMessages(chat.id);
         setRecordsVersion(version => version + 1);
       } else {
         const current = await api<Conversation>(`/conversations/${chat.id}`);
-        if (current.headMessageId !== preview.headMessageId) throw new Error(t("消息位置已变化，请重新预览。"));
+        if (current.headMessageId !== preview.headMessageId || current.updatedAt !== preview.sourceUpdatedAt) throw new Error(t("消息位置已变化，请重新预览。"));
       }
       if (chatRef.current !== chat.id) return;
       if (preview.action === 'regenerate') {
-        setMessageEdit({ id: preview.targetMessageId, action: 'manual-version', initial: '', head: preview.headMessageId });
+        setMessageEdit({ id: preview.targetMessageId, action: 'manual-version', initial: '', head: preview.headMessageId, expectedUpdatedAt: preview.sourceUpdatedAt });
         scrollToMessage(preview.targetMessageId); setPromptPreview(null);
         setNotice(t("新版本提示词已复制。把网页生成的回复粘贴到空白回复框，再保存为新版本。"));
         return;
@@ -1023,11 +1029,11 @@ export default function App() {
                         }}>{t("固定事实")}</button>
                         {swipes.length > 1 && (
                           <>
-                            <button title={t("上一个版本")} disabled={!!turn || index <= 0} onClick={() => act(setHead(swipes[index - 1]!.id))}>
+                            <button title={t("上一个版本")} disabled={!!turn || sending || !!messageEdit || index <= 0} onClick={() => act(selectVersion(m.id, swipes[index - 1]!.id))}>
                               <ChevronLeft size={13} />
                             </button>
                             <small>{index + 1}/{swipes.length}</small>
-                            <button title={t("下一个版本")} disabled={!!turn || index >= swipes.length - 1} onClick={() => act(setHead(swipes[index + 1]!.id))}>
+                            <button title={t("下一个版本")} disabled={!!turn || sending || !!messageEdit || index >= swipes.length - 1} onClick={() => act(selectVersion(m.id, swipes[index + 1]!.id))}>
                               <ChevronRight size={13} />
                             </button>
                           </>

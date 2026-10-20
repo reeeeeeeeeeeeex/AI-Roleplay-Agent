@@ -1,5 +1,7 @@
 // Application diagnostics only; never translate provider payloads or model instructions.
 export const diagnosticMessages = {
+  "只能修改当前历史中的消息版本。": { original: "只能修改当前历史中的消息版本。", zh: "只能修改当前历史中的消息版本。", en: "Only messages in the current history can be edited or switched." },
+  "所选消息不是同一位置的版本。": { original: "所选消息不是同一位置的版本。", zh: "所选消息不是同一位置的版本。", en: "The selected message is not a version of the same position." },
   '新版本必须保留原回复的发言者。': { original: '新版本必须保留原回复的发言者。', zh: '新版本必须保留原回复的发言者。', en: 'A new version must keep the original reply speaker.' },
   '预览仅支持发送、自动继续和最新回复的新版本。': { original: '预览仅支持发送、自动继续和最新回复的新版本。', zh: '预览仅支持发送、自动继续和最新回复的新版本。', en: 'Preview supports sending, automatic continuation, and a new version of the latest reply only.' },
   '只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。': { original: '只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。', zh: '只能预览当前末尾 Assistant 回复的新版本，请重新核对消息位置。', en: 'Only the trailing Assistant reply can be previewed as a new version. Check the current message position.' },
