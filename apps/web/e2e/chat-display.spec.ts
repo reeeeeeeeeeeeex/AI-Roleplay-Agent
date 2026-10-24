@@ -146,6 +146,7 @@ test('persona draft deletion stays in place and resizes to a narrower editor', a
 });
 
 test('compact chat header opens character and story details separately', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
   await readingStory(page, request);
   const characters = await (await request.get('/api/characters')).json();
   const heading = page.getByRole('heading', { level: 1 });
@@ -160,10 +161,22 @@ test('compact chat header opens character and story details separately', async (
   await story.getByRole('button', { name: '关闭', exact: true }).last().click();
   const top = (await page.locator('.topbar').boundingBox())!;
   const navigation = page.locator('.story-navigation');
-  expect((await navigation.boundingBox())!.y).toBeCloseTo(top.y + top.height, 0);
-  await expect(navigation.locator('summary')).toContainText('主角保护');
+  expect((await navigation.boundingBox())!.y).toBeGreaterThanOrEqual(top.y);
+  expect((await navigation.boundingBox())!.y + (await navigation.boundingBox())!.height).toBeLessThanOrEqual(top.y + top.height);
+  const region = page.getByRole('region', { name: '聊天记录' });
+  const regionBox = (await region.boundingBox())!;
+  expect(regionBox.y).toBeCloseTo(top.y + top.height, 0);
+  const message = (await page.locator('article.message').last().boundingBox())!;
+  expect(message.width).toBeGreaterThan(840);
+  expect(regionBox.x + regionBox.width - message.x - message.width).toBeLessThanOrEqual(64);
+  const composer = (await page.locator('.composer').boundingBox())!;
+  expect(regionBox.x + regionBox.width - composer.x - composer.width).toBeLessThanOrEqual(18);
   await navigation.locator('summary').click();
   await expect(navigation.getByRole('textbox', { name: '当前场景', exact: true })).toBeVisible();
+  expect((await region.boundingBox())!.y).toBeCloseTo(regionBox.y, 0);
+  await insideViewport(page, navigation.locator('.story-navigation-content'));
+  await page.keyboard.press('Escape');
+  await expect(navigation).not.toHaveAttribute('open');
   await expect(page.locator('.top-actions').getByText('角色资料', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '搜索正文', exact: true })).toBeVisible();
 });
@@ -182,13 +195,12 @@ test('compact group header remains usable on a narrow English screen', async ({ 
   await insideViewport(page, name);
   await insideViewport(page, page.locator('.top-actions'));
   const summary = page.locator('.story-navigation summary');
-  const badge = summary.locator('small');
-  await expect(badge).toHaveText('Protagonist protected');
+  await expect(summary).toHaveAccessibleName('Scene and bookmarks');
   await insideViewport(page, summary);
-  const labelBox = (await summary.locator('span').boundingBox())!;
-  const badgeBox = (await badge.boundingBox())!;
-  expect(badgeBox.y).toBeLessThan(labelBox.y + labelBox.height);
-  expect(badgeBox.x).toBeGreaterThan(labelBox.x + labelBox.width);
+  await summary.click();
+  await expect(page.getByRole('textbox', { name: 'Current scene', exact: true })).toBeVisible();
+  await insideViewport(page, page.locator('.story-navigation-content'));
+  await page.keyboard.press('Escape');
   await name.click();
   const editor = page.getByRole('dialog', { name: 'Edit Group', exact: true });
   await expect(editor.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(group.name);

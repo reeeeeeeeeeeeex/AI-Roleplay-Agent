@@ -883,6 +883,9 @@ export default function App() {
               disabled={!chatProfile} onClick={() => edit(chat.kind === 'group' ? 'groups' : 'characters', chatProfile)}>
               {chatProfile?.name ?? t(chat.kind === 'group' ? "群组" : "角色")}
             </button> : page === 'chat' ? t("新故事") : page === 'import' ? t("导入故事") : page === 'conversations' ? t("故事列表") : titles[page]}</h1>
+            {page === 'chat' && chat && <StoryNavigation key={chat.id} chatId={chat.id} title={chat.title} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending}
+              agencyLabel={{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}
+              onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />}
           </div>
           <div className="top-actions">
             {chat && page === 'chat' && (
@@ -932,9 +935,6 @@ export default function App() {
 
         {page === 'chat' && chat && (
           <>
-            <StoryNavigation key={chat.id} chatId={chat.id} title={chat.title} head={chat.headMessageId} version={recordsVersion} disabled={!!turn || sending}
-              agencyLabel={{ protected: t("主角保护"), coauthor: t("共同创作"), none: t("主角控制：无") }[generalSettings.agencyMode]}
-              onJump={jumpToBookmark} onChanged={() => { setRecordsVersion(value => value + 1); act(refresh()); }} onError={setError} />
             {showSearch && <MessageSearch key={chat.id} inputRef={searchInput} messages={branch} onClose={closeSearch}
               onMatch={(id, query) => { setSearchMatchId(id); setSearchQuery(query); if (id) scrollToMessage(id); }} />}
             {chat.historyStartMessageId && <div className="history-start-banner" role="status">

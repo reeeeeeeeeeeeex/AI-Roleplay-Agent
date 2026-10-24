@@ -1333,7 +1333,9 @@ test('writing settings preserve agency prompts in none mode and omit control fro
   await expect(coauthorPrompt).toHaveValue('Collaborate with User on actions and dialogue.');
   await expect(settings.getByRole('combobox', { name: '主角控制', exact: true })).toHaveValue('none');
   await settings.getByRole('button', { name: '关闭设置' }).click();
-  await expect(page.getByText('主角控制：无', { exact: true })).toBeVisible();
+  const navigation = page.locator('.story-navigation');
+  await navigation.locator('summary').click();
+  await expect(navigation.getByText('主角控制：无', { exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: '输入消息' }).fill('推开门。');
   await page.getByRole('button', { name: '发送前预览提示词', exact: true }).click();
   const raw = page.getByRole('region', { name: 'Raw input', exact: true }).locator('pre');

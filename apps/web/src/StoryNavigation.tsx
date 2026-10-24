@@ -1,5 +1,6 @@
 import { t, diagnosticText } from './i18n.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { BookMarked } from 'lucide-react';
 import type { StoryNavigation as Navigation } from '@new-ai-chat/contracts';
 import { api } from './api.js';
 import AutoSaveField from './AutoSaveField.js';
@@ -9,6 +10,15 @@ export default function StoryNavigation({ chatId, title, head, version, disabled
   chatId: string; title: string; head: string | null; version: number; disabled: boolean; agencyLabel: string;
   onJump: (id: string) => Promise<void>; onChanged: () => void; onError: (message: string) => void;
 }) {
+  const container = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      const element = container.current;
+      if (element?.open && !element.contains(event.target as Node)) element.open = false;
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, []);
   const [data, setData] = useState<Navigation | null>(null);
   const [loadedHead, setLoadedHead] = useState<string | null>();
   useEffect(() => {
@@ -29,8 +39,16 @@ export default function StoryNavigation({ chatId, title, head, version, disabled
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { onError((error as Error).message); }
   }
-  return <details className="story-navigation">
-    <summary><span>{t("场景与书签")}</span><small>{agencyLabel}</small></summary>
+  return <details ref={container} className="story-navigation" onKeyDown={event => {
+    if (event.key === 'Escape' && event.currentTarget.open) {
+      event.stopPropagation();
+      event.currentTarget.open = false;
+      event.currentTarget.querySelector('summary')?.focus();
+    }
+  }}>
+    <summary aria-label={t("场景与书签")} title={t("场景与书签")}><BookMarked size={14} /><span>{t("场景与书签")}</span></summary>
+    <div className="story-navigation-content">
+    <small className="story-agency">{agencyLabel}</small>
     <div><button disabled={disabled} onClick={() => void download('markdown')}>{t("导出当前分支 Markdown")}</button><button disabled={disabled} onClick={() => void download('native')}>{t("导出完整故事包")}</button></div>
     {data && <>
       <AutoSaveField draftKey={`${chatId}:scene`} initial={data.scene.scenario} label={t("当前场景")} placeholder={t("场景未记录")} disabled={disabled} onError={onError} onSave={async (scenario, previous) => {
@@ -50,5 +68,6 @@ export default function StoryNavigation({ chatId, title, head, version, disabled
       </div>)}
       {!data.bookmarks.length && <p className="muted">{t("可从消息操作中添加书签。")}</p>}
     </>}
+    </div>
   </details>;
 }

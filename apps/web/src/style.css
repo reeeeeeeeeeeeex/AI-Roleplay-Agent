@@ -440,6 +440,8 @@ main {
 
 /* Topbar: strictly 48px */
 .topbar {
+  position: relative;
+  z-index: 3;
   height: 48px;
   min-height: 48px;
   padding: 0 16px;
@@ -566,16 +568,13 @@ main {
 }
 
 /* Messages Stream */
-.story-navigation { padding: 6px 24px; border-bottom: 1px solid var(--border); max-height: 220px; overflow: auto; }
-.story-navigation summary small {
-  float: right;
-  margin-left: 8px;
-  font-size: 10px;
-  color: var(--text-dim);
-  background: var(--bg-elevated);
-  padding: 1px 6px;
-  border-radius: var(--radius-xs);
-}
+/* Scene controls share the header; their editor overlays the chat when opened. */
+.story-navigation { flex-shrink: 0; }
+.story-navigation summary { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: var(--radius-sm); color: var(--text-muted); font-size: 12px; white-space: nowrap; cursor: pointer; list-style: none; }
+.story-navigation summary::-webkit-details-marker { display: none; }
+.story-navigation summary:hover, .story-navigation[open] summary { background: var(--bg-hover); color: var(--text-primary); }
+.story-navigation-content { position: absolute; top: calc(100% + 4px); left: 12px; width: min(520px, calc(100cqw - 24px)); max-height: min(420px, calc(100dvh - 80px)); overflow: auto; padding: 14px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); box-shadow: 0 8px 24px #0005; }
+.story-agency { display: block; margin-bottom: 8px; color: var(--text-dim); font-size: 11px; }
 .story-navigation button { margin: 4px; }
 .context-report { margin: 10px 0; }
 .context-report ol { max-height: 360px; overflow: auto; padding-left: 24px; }
@@ -2078,7 +2077,9 @@ fieldset label {
 }
 
 @container chat-pane (max-width: 680px) {
-  .top-actions button span { display: none; }
+  .top-actions button span, .story-navigation summary span { display: none; }
+  .story-navigation summary { padding: 6px; }
+  .topbar-left { gap: 6px; }
   .top-actions { gap: 0; }
   .top-actions button { padding: 6px; }
   .topbar { gap: 6px; }
