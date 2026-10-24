@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import type { CSSProperties } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import './message-navigation.css';
 
 export default function MessageNavigation({ markers, activeId, onJump }: {
@@ -7,9 +7,18 @@ export default function MessageNavigation({ markers, activeId, onJump }: {
   activeId: string | null;
   onJump: (id: string) => void;
 }) {
+  const container = useRef<HTMLElement>(null);
+  const activeMarker = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const element = container.current;
+    const marker = activeMarker.current;
+    if (element && marker) element.scrollTop = marker.offsetTop - (element.clientHeight - marker.offsetHeight) / 2;
+  }, [activeId, markers.length]);
+
   if (!markers.length) return null;
-  return <nav className="message-navigation" aria-label={t("最近 20 条用户消息")} style={{ '--marker-count': markers.length } as CSSProperties}>
+  return <nav ref={container} className="message-navigation" aria-label={t("用户消息导航")}>
     {markers.map(marker => <button key={marker.id} type="button"
+      ref={marker.id === activeId ? activeMarker : undefined}
       className={marker.id === activeId ? 'active' : ''}
       aria-current={marker.id === activeId ? 'location' : undefined}
       aria-label={t("跳转到用户消息 {0}", marker.number)}

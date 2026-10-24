@@ -23,7 +23,7 @@ export function useChatWindow(messages: MessageNode[], chatId: string | null, li
   const start = firstIndex >= 0 ? firstIndex : Math.max(0, messages.length - limit);
   const visibleMessages = messages.slice(start);
   const userMarkers = useMemo(() => messages.map((message, index) => ({ message, index })).filter(item => item.message.role === 'user')
-    .map((item, index) => ({ id: item.message.id, text: item.message.content, number: index + 1, index: item.index })).slice(-20), [messages]);
+    .map((item, index) => ({ id: item.message.id, text: item.message.content, number: index + 1, index: item.index })), [messages]);
 
   function updatePosition() {
     const element = container.current;
@@ -34,8 +34,10 @@ export function useChatWindow(messages: MessageNode[], chatId: string | null, li
     const top = element.getBoundingClientRect().top + 48;
     let active: string | null = null;
     for (const marker of userMarkers) {
+      if (marker.index < start) { active = marker.id; continue; }
       const node = document.getElementById(`message-${marker.id}`);
-      if (marker.index < start || (node && node.getBoundingClientRect().top <= top)) active = marker.id;
+      if (!node || node.getBoundingClientRect().top > top) break;
+      active = marker.id;
     }
     setActiveUserId(atBottom ? userMarkers.at(-1)?.id ?? null : active);
     lastScrollTop.current = element.scrollTop;

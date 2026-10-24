@@ -3,7 +3,7 @@ import { defaultGeneralSettings, type MessageNode } from '@new-ai-chat/contracts
 
 test.use({ serviceWorkers: 'block' });
 
-async function openHistory(page: Page, request: APIRequestContext, limit?: number, avatar?: string) {
+async function openHistory(page: Page, request: APIRequestContext, limit?: number, avatar?: string, count = 120) {
   const characters = await (await request.get('/api/characters')).json();
   const connections = await (await request.get('/api/connections')).json();
   await request.put('/api/settings/general', { data: {
@@ -11,7 +11,7 @@ async function openHistory(page: Page, request: APIRequestContext, limit?: numbe
     narrator: { ...defaultGeneralSettings.narrator, avatarPath: avatar ?? null },
   } });
   const chat = await (await request.post('/api/conversations', { data: { title: 'Chat display fixture', kind: 'solo', characterId: characters[0].id } })).json();
-  const messages: MessageNode[] = Array.from({ length: 120 }, (_, index) => ({
+  const messages: MessageNode[] = Array.from({ length: count }, (_, index) => ({
     id: `display-${index}`, conversationId: chat.id, parentId: index ? `display-${index - 1}` : null,
     storyTurnId: null, role: index % 2 ? 'assistant' : 'user', authorKind: index % 2 ? 'narrator' : 'protagonist',
     speaker: index % 2 ? { kind: 'narrator' } : null,
@@ -492,7 +492,7 @@ test('chat avatar delayed loading follows the latest message without interruptin
     ready = new Promise<void>(resolve => { release = resolve; });
     await page.reload();
     await expect(page.locator('article.message')).toHaveCount(20);
-    await page.getByRole('navigation', { name: '最近 20 条用户消息' }).getByRole('button', { name: '跳转到用户消息 52', exact: true }).click();
+    await page.getByRole('navigation', { name: '用户消息导航' }).getByRole('button', { name: '跳转到用户消息 52', exact: true }).click();
     await expect(page.getByRole('button', { name: '回到最新 ↓' })).toBeVisible();
     const anchor = page.locator('#message-display-102');
     const beforeTop = (await anchor.boundingBox())!.y;
@@ -525,7 +525,7 @@ test('opening and reentering a conversation starts at its latest message', async
   const distanceFromBottom = () => region.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight);
   await expect.poll(distanceFromBottom).toBeLessThan(2);
 
-  await page.getByRole('navigation', { name: '最近 20 条用户消息' }).getByRole('button').first().click();
+  await page.getByRole('navigation', { name: '用户消息导航' }).getByRole('button').first().click();
   await expect(page.getByRole('button', { name: '回到最新 ↓' })).toBeVisible();
   await page.getByRole('button', { name: /^故事列表/ }).click();
   await expect(region).toHaveCount(0);
@@ -534,13 +534,13 @@ test('opening and reentering a conversation starts at its latest message', async
   await expect.poll(distanceFromBottom).toBeLessThan(2);
 });
 
-test('chat window prepends without moving text and horizontal bars jump to older user messages', async ({ page, request }, info) => {
+test('chat window prepends without moving text and horizontal bars jump to older user messages', async ({ page, request }) => {
   await openHistory(page, request, 20);
   const region = page.getByRole('region', { name: '聊天记录' });
-  const navigation = page.getByRole('navigation', { name: '最近 20 条用户消息' });
-  await expect(navigation.getByRole('button')).toHaveCount(20);
+  const navigation = page.getByRole('navigation', { name: '用户消息导航' });
+  await expect(navigation.getByRole('button')).toHaveCount(60);
   await expect(navigation).toHaveText('');
-  await expect(navigation.getByRole('button').first()).toHaveAccessibleName('跳转到用户消息 41');
+  await expect(navigation.getByRole('button').first()).toHaveAccessibleName('跳转到用户消息 1');
   await region.evaluate(element => { element.scrollTop = 120; element.dispatchEvent(new Event('scroll')); });
   const anchor = page.locator('#message-display-100');
   const top = (await anchor.boundingBox())!.y;
@@ -551,12 +551,41 @@ test('chat window prepends without moving text and horizontal bars jump to older
 
   await page.getByRole('button', { name: '回到最新 ↓' }).click();
   await expect(page.locator('article.message')).toHaveCount(20);
-  await navigation.getByRole('button').first().click();
+  await navigation.getByRole('button', { name: '跳转到用户消息 41', exact: true }).click();
   await expect(page.locator('article.message')).toHaveCount(40);
   const target = page.locator('#message-display-80');
   await expect.poll(async () => (await target.boundingBox())!.y - (await region.boundingBox())!.y).toBeCloseTo(12, 0);
-  await expect(navigation.getByRole('button').first()).toHaveAttribute('aria-current', 'location');
-  await page.screenshot({ path: info.outputPath('message-bars.png') });
+  await expect(navigation.getByRole('button', { name: '跳转到用户消息 41', exact: true })).toHaveAttribute('aria-current', 'location');
+});
+
+test('message rail scrolls through a thousand-message history without expanding the prose', async ({ page, request }) => {
+  await openHistory(page, request, 100, undefined, 1000);
+  const navigation = page.getByRole('navigation', { name: '用户消息导航' });
+  const region = page.getByRole('region', { name: '聊天记录' });
+  await expect(navigation.getByRole('button')).toHaveCount(500);
+  const proseTop = await region.evaluate(element => element.scrollTop);
+  await expect.poll(() => navigation.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  await navigation.hover();
+  await page.mouse.wheel(0, -10000);
+  await expect.poll(() => navigation.evaluate(element => element.scrollTop)).toBe(0);
+  await expect(page.locator('article.message')).toHaveCount(100);
+  expect(await region.evaluate(element => element.scrollTop)).toBe(proseTop);
+  const buttons = navigation.getByRole('button');
+  await buttons.nth(5).hover();
+  await expect(buttons.nth(5).locator('i')).toHaveCSS('width', '28px');
+  await expect(buttons.nth(4).locator('i')).toHaveCSS('width', '24px');
+  await expect(buttons.nth(6).locator('i')).toHaveCSS('width', '24px');
+  await expect(buttons.nth(7).locator('i')).toHaveCSS('width', '19px');
+  await expect(buttons.nth(8).locator('i')).toHaveCSS('width', '15px');
+  await page.mouse.move(0, 0);
+  await expect(buttons.nth(5).locator('i')).toHaveCSS('width', '12px');
+  await expect(buttons.nth(5).locator('i')).toHaveCSS('height', '1px');
+  await buttons.first().click();
+  await expect.poll(async () => (await page.locator('#message-display-0').boundingBox())!.y - (await region.boundingBox())!.y).toBeCloseTo(12, 0);
+  await expect(buttons.first()).toHaveAttribute('aria-current', 'location');
+  await page.getByRole('button', { name: '回到最新 ↓' }).click();
+  await expect(page.locator('article.message')).toHaveCount(100);
+  await expect.poll(() => navigation.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
 });
 
 test('appearance saves the display limit and plain thinking default across reloads', async ({ page, request }) => {

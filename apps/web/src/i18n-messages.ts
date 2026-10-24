@@ -534,7 +534,7 @@ export const english = {
   "保留条目": "Keep entry",
   "没有匹配的条目。": "No matching entries.",
   "世界书还是空的，点击“新建条目”开始编写。": "This lorebook is empty. Choose New entry to begin.",
-  "最近 20 条用户消息": "Latest 20 User messages",
+  "用户消息导航": "User message navigation",
   "跳转到用户消息 {0}": "Jump to User message {0}",
   "第 {0} 条用户消息：{1}": "User message {0}: {1}",
   " (当前: {0})": " (current: {0})",

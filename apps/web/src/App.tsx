@@ -1073,7 +1073,7 @@ export default function App() {
               ))}
               <div ref={bottom} />
             </section>
-            <MessageNavigation markers={userMarkers} activeId={activeUserId} onJump={scrollToMessage} />
+            <MessageNavigation key={chatId} markers={userMarkers} activeId={activeUserId} onJump={scrollToMessage} />
             </div>
 
             <div className="composer-wrap">
