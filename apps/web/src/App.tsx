@@ -18,6 +18,7 @@ import Notice from './Notice.js';
 import MessageNavigation from './MessageNavigation.js';
 import MessageSearch from './MessageSearch.js';
 import { useChatWindow } from './useChatWindow.js';
+import { useAutoSizeTextareas } from './useAutoSizeTextareas.js';
 import ActionChoices from './ActionChoices.js';
 import AutoSaveField from './AutoSaveField.js';
 import AuthorNoteEditor from './AuthorNoteEditor.js';
@@ -184,6 +185,8 @@ export default function App() {
   }, [branch]);
 
   const chat = (data.conversations ?? []).find((v) => v.id === chatId) as Conversation | undefined;
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  useAutoSizeTextareas(composerInput, text, `${page}:${chat?.id}:${voice}:${readingAppearance.font}:${readingAppearance.fontSize}`, true);
   const chatProfile = chat?.kind === 'group'
     ? data.groups?.find(group => group.id === chat.groupId)
     : data.characters?.find(character => character.id === chat?.characterId);
@@ -1077,13 +1080,7 @@ export default function App() {
             </div>
 
             <div className="composer-wrap">
-              <ActionChoices key={`${chat.id}:${chat.headMessageId ?? ''}`} chatId={chat.id} head={chat.headMessageId} disabled={sending || !!turn || !!messageEdit}
-                onSend={value => send('normal', undefined, value)} onBusy={setChoicesBusy} onChanged={() => setRecordsVersion(version => version + 1)}
-                toolbarEnd={<label className="manual-input-switch" title={t("仅改变消息发送；主动生成与记录更新仍可能调用 API。角色回复保存后，Memory／状态按现有间隔更新。")}>
-                  <input type="checkbox" aria-label={t("单人创作／网页聊天手动输入")} checked={generalSettings.manualInput} disabled={sending || !!turn || choicesBusy || !!messageEdit}
-                    onChange={event => act(changeManualInput(event.target.checked))} />
-                  <span>{t("单人创作／网页聊天手动输入")}</span><small>{t("全局")}</small>
-                </label>} />
+
               {awayFromBottom && <button onClick={scrollToLatest}>{t("回到最新 ↓")}</button>}
               {!turn && lastTurn && dismissedTurnNotice !== turnNoticeKey && ['partial', 'failed', 'cancelled'].includes(lastTurn.status) && <Notice className="turn-recovery" onDismiss={() => setDismissedTurnNotice(turnNoticeKey)}>
                 <strong>{lastTurn.status === 'partial' ? t("本轮部分完成，已完成回复已保留。") : t("本轮未完成，用户消息已保留。")}</strong>
@@ -1101,7 +1098,7 @@ export default function App() {
                 e.preventDefault();
                 act(send());
               }}>
-                <textarea
+                <textarea ref={composerInput} rows={1}
                   aria-label={t("输入消息")}
                   placeholder={voice === 'assistant' ? t("粘贴或输入角色的回复，发送后直接保存为 Assistant 消息…") : voice === 'narrator' ? t("以旁白推动场景或描写事件…") : t("输入主角的行动或对白…")}
                   value={text}
@@ -1123,6 +1120,13 @@ export default function App() {
                       setVoice('assistant'); if (replyTarget === 'auto') setReplyTarget(cast[0] ?? 'narrator');
                     }}>{t("角色")}</button>
                   </div>
+                  <ActionChoices key={`${chat.id}:${chat.headMessageId ?? ''}`} chatId={chat.id} head={chat.headMessageId} disabled={sending || !!turn || !!messageEdit}
+                    onSend={value => send('normal', undefined, value)} onBusy={setChoicesBusy} onChanged={() => setRecordsVersion(version => version + 1)}
+                    toolbarEnd={<label className="manual-input-switch" title={t("仅改变消息发送；主动生成与记录更新仍可能调用 API。角色回复保存后，Memory／状态按现有间隔更新。")}>
+                      <input type="checkbox" aria-label={t("单人创作／网页聊天手动输入")} checked={generalSettings.manualInput} disabled={sending || !!turn || choicesBusy || !!messageEdit}
+                        onChange={event => act(changeManualInput(event.target.checked))} />
+                      <span>{t("单人创作／网页聊天手动输入")}</span><small>{t("全局")}</small>
+                    </label>} />
                   <label className="reply-select">
                     {voice === 'assistant' ? t("录入为") : generalSettings.manualInput ? t("网页回复者") : t("由谁回复")}
                     <select aria-label={t("回复者")} value={replyTarget} onChange={(e) => setReplyTarget(e.target.value)}>

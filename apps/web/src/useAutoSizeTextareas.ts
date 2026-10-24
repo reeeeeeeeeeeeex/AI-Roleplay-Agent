@@ -1,6 +1,6 @@
 import { useLayoutEffect, type RefObject } from 'react';
 
-export function useAutoSizeTextareas(ref: RefObject<HTMLElement | null>, value: unknown, layoutKey?: unknown) {
+export function useAutoSizeTextareas(ref: RefObject<HTMLElement | null>, value: unknown, layoutKey?: unknown, shrinkWhileEditing = false) {
   useLayoutEffect(() => {
     const container = ref.current;
     if (!container) return;
@@ -18,7 +18,7 @@ export function useAutoSizeTextareas(ref: RefObject<HTMLElement | null>, value: 
         const height = measure.scrollHeight + measure.offsetHeight - measure.clientHeight;
         measure.remove();
         // Keep the editing area steady while deleting; reclaim space after leaving it.
-        field.style.height = `${editing ? Math.max(height, field.offsetHeight) : height}px`;
+        field.style.height = `${editing && !shrinkWhileEditing ? Math.max(height, field.offsetHeight) : height}px`;
       }
     };
     resize();
@@ -32,5 +32,5 @@ export function useAutoSizeTextareas(ref: RefObject<HTMLElement | null>, value: 
     observer.observe(container);
     container.addEventListener('focusout', onBlur);
     return () => { observer.disconnect(); container.removeEventListener('focusout', onBlur); };
-  }, [ref, value, layoutKey]);
+  }, [ref, value, layoutKey, shrinkWhileEditing]);
 }

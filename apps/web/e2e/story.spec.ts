@@ -922,13 +922,17 @@ test('manual input accepts consecutive voices and uses the compact global toolba
   expect(history[5].storyTurnId).not.toBe(history[4].storyTurnId);
   await expect(page.locator('.composer-hint')).toHaveCount(0);
   await expect(page.locator('.composer-wrap > :last-child')).toHaveClass('composer');
-  const row = await page.locator('.action-choice-toolbar').boundingBox();
+  const row = await page.locator('.composer-controls').boundingBox();
   const control = await page.locator('.manual-input-switch').boundingBox();
+  const field = await input.boundingBox();
+  expect(control!.y).toBeGreaterThanOrEqual(field!.y + field!.height);
   expect(control!.y + control!.height).toBeLessThanOrEqual(row!.y + row!.height + 1);
   await page.setViewportSize({ width: 390, height: 844 });
   const action = await page.getByRole('button', { name: '行动选项', exact: true }).boundingBox();
   const compact = await page.locator('.manual-input-switch').boundingBox();
-  expect(Math.abs(action!.y + action!.height / 2 - compact!.y - compact!.height / 2)).toBeLessThan(2);
+  const mobileField = await input.boundingBox();
+  expect(action!.y).toBeGreaterThanOrEqual(mobileField!.y + mobileField!.height);
+  expect(compact!.y).toBeGreaterThanOrEqual(mobileField!.y + mobileField!.height);
   expect(compact!.x + compact!.width).toBeLessThanOrEqual(390);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await request.post('/api/conversations', { data: { title: 'Manual global sibling', kind: 'solo', characterId: chat.characterId } });
@@ -936,6 +940,35 @@ test('manual input accepts consecutive voices and uses the compact global toolba
   await expect(toggle).toBeChecked();
   await page.getByRole('button', { name: /Manual global sibling/ }).click();
   await expect(toggle).toBeChecked();
+});
+
+test('composer grows with wrapping and newlines, then shrinks after deletion and sending', async ({ page }) => {
+  const input = page.getByRole('textbox', { name: '输入消息' });
+  const height = () => input.evaluate(element => element.getBoundingClientRect().height);
+  const singleLine = await height();
+  const lineHeight = await input.evaluate(element => parseFloat(getComputedStyle(element).lineHeight));
+  expect(singleLine).toBeLessThan(lineHeight * 1.5);
+  await input.fill('一行');
+  await input.press('Shift+Enter');
+  await input.press('a');
+  await expect.poll(height).toBeGreaterThan(singleLine + lineHeight * 0.8);
+  await input.fill('自动换行的输入内容。'.repeat(80));
+  await expect.poll(height).toBeGreaterThan(singleLine * 2);
+  expect(await height()).toBeLessThanOrEqual(180);
+  expect(await input.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await input.fill('删短');
+  await expect.poll(height).toBe(singleLine);
+  await input.fill('随窗口宽度变化自动换行的草稿。'.repeat(4));
+  const wideHeight = await height();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(height).toBeGreaterThan(wideHeight);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  const toggle = page.getByRole('checkbox', { name: '单人创作／网页聊天手动输入', exact: true });
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await input.press('Enter');
+  await expect(input).toHaveValue('');
+  await expect.poll(height).toBe(singleLine);
 });
 
 test('manual input toggle failure keeps its original mode and draft', async ({ page }) => {

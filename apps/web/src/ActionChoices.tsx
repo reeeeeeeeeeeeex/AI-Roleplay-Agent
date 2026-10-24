@@ -113,7 +113,7 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
       </div>}
       {toolbarEnd}
     </div>
-    {open && <>
+    {open && <div className="action-choice-content">
       {busy && <small role="status">{t("正在生成行动选项…")}</small>}
       {saving && <small role="status">{t("保存中…")}</small>}
       {error && <Notice className="error" role="alert" onDismiss={() => setError('')}>{error}</Notice>}
@@ -126,6 +126,6 @@ export default function ActionChoices({ chatId, head, disabled, onSend, onBusy, 
                 <button type="button" className="action-choice-edit" aria-label={t("编辑选项 {0}", index + 1)} disabled={disabled || busy} onClick={() => void action(async () => updateEdit({ groupId: group.id, index, value: text, previous: text }))}><Pencil size={13} /></button></>}
         </div>)}
       </div>
-    </>}
+    </div>}
   </section>;
 }

@@ -271,9 +271,12 @@ test('story search is literal, stays inside a narrow screen and preserves the dr
   await expect(page.locator('.search-highlights')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Search story', exact: true })).toBeFocused();
   await expect(input).toHaveValue('Keep this unsent draft.');
-  // Restore the same reading position, so the existing back-to-latest control is hidden.
-  await page.getByRole('button', { name: 'Back to latest ↓' }).click();
-  await expect(page.getByRole('button', { name: 'Back to latest ↓' })).toHaveCount(0);
+  // The search jump ends at the bottom; scroll up so the back-to-latest control shows.
+  const backToLatest = page.getByRole('button', { name: 'Back to latest ↓' });
+  await page.locator('.messages').evaluate(element => { element.scrollTop = Math.max(0, element.scrollTop - 400); element.dispatchEvent(new Event('scroll')); });
+  await expect(backToLatest).toBeVisible();
+  await backToLatest.click();
+  await expect(backToLatest).toHaveCount(0);
   expect((await page.locator('.messages-wrap').boundingBox())!.height).toBeCloseTo(before, 0);
   expect(writes).toBe(0);
 });
