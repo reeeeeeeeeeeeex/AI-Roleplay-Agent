@@ -31,7 +31,7 @@ export async function createApp(config: AppConfig = loadConfig(), runtime?: Agen
   const pluginHost = new InternalPluginHost(plugins, repository);
   let records: RecordService;
   const turns = new TurnService(repository,gateway,events,async (chat,signal,trace) => records.automatic(chat,signal,trace),pluginHost);
-  records = new RecordService(repository,gateway,(chat,turn,signal,kind) => turns.request(chat,turn,signal,false,undefined,kind));
+  records = new RecordService(repository,gateway,(chat,turn,signal,kind) => turns.request(chat,turn,signal,false,undefined,kind),events);
   const choices = new ActionChoiceService(repository,gateway,events,turns);
   const memoryRebuild = new MemoryRebuildService(repository,gateway,turns,records,events);
   app.addHook('onRequest',async (req,reply) => {

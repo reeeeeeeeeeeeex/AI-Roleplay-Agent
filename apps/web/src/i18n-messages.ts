@@ -1,5 +1,12 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  'Memory 更新': 'Memory update',
+  '主角状态更新': 'Protagonist state update',
+  '更新已保存。': 'Update saved.',
+  '模型未提出需要保存的变化。': 'The model proposed no changes to save.',
+  '没有尚未记忆的完整回合。': 'There are no complete turns left to add to Memory.',
+  '本批已写入重建草稿，覆盖当前 Memory 后生效。': 'This batch is saved in the rebuild draft. Apply the draft to replace the current Memory.',
+  '本次未调用模型。': 'No model was called for this operation.',
   '新版本回复': 'New reply version',
   '保存新版本': 'Save new version',
   '手动填写新版本 · 保留原回复和发言者，不调用模型': 'Enter a new version · keeps the original reply and speaker; no model call',

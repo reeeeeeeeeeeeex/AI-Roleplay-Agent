@@ -437,7 +437,7 @@ export interface TurnTrace {
   id: string;
   conversationId: string;
   turnId: string;
-  phase: 'selection' | 'planning' | 'writing' | 'records' | 'memory-rebuild' | 'plain' | 'choices';
+  phase: 'selection' | 'planning' | 'writing' | 'records' | 'memory' | 'state' | 'memory-rebuild' | 'plain' | 'choices';
   requestIndex: number;
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   model: string;

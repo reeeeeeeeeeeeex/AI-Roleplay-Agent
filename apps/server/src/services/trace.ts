@@ -1,5 +1,5 @@
 import type { RuntimeTraceSink } from '@new-ai-chat/agent-runtime';
-import type { AgentTraceEvent, TurnRecord, TurnTrace } from '@new-ai-chat/contracts';
+import type { AgentTraceEvent, AgentUsage, TurnRecord, TurnTrace } from '@new-ai-chat/contracts';
 import type { Repository } from '../db/repository.js';
 import type { EventBroker } from './events.js';
 
@@ -51,6 +51,28 @@ export function createTraceSink(repository: Repository, broker: EventBroker, tur
     flush() {
       for (const traceId of buffers.keys()) flush(traceId);
       buffers.clear();
+    },
+  };
+}
+
+// Record requests finish only after their output has been validated and saved.
+export function createRecordTrace(sink: RuntimeTraceSink, phase: 'memory' | 'state' | 'memory-rebuild', model: string) {
+  let traceId: string | undefined;
+  let usage: AgentUsage | undefined;
+  const trace: RuntimeTraceSink = {
+    ...sink,
+    start(_phase, requestModel, speaker, contextReport) {
+      traceId = sink.start(phase, requestModel, speaker, contextReport);
+      return traceId;
+    },
+    finish(_id, _status, requestUsage) { usage = requestUsage; },
+  };
+  return {
+    trace,
+    finish(outcome: 'updated' | 'unchanged' | 'no-new-turns' | 'draft' | 'failed', status: 'completed' | 'failed' | 'cancelled' = 'completed', error?: string) {
+      traceId ??= sink.start(phase, model);
+      sink.event?.(traceId, 'record.result', { outcome });
+      sink.finish(traceId, status, usage, error);
     },
   };
 }

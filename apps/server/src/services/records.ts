@@ -1,8 +1,11 @@
 import { AppError } from '@new-ai-chat/contracts';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { applyStateOperations, blankState, modelStateColumns, stateColumnLabels, stateDeathInstruction, stateCollectionInstruction, type ProtagonistTables, type MemoryCoverage, type MessageNode } from '@new-ai-chat/contracts';
 import { fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
 import type { Repository } from '../db/repository.js';
+import type { EventBroker } from './events.js';
+import { createRecordTrace, createTraceSink } from './trace.js';
 
 export const chronicle = z.object({ timeSpan: z.string(), location: z.string(), chronicle: z.string().min(1), dialogue: z.array(z.string()).max(3), overview: z.string() }).strict();
 export const memoryRecordInstruction = 'Return only a JSON object with timeSpan, location, chronicle (objective chronology), dialogue (up to 3 strings), overview. Write the chronicle and overview in short, complete sentences with explicit subjects and full words, in the language of the story. Include only events established in the story. Each dialogue string must include the actual speaker\'s name and the original quote, formatted as 角色名：“原话”. Identify speakers from story evidence and known identities. If the speaker cannot be determined, omit that quote instead of guessing.';
@@ -18,7 +21,7 @@ export class RecordService {
   private pending = new Map<string, { controller: AbortController; done: Promise<void> }>();
   busy(chat: string) { return this.pending.has(chat); }
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime,
-    private request: (chat: string, turn: string, signal: AbortSignal, maintenance: 'memory' | 'state') => Promise<BaseAgentRequest>) {}
+    private request: (chat: string, turn: string, signal: AbortSignal, maintenance: 'memory' | 'state') => Promise<BaseAgentRequest>, private events: EventBroker) {}
   async automatic(chat: string, signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
     const config = this.repository.getGeneralSettings();
     const completed = settledStoryIds(this.repository, chat);
@@ -41,7 +44,10 @@ export class RecordService {
     const done = new Promise<void>(resolve => { finish = resolve; });
     this.pending.set(chat, { controller, done });
     signal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120_000)]);
+    const sink = trace ? undefined : createTraceSink(this.repository, this.events, { id: randomUUID(), conversationId: chat });
+    let manualTrace: ReturnType<typeof createRecordTrace> | undefined;
     try {
+      if (sink) manualTrace = createRecordTrace(sink, kind, this.repository.resolveConnection(this.repository.getGeneralSettings().recordConnectionId)?.model ?? '');
       signal.throwIfAborted();
       const head = this.repository.getConversation(chat)?.headMessageId;
       const beforeState = this.repository.latestState(chat);
@@ -50,7 +56,8 @@ export class RecordService {
       const completed = settledStoryIds(this.repository, chat);
       let storyTurnId = completed.at(-1) ?? null;
       const request = await this.request(chat, storyTurnId ?? 'manual', signal, kind);
-      if (trace) request.trace = trace;
+      if (manualTrace) request.trace = manualTrace.trace;
+      else if (trace) request.trace = trace;
       const instruction = kind === 'memory'
         ? `${memoryRecordInstruction} Append a new stage, preserve earlier memory, and avoid repeating details already summarized.`
         : `Return only a JSON array of state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Never use SQL. Allowed fields: ${JSON.stringify(modelStateColumns)}. Field labels: ${JSON.stringify(stateColumnLabels)}. Past Experience Before Story / 故事前经历 is user-authored context and must never be changed. Occupation / 身份与地位 includes identity and social standing; Current Outfit / 当前穿搭 is current clothing, while appearance is stable physical appearance. Past Experience in Story / 故事中经历 starts with this chat. global_state/protagonist_info are update-only row 1. Do not delete important_characters. Maintain current facts and long-term conclusions; chronology belongs in Memory. Required insert identities: name+gender_age, skill_name+skill_type, item_name+quantity+category, quest_name+quest_type, locations_and_factions: name+type, other: name. ${stateCollectionInstruction} Inventory quantity is a positive integer; ${stateDeathInstruction} Empty array if no evidenced change.`;
@@ -62,7 +69,7 @@ export class RecordService {
         const marker = beforeMemory?.coverage?.endMessageId;
         const after = marker ? branch.findIndex(message => message.id === marker) : beforeMemory?.storyTurnId ? branch.findLastIndex(message => message.storyTurnId === beforeMemory.storyTurnId) : -1;
         const remaining = branch.slice(after + 1).filter(message => message.role !== 'system' && message.storyTurnId && completed.includes(message.storyTurnId) && !excludedTurns.has(message.storyTurnId));
-        if (!remaining.length) return { unchanged: true };
+        if (!remaining.length) { manualTrace?.finish('no-new-turns'); return { unchanged: true }; }
         const storyIds = [...new Set(remaining.map(message => message.storyTurnId!))];
         let selected: MessageNode[] = [];
         // Cover only whole turns actually sent. A clipped prefix remains eligible later.
@@ -81,7 +88,7 @@ export class RecordService {
       signal.throwIfAborted();
       if (this.repository.events(chat, ['memory.edited']).at(-1)?.id !== beforeMemoryEdit) throw new AppError("Memory changed; discarded stale update.");
       if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new AppError("Records changed; discarded stale update.");
-      return this.repository.database.sqlite.transaction(() => {
+      const result = this.repository.database.sqlite.transaction(() => {
         if (kind === 'memory') {
           const record = chronicle.parse(answer);
           return this.repository.createMemory({ conversationId: chat, stage: (beforeMemory?.stage ?? 0) + 1, storyTurnId, source: 'generated', coverage, content: JSON.stringify(record, null, 2) });
@@ -89,7 +96,13 @@ export class RecordService {
         const result = applyStateOperations(beforeState?.tables ?? blankState(), answer);
         return result.changed ? this.repository.createState(chat, storyTurnId, result.tables) : { unchanged: true };
       })();
-    } finally { this.pending.delete(chat); finish(); }
+      manualTrace?.finish('unchanged' in result ? 'unchanged' : 'updated');
+      return result;
+    } catch (error) {
+      if (sink) manualTrace ??= createRecordTrace(sink, kind, '');
+      manualTrace?.finish('failed', signal.aborted ? 'cancelled' : 'failed', this.repository.redactError(error));
+      throw error;
+    } finally { sink?.flush(); this.pending.delete(chat); finish(); }
   }
   async shutdown() {
     for (const task of this.pending.values()) task.controller.abort();

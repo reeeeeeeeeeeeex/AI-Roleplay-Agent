@@ -46,6 +46,68 @@ function rebuildHistory(count: number) {
   return head;
 }
 
+function offlineRecordResponse(content: string) {
+  const repo = server.repository;
+  const record = repo.createConnection(connectionInputSchema.parse({ name: 'Records', model: 'record-test', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', apiKey: 'offline', maxTokens: 1000 }));
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), recordConnectionId: record.id, streaming: false });
+  const bodies: string[] = [];
+  const gateway = new PiAgentRuntime(new PiModelGateway(async (_url, init) => {
+    bodies.push(String(init?.body));
+    return Response.json({ id: 'offline', object: 'chat.completion', model: 'record-test', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
+  }));
+  vi.spyOn(runtime, 'maintain').mockImplementation((request, instruction) => gateway.maintain(request, instruction));
+  return bodies;
+}
+
+it.each(['memory', 'state'] as const)('manual %s updates expose one saved request and its result in conversation Trace', async kind => {
+  const head = rebuildHistory(2);
+  const content = JSON.stringify(kind === 'memory'
+    ? { timeSpan: '今日', location: '灯塔', chronicle: '林在灯塔里找到一封信。', dialogue: [], overview: '林找到一封信。' }
+    : [{ op: 'updateRow', table: 'global_state', rowId: 1, cells: { current_location: '灯塔' } }]);
+  const bodies = offlineRecordResponse(content);
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/${kind}/generate` });
+  expect(response.statusCode).toBe(200);
+  const summaries = (await server.app.inject({ url: `/api/conversations/${chat}/traces?view=summary` })).json();
+  expect(summaries).toHaveLength(1);
+  expect(summaries[0]).toMatchObject({ phase: kind, status: 'completed', requestIndex: 0, model: 'record-test' });
+  const trace = (await server.app.inject({ url: `/api/traces/${summaries[0].id}` })).json();
+  expect(bodies).toHaveLength(1);
+  expect(trace.request).toBe(bodies[0]);
+  expect(JSON.parse(trace.response).choices[0].message.content).toBe(content);
+  expect(trace.usage).toMatchObject({ input: 10, output: 10 });
+  expect(trace.events).toContainEqual(expect.objectContaining({ type: 'record.result', data: { outcome: 'updated' } }));
+  expect(trace.events.some((event: any) => event.type === 'message_end')).toBe(true);
+  expect(JSON.stringify(trace)).not.toContain('secret-do-not-return');
+  expect(server.repository.getConversation(chat)!.headMessageId).toBe(head);
+  if (kind === 'memory') expect(JSON.parse(server.repository.listMemories(chat)[0]!.content)).toEqual(JSON.parse(content));
+  else expect(server.repository.latestState(chat)?.tables.global_state[0]?.current_location).toBe('灯塔');
+});
+
+it('manual Memory with no uncovered turns records a no-op Trace without calling the model', async () => {
+  rebuildHistory(2);
+  await server.records.generate(chat, 'memory', new AbortController().signal);
+  const maintain = vi.spyOn(runtime, 'maintain');
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/memory/generate` });
+  expect(response.json()).toEqual({ unchanged: true });
+  expect(maintain).not.toHaveBeenCalled();
+  const trace = server.repository.listConversationTraces(chat).find(item => item.events.some(event => event.type === 'record.result' && (event.data as any).outcome === 'no-new-turns'))!;
+  expect(trace).toMatchObject({ phase: 'memory', status: 'completed', request: null, response: null, usage: null });
+  expect(trace.events).toContainEqual(expect.objectContaining({ type: 'record.result', data: { outcome: 'no-new-turns' } }));
+  expect(server.repository.listMemories(chat)).toHaveLength(1);
+});
+
+it('manual state Trace fails when a model response cannot be applied', async () => {
+  rebuildHistory(2);
+  offlineRecordResponse(JSON.stringify([{ op: 'deleteRow', table: 'important_characters', rowId: 1 }]));
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/state/generate` });
+  expect(response.statusCode).toBeGreaterThanOrEqual(400);
+  const [trace] = server.repository.listConversationTraces(chat);
+  expect(trace).toMatchObject({ phase: 'state', status: 'failed', usage: expect.objectContaining({ input: 10, output: 10 }) });
+  expect(trace!.error).toContain('Important characters');
+  expect(trace!.request).toBeTruthy(); expect(trace!.response).toBeTruthy();
+  expect(server.repository.latestState(chat)).toBeNull();
+});
+
 it('Memory rebuild sends cumulative groups and new stages through the real Gateway without old records', async () => {
   const repo = server.repository;
   rebuildHistory(6);
@@ -80,6 +142,7 @@ it('Memory rebuild sends cumulative groups and new stages through the real Gatew
   const traces = repo.listTraces(draft.id);
   expect(traces.map(trace => [trace.phase, trace.requestIndex, trace.status])).toEqual([0, 1, 2, 3].map(index => ['memory-rebuild', index, 'completed']));
   expect(traces.every(trace => trace.request && trace.response && trace.events.some(event => event.type === 'message_end'))).toBe(true);
+  expect(traces.every(trace => trace.events.some(event => event.type === 'record.result' && (event.data as any).outcome === 'draft'))).toBe(true);
   const listed = await server.app.inject({ url: `/api/conversations/${chat}/traces?view=summary` });
   expect(listed.json().filter((trace: any) => trace.turnId === draft.id)).toHaveLength(4);
 });
@@ -189,6 +252,9 @@ it('Memory rebuild pauses before a model request when the exact batch exceeds it
   const draft = server.memoryRebuild.get(chat)!;
   expect(draft.status).toBe('paused'); expect(draft.errorText?.key).toBe('memoryRebuild.budget');
   expect(draft.stages).toEqual([]); expect(maintain).not.toHaveBeenCalled();
+  const [trace] = repo.listTraces(draft.id);
+  expect(trace).toMatchObject({ phase: 'memory-rebuild', status: 'failed', request: null, response: null, usage: null });
+  expect(trace!.error).toContain('预算');
 });
 
 it('Memory rebuild applies a complete replacement atomically and rejects a changed source', async () => {
@@ -359,6 +425,8 @@ it('shutdown cancels manual record requests and discards late model results', as
     expect(server.app.server.listening).toBe(false);
     server = await createApp(server.config, runtime);
     expect(server.repository.latestState(chat)).toBeNull();
+    const [trace] = server.repository.listConversationTraces(chat);
+    expect(trace).toMatchObject({ phase: 'state', status: 'cancelled' });
   } finally {
     finish?.();
     await response;

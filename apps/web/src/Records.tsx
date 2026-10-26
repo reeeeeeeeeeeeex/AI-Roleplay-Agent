@@ -114,13 +114,13 @@ export default function Records({
       await flushContentEdits();
       setBusy(true);
       await api(path, method, value);
-      onChanged();
       return true;
     } catch (error) {
       onError((error as Error).message);
       return false;
     } finally {
       setBusy(false);
+      onChanged();
     }
   }
 

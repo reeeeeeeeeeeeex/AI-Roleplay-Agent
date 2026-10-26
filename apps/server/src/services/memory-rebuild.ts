@@ -4,7 +4,7 @@ import { assertRecordBudget, type AgentRuntime } from '@new-ai-chat/agent-runtim
 import type { Repository } from '../db/repository.js';
 import type { TurnService } from './turns.js';
 import { chronicle, memoryRecordInstruction, parseModelJson, type RecordService } from './records.js';
-import { createTraceSink } from './trace.js';
+import { createRecordTrace, createTraceSink } from './trace.js';
 import type { EventBroker } from './events.js';
 
 // Reliable contiguous turns retain all outputs. Only unmarked/inconsistent legacy
@@ -135,15 +135,13 @@ export class MemoryRebuildService {
     const chat = draft.conversationId;
     const previous = this.repo.listTraces(draft.id);
     const trace = createTraceSink(this.repo, this.events, { id: draft.id, conversationId: chat }, previous.reduce((next, item) => Math.max(next, item.requestIndex + 1), 0));
-    let currentTrace: string | undefined;
-    const startTrace = trace.start;
-    trace.start = (...args) => { currentTrace = startTrace(...args); return currentTrace; };
+    let batchTrace: ReturnType<typeof createRecordTrace> | undefined;
     try {
       this.events.publish(chat, draft.id, 'memory.rebuild.started', { head: draft.head });
       const base = await this.turns.request(chat, draft.id, signal, true, undefined, 'memory-rebuild');
       const messages = new Map(this.repo.getActiveBranch(chat).map(message => [message.id, message]));
       for (let index = draft.stages.length; index < draft.plan.batches.length; index++) {
-        currentTrace = undefined;
+        batchTrace = createRecordTrace(trace, 'memory-rebuild', base.connection.model);
         signal.throwIfAborted();
         this.require(chat, draft.id);
         if (!this.valid(draft)) throw new AppError('memoryRebuild.stale');
@@ -153,7 +151,7 @@ export class MemoryRebuildService {
         const addedIds = added.flatMap(round => round.messageIds);
         const offset = history.findIndex(message => message.id === addedIds[0]);
         const instruction = `${memoryRecordInstruction} Rebuild stage ${index + 1}. The history array contains context for this group; summarize ONLY the newly covered messages at array indexes ${offset} through ${history.length - 1} (zero-based), rounds ${batch.newFrom}–${batch.to}. Earlier messages and all previous stages are context only; do not repeat or rewrite their summaries. Background, identities and pinned facts are not evidence that an event happened.`;
-        const request = { ...base, trace, recordRebuild: true, history, fixedHistory: true, latestUserText: '',
+        const request = { ...base, trace: batchTrace.trace, recordRebuild: true, history, fixedHistory: true, latestUserText: '',
           signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
           dynamicContext: [...base.dynamicContext.filter(item => item.required), ...draft.stages.map((stage, i) => ({ source: 'memory' as const, title: `Stage ${i + 1}`, content: stage.content, priority: 100 + i / 1_000_000 }))] };
         assertRecordBudget(request, instruction);
@@ -170,9 +168,12 @@ export class MemoryRebuildService {
           draft = { ...draft, stages: [...draft.stages, stage], status: index + 1 === draft.plan.batches.length ? 'ready' : 'running', updatedAt: new Date().toISOString() };
           this.repo.saveMemoryRebuild(draft);
         })();
+        batchTrace.finish('draft');
+        batchTrace = undefined;
       }
     } catch (error) {
-      if (currentTrace) this.repo.updateTrace(currentTrace, { status: signal.aborted ? 'cancelled' : 'failed', error: signal.aborted ? null : this.repo.redactError(error), completedAt: new Date().toISOString() });
+      batchTrace ??= createRecordTrace(trace, 'memory-rebuild', draft.plan.model ?? '');
+      batchTrace.finish('failed', signal.aborted ? 'cancelled' : 'failed', this.repo.redactError(error));
       if (this.repo.getMemoryRebuild(chat)?.id !== draft.id) return;
       const stale = !this.valid(draft);
       const failure = stale ? new AppError('memoryRebuild.stale') : error;
