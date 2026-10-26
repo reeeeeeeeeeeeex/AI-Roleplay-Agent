@@ -100,11 +100,16 @@ it('Memory rebuild keeps failed attempts in Trace and continues request numberin
   expect(repo.listTraces(draft.id).map(trace => [trace.requestIndex, trace.status])).toEqual([[0, 'failed'], [1, 'completed']]);
 });
 
-it('Memory generation and rebuild both request speaker-labelled important dialogue', async () => {
+it('Memory generation and rebuild accept complete overviews and request speaker-labelled dialogue', async () => {
   const head = rebuildHistory(2);
-  const maintain = vi.spyOn(runtime, 'maintain');
+  const record = { timeSpan: '清晨', location: '灯塔', chronicle: '林与苏在灯塔里讨论明天的安排。', dialogue: ['林：“明天见。”'], overview: '林与苏在灯塔里讨论了明天的安排。林答应明天带来信件，苏决定留在灯塔等待，两人约好在清晨再次见面。' };
+  const maintain = vi.spyOn(runtime, 'maintain').mockResolvedValue(JSON.stringify(record));
   await server.records.generate(chat, 'memory', new AbortController().signal);
   server.memoryRebuild.start(chat, head, { rounds: 2, groups: 1, batchRounds: 2 }); await server.memoryRebuild.idle(chat);
+  expect(JSON.parse(server.repository.listMemories(chat)[0]!.content)).toEqual(record);
+  const rebuilt = server.memoryRebuild.get(chat)!;
+  expect(rebuilt.status).toBe('ready');
+  expect(JSON.parse(rebuilt.stages[0]!.content)).toEqual(record);
   expect(maintain).toHaveBeenCalledTimes(2);
   for (const [, instruction] of maintain.mock.calls) {
     expect(instruction).toContain(memoryRecordInstruction);
@@ -153,7 +158,7 @@ it('Memory rebuild stage edits reject stale versions and apply the saved draft c
   const draft = server.memoryRebuild.start(chat, head, { rounds: 1, groups: 1, batchRounds: 1 }); await server.memoryRebuild.idle(chat);
   const ready = server.memoryRebuild.get(chat)!;
   const original = ready.stages[0]!.content;
-  const content = JSON.stringify({ ...JSON.parse(original), dialogue: ['Sina：“明天见。”'], chronicle: 'Edited draft, not yet active' }, null, 2);
+  const content = JSON.stringify({ ...JSON.parse(original), dialogue: ['Sina：“明天见。”'], chronicle: 'Edited draft, not yet active', overview: 'Sina agreed to return tomorrow morning with the letter and meet her companion at the lighthouse.' }, null, 2);
   const url = `/api/conversations/${chat}/memory/rebuild/${draft.id}/stages/0`;
   const saved = await server.app.inject({ method: 'PATCH', url, payload: { head, previous: original, content } });
   expect(saved.statusCode).toBe(200); expect(server.repository.listMemoryStages(chat)).toEqual([]);
