@@ -17,7 +17,7 @@ import { listModels, modelListInputSchema } from './services/models.js';
 import { exportStory, importStory, previewStoryArchive } from './services/story-archive.js';
 import type { ActionChoiceService } from './services/action-choices.js';
 import { forkStory, deleteStoryFrom, selectMessageVersion } from './services/story-branches.js';
-import { projectMemoryStages, splitMemoryStages } from './memory-stages.js';
+import { memorySourceMessages, projectMemoryStages, splitMemoryStages } from './memory-stages.js';
 import type { MemoryRebuildService } from './services/memory-rebuild.js';
 
 export function registerRoutes(app: FastifyInstance, repo: Repository, turns: TurnService, records: RecordService, config: AppConfig, choices: ActionChoiceService, memoryRebuild: MemoryRebuildService) {
@@ -233,7 +233,10 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const row = repo.database.sqlite.prepare('SELECT id FROM turns WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1').get(idOf(req)) as { id: string } | undefined;
     return row ? repo.getTurn(row.id) : null;
   });
-  app.get('/api/conversations/:id/memory', async (req) => repo.listMemoryStages(idOf(req)));
+  app.get('/api/conversations/:id/memory', async (req) => {
+    const chat = idOf(req), branch = repo.getActiveBranch(chat);
+    return repo.listMemoryStages(chat).map(entry => ({ ...entry, canRegenerate: memorySourceMessages(entry, branch).length > 0 }));
+  });
   const rebuildOptions = z.object({ rounds: z.coerce.number().int().positive(), groups: z.coerce.number().int().positive(), batchRounds: z.coerce.number().int().positive() }).strict();
   app.get('/api/conversations/:id/memory/rebuild', async req => {
     const chat = idOf(req);
@@ -259,6 +262,12 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
     const { id, draftId } = rebuildParams.parse(req.params);
     return memoryRebuild.discard(id, draftId);
   });
+  app.post('/api/conversations/:id/memory/:memoryId/regenerate', async req => {
+    const { id: chat, memoryId } = z.object({ id: z.string().min(1), memoryId: z.string().min(1) }).parse(req.params);
+    turns.assertIdle(chat);
+    const input = z.object({ head: z.string().nullable(), previous: z.string().max(200_000) }).strict().parse(req.body);
+    return records.regenerateMemory(chat, memoryId, input, AbortSignal.timeout(120_000));
+  });
   app.patch('/api/conversations/:id/memory/:memoryId', async (req) => {
     const { id: chat, memoryId } = z.object({ id: z.string(), memoryId: z.string() }).parse(req.params);
     turns.assertIdle(chat);
@@ -278,7 +287,7 @@ export function registerRoutes(app: FastifyInstance, repo: Repository, turns: Tu
       }
       repo.addEvent(chat, null, 'memory.edited', { id, head: value.head, content });
     }
-    return { ...entry, content: value.content };
+    return { ...entry, content: value.content, canRegenerate: memorySourceMessages(entry, repo.getActiveBranch(chat)).length > 0 };
   });
   app.get('/api/conversations/:id/facts', async req => repo.listPinnedFacts(idOf(req)));
   app.get('/api/conversations/:id/navigation', async req => repo.navigation(idOf(req)));

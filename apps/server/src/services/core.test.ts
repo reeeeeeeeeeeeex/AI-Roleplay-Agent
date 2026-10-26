@@ -59,6 +59,107 @@ function offlineRecordResponse(content: string) {
   return bodies;
 }
 
+function regenerationMemory() {
+  const head = rebuildHistory(2);
+  const history = server.repository.getActiveBranch(chat).slice(0, 3);
+  const memory = server.repository.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'rebuilt', content: 'Original Memory',
+    coverage: { startMessageId: history[0]!.id, endMessageId: history.at(-1)!.id, storyTurnIds: [], inferred: true, roundCount: 1 } });
+  return { head, history, memory, input: { head, previous: memory.content } };
+}
+
+const regeneratedMemory = JSON.stringify({ timeSpan: '今日', location: '灯塔', chronicle: '林在灯塔里找到一封信。', dialogue: [], overview: '林找到一封信。' }, null, 2);
+
+it('Memory regeneration sends only current source versions and replaces one stage with Trace', async () => {
+  const repo = server.repository;
+  const head = rebuildHistory(4);
+  const source = repo.getActiveBranch(chat).filter(message => message.storyTurnId === 'rebuild-round-2');
+  repo.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'EARLIER_MEMORY_EXCLUDED' });
+  const target = repo.createMemory({ conversationId: chat, stage: 2, storyTurnId: 'rebuild-round-2', source: 'generated', content: 'OLD_TARGET_EXCLUDED',
+    coverage: { startMessageId: source[0]!.id, endMessageId: source.at(-1)!.id, storyTurnIds: ['rebuild-round-2'] } });
+  repo.createMemory({ conversationId: chat, stage: 3, storyTurnId: 'rebuild-round-4', source: 'generated', content: 'LATER_MEMORY_EXCLUDED' });
+  const state = blankState(); state.global_state[0]!.current_location = 'LATER_STATE_EXCLUDED'; repo.createState(chat, null, state);
+  for (const message of source.slice(1)) {
+    const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${message.id}/edit`, payload: { head, previous: message.content, content: `Latest source ${message.id}` } });
+    expect(edited.statusCode).toBe(200);
+  }
+  repo.setHistoryStart(chat, head!);
+  const bodies = offlineRecordResponse(regeneratedMemory);
+  repo.setGeneralSettings({ ...repo.getGeneralSettings(), historyMessageLimit: 1 });
+  const before = repo.listMemoryStages(chat), messages = repo.getActiveBranch(chat), beforeState = repo.latestState(chat);
+  const listed = (await server.app.inject({ url: `/api/conversations/${chat}/memory` })).json();
+  expect(listed.find((entry: any) => entry.id === target.id).canRegenerate).toBe(true);
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/memory/${target.id}/regenerate`, payload: { head, previous: target.content } });
+  expect(response.statusCode, response.body).toBe(200);
+  expect(bodies).toHaveLength(1);
+  const body = JSON.parse(bodies[0]!);
+  expect(JSON.parse(body.messages[1].content).history.map((item: any) => item.text)).toEqual(messages.filter(message => message.storyTurnId === 'rebuild-round-2').map(message => message.content));
+  expect(bodies[0]).not.toMatch(/EARLIER_MEMORY_EXCLUDED|OLD_TARGET_EXCLUDED|LATER_MEMORY_EXCLUDED|LATER_STATE_EXCLUDED|round-1-|round-3-|round-4-|round-2-assistant/);
+  expect(repo.listMemoryStages(chat)).toEqual(before.map(entry => entry.id === target.id ? { ...entry, content: regeneratedMemory } : entry));
+  expect(repo.getActiveBranch(chat)).toEqual(messages); expect(repo.latestState(chat)).toEqual(beforeState);
+  const [trace] = repo.listConversationTraces(chat);
+  expect(trace).toMatchObject({ phase: 'memory', status: 'completed', request: bodies[0], usage: expect.objectContaining({ input: 10, output: 10 }) });
+  expect(trace!.events).toContainEqual(expect.objectContaining({ type: 'record.result', data: { outcome: 'regenerated', memoryId: target.id, stage: 2 } }));
+});
+
+it('Memory regeneration supports explicit legacy coverage without logical turn IDs', async () => {
+  const { history, memory, input } = regenerationMemory();
+  const maintain = vi.spyOn(runtime, 'maintain').mockResolvedValue(regeneratedMemory);
+  const saved = await server.records.regenerateMemory(chat, memory.id, input, new AbortController().signal);
+  expect(maintain.mock.calls[0]![0].history).toEqual(history);
+  expect(saved).toMatchObject({ id: memory.id, coverage: memory.coverage, content: regeneratedMemory });
+  expect(server.repository.listMemoryStages(chat)).toHaveLength(1);
+});
+
+it.each([null, { startMessageId: 'missing', endMessageId: 'missing', storyTurnIds: [] }])('Memory regeneration rejects untraceable coverage %j', async coverage => {
+  const head = rebuildHistory(1);
+  const memory = server.repository.createMemory({ conversationId: chat, stage: 1, storyTurnId: null, source: 'generated', content: 'Keep original', coverage });
+  const maintain = vi.spyOn(runtime, 'maintain');
+  const listed = (await server.app.inject({ url: `/api/conversations/${chat}/memory` })).json();
+  expect(listed[0].canRegenerate).toBe(false);
+  const response = await server.app.inject({ method: 'POST', url: `/api/conversations/${chat}/memory/${memory.id}/regenerate`, payload: { head, previous: memory.content } });
+  expect(response.statusCode).toBe(400); expect(response.json().errorText.key).toBe('memory.regenerateSource');
+  expect(maintain).not.toHaveBeenCalled(); expect(server.repository.listMemoryStages(chat)[0]!.content).toBe(memory.content);
+});
+
+it('Memory regeneration preserves the original and records Trace when source turns exceed the budget', async () => {
+  const { history, memory, input } = regenerationMemory();
+  const message = history[1]!;
+  await server.app.inject({ method: 'POST', url: `/api/messages/${message.id}/edit`, payload: { head: input.head, content: 'Long source story. '.repeat(4000) } });
+  const record = server.repository.createConnection(connectionInputSchema.parse({ name: 'Small window', model: 'small', protocol: 'openai-chat-completions', baseUrl: 'https://example.test/v1', maxTokens: 1000, contextWindow: 8192 }));
+  server.repository.setGeneralSettings({ ...server.repository.getGeneralSettings(), recordConnectionId: record.id });
+  const maintain = vi.spyOn(runtime, 'maintain');
+  await expect(server.records.regenerateMemory(chat, memory.id, input, new AbortController().signal)).rejects.toMatchObject({ uiText: { key: 'memory.regenerateBudget' } });
+  expect(maintain).not.toHaveBeenCalled(); expect(server.repository.listMemoryStages(chat)[0]!.content).toBe(memory.content);
+  expect(server.repository.listConversationTraces(chat)[0]).toMatchObject({ phase: 'memory', status: 'failed', request: null, usage: null });
+});
+
+it('Memory regeneration rejects a changed source version even when the later head is unchanged', async () => {
+  const { head, history, memory, input } = regenerationMemory();
+  let release!: (value: string) => void;
+  const maintain = vi.spyOn(runtime, 'maintain').mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  const running = server.records.regenerateMemory(chat, memory.id, input, new AbortController().signal);
+  await vi.waitFor(() => expect(maintain).toHaveBeenCalled());
+  const edited = await server.app.inject({ method: 'POST', url: `/api/messages/${history[1]!.id}/edit`, payload: { head, content: 'A newer version during regeneration' } });
+  expect(edited.statusCode).toBe(200); expect(server.repository.getConversation(chat)!.headMessageId).toBe(head);
+  release(regeneratedMemory);
+  await expect(running).rejects.toThrow('记忆或分支已变化');
+  expect(server.repository.listMemoryStages(chat)[0]!.content).toBe(memory.content);
+  expect(server.repository.listConversationTraces(chat)[0]!.status).toBe('failed');
+});
+
+it('Memory regeneration preserves a concurrent edit of the target record', async () => {
+  const { memory, input } = regenerationMemory();
+  let release!: (value: string) => void;
+  const maintain = vi.spyOn(runtime, 'maintain').mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  const running = server.records.regenerateMemory(chat, memory.id, input, new AbortController().signal);
+  await vi.waitFor(() => expect(maintain).toHaveBeenCalled());
+  const edited = await server.app.inject({ method: 'PATCH', url: `/api/conversations/${chat}/memory/${memory.id}`, payload: { ...input, content: 'Concurrent manual edit' } });
+  expect(edited.statusCode).toBe(200);
+  release(regeneratedMemory);
+  await expect(running).rejects.toThrow('记忆或分支已变化');
+  expect(server.repository.listMemoryStages(chat)[0]!.content).toBe('Concurrent manual edit');
+});
+
 it.each(['memory', 'state'] as const)('manual %s updates expose one saved request and its result in conversation Trace', async kind => {
   const head = rebuildHistory(2);
   const content = JSON.stringify(kind === 'memory'

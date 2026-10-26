@@ -7,7 +7,7 @@ import ContextReport from './ContextReport.js';
 import './trace.css';
 
 const phases = { get selection() { return t("选择发言者"); }, planning: 'Planner', writing: 'Writer', get records() { return t("记录更新"); }, get memory() { return t('Memory 更新'); }, get state() { return t('主角状态更新'); }, get 'memory-rebuild'() { return t('Memory 重建'); }, get plain() { return t("普通写作"); }, get choices() { return t("行动选项"); } };
-const recordResults = { updated: '更新已保存。', unchanged: '模型未提出需要保存的变化。', 'no-new-turns': '没有尚未记忆的完整回合。', draft: '本批已写入重建草稿，覆盖当前 Memory 后生效。' } as const;
+const recordResults = { updated: '更新已保存。', regenerated: '这一条 Memory 已重新生成并替换。', unchanged: '模型未提出需要保存的变化。', 'no-new-turns': '没有尚未记忆的完整回合。', draft: '本批已写入重建草稿，覆盖当前 Memory 后生效。' } as const;
 const statuses = { get running() { return t("运行中"); }, get completed() { return t("完成"); }, get failed() { return t("失败"); }, get cancelled() { return t("已取消"); } };
 const format = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 const duration = (from?: string | null, to?: string | null) => from && to ? `${formatNumber((Date.parse(to) - Date.parse(from)) / 1000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} s` : '—';
@@ -70,7 +70,7 @@ function RequestTrace({ trace, onError }: { trace: TurnTrace; onError: (message:
   const input = usage ? usage.input + usage.cacheRead + usage.cacheWrite : null;
   const timing = trace.timing;
   const http = trace.events?.find(event => event.type === 'http.response')?.data as any;
-  const recordResult = trace.events?.find(event => event.type === 'record.result')?.data as { outcome: keyof typeof recordResults | 'failed' } | undefined;
+  const recordResult = trace.events?.find(event => event.type === 'record.result')?.data as { outcome: keyof typeof recordResults | 'failed'; stage?: number } | undefined;
   return <article className="trace-request">
     <header>
       <strong>{phases[trace.phase]}  {t("· 请求")} {trace.requestIndex + 1}</strong>
@@ -90,6 +90,7 @@ function RequestTrace({ trace, onError }: { trace: TurnTrace; onError: (message:
     </dl>
     {trace.error && <pre className="trace-error">{trace.error}</pre>}
     {recordResult && <div className="muted">
+      {recordResult.stage !== undefined && <p>{t('阶段 {0}', recordResult.stage)}</p>}
       {recordResult.outcome !== 'failed' && <p>{t(recordResults[recordResult.outcome])}</p>}
       {trace.request == null && <p>{t('本次未调用模型。')}</p>}
     </div>}

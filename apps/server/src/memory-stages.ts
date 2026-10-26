@@ -1,4 +1,11 @@
-import type { MemoryEntry } from '@new-ai-chat/contracts';
+import type { MemoryEntry, MessageNode } from '@new-ai-chat/contracts';
+
+export function memorySourceMessages(entry: MemoryEntry, branch: MessageNode[]): MessageNode[] {
+  if (!entry.coverage) return [];
+  const start = branch.findIndex(message => message.id === entry.coverage!.startMessageId);
+  const end = branch.findIndex(message => message.id === entry.coverage!.endMessageId);
+  return start >= 0 && end >= start ? branch.slice(start, end + 1).filter(message => message.role !== 'system') : [];
+}
 
 // Legacy imports are cumulative snapshots. Only unambiguous, consecutive headers
 // can be interpreted as stages; keep all other text intact as one record.

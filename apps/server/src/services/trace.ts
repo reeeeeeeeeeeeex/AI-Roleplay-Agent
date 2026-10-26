@@ -56,7 +56,7 @@ export function createTraceSink(repository: Repository, broker: EventBroker, tur
 }
 
 // Record requests finish only after their output has been validated and saved.
-export function createRecordTrace(sink: RuntimeTraceSink, phase: 'memory' | 'state' | 'memory-rebuild', model: string) {
+export function createRecordTrace(sink: RuntimeTraceSink, phase: 'memory' | 'state' | 'memory-rebuild', model: string, memory?: { memoryId: string; stage: number }) {
   let traceId: string | undefined;
   let usage: AgentUsage | undefined;
   const trace: RuntimeTraceSink = {
@@ -69,9 +69,9 @@ export function createRecordTrace(sink: RuntimeTraceSink, phase: 'memory' | 'sta
   };
   return {
     trace,
-    finish(outcome: 'updated' | 'unchanged' | 'no-new-turns' | 'draft' | 'failed', status: 'completed' | 'failed' | 'cancelled' = 'completed', error?: string) {
+    finish(outcome: 'updated' | 'regenerated' | 'unchanged' | 'no-new-turns' | 'draft' | 'failed', status: 'completed' | 'failed' | 'cancelled' = 'completed', error?: string) {
       traceId ??= sink.start(phase, model);
-      sink.event?.(traceId, 'record.result', { outcome });
+      sink.event?.(traceId, 'record.result', { outcome, ...memory });
       sink.finish(traceId, status, usage, error);
     },
   };

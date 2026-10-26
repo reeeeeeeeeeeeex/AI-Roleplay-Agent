@@ -2,10 +2,11 @@ import { AppError } from '@new-ai-chat/contracts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { applyStateOperations, blankState, modelStateColumns, stateColumnLabels, stateDeathInstruction, stateCollectionInstruction, type ProtagonistTables, type MemoryCoverage, type MessageNode } from '@new-ai-chat/contracts';
-import { fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
+import { assertRecordBudget, fitRequest, type AgentRuntime, type BaseAgentRequest } from '@new-ai-chat/agent-runtime';
 import type { Repository } from '../db/repository.js';
 import type { EventBroker } from './events.js';
 import { createRecordTrace, createTraceSink } from './trace.js';
+import { memorySourceMessages } from '../memory-stages.js';
 
 export const chronicle = z.object({ timeSpan: z.string(), location: z.string(), chronicle: z.string().min(1), dialogue: z.array(z.string()).max(3), overview: z.string() }).strict();
 export const memoryRecordInstruction = 'Return only a JSON object with timeSpan, location, chronicle (objective chronology), dialogue (up to 3 strings), overview. Write the chronicle and overview in short, complete sentences with explicit subjects and full words, in the language of the story. Include only events established in the story. Each dialogue string must include the actual speaker\'s name and the original quote, formatted as 角色名：“原话”. Identify speakers from story evidence and known identities. If the speaker cannot be determined, omit that quote instead of guessing.';
@@ -21,7 +22,7 @@ export class RecordService {
   private pending = new Map<string, { controller: AbortController; done: Promise<void> }>();
   busy(chat: string) { return this.pending.has(chat); }
   constructor(readonly repository: Repository, readonly runtime: AgentRuntime,
-    private request: (chat: string, turn: string, signal: AbortSignal, maintenance: 'memory' | 'state') => Promise<BaseAgentRequest>, private events: EventBroker) {}
+    private request: (chat: string, turn: string, signal: AbortSignal, maintenance: 'memory' | 'state' | 'memory-rebuild') => Promise<BaseAgentRequest>, private events: EventBroker) {}
   async automatic(chat: string, signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
     const config = this.repository.getGeneralSettings();
     const completed = settledStoryIds(this.repository, chat);
@@ -37,6 +38,12 @@ export class RecordService {
     if (config.stateTurnInterval > 0 && since(state?.storyTurnId) >= config.stateTurnInterval) await this.generate(chat, 'state', signal, trace);
   }
   async generate(chat: string, kind: 'memory' | 'state', signal: AbortSignal, trace?: BaseAgentRequest['trace']) {
+    return this.run(chat, kind, signal, trace);
+  }
+  async regenerateMemory(chat: string, memoryId: string, input: { head: string | null; previous: string }, signal: AbortSignal) {
+    return this.run(chat, 'memory', signal, undefined, { memoryId, ...input });
+  }
+  private async run(chat: string, kind: 'memory' | 'state', signal: AbortSignal, trace?: BaseAgentRequest['trace'], replacement?: { memoryId: string; head: string | null; previous: string }) {
     if (this.pending.has(chat)) throw new AppError("A record update is already running.");
     if (this.repository.getMemoryRebuild(chat)?.status === 'running') throw new AppError('memoryRebuild.running');
     const controller = new AbortController();
@@ -47,22 +54,35 @@ export class RecordService {
     const sink = trace ? undefined : createTraceSink(this.repository, this.events, { id: randomUUID(), conversationId: chat });
     let manualTrace: ReturnType<typeof createRecordTrace> | undefined;
     try {
-      if (sink) manualTrace = createRecordTrace(sink, kind, this.repository.resolveConnection(this.repository.getGeneralSettings().recordConnectionId)?.model ?? '');
+      const target = replacement ? this.repository.listMemoryStages(chat).find(entry => entry.id === replacement.memoryId) : undefined;
+      if (sink) manualTrace = createRecordTrace(sink, kind, this.repository.resolveConnection(this.repository.getGeneralSettings().recordConnectionId)?.model ?? '', target ? { memoryId: target.id, stage: target.stage } : undefined);
       signal.throwIfAborted();
-      const head = this.repository.getConversation(chat)?.headMessageId;
+      const conversation = this.repository.getConversation(chat);
+      const head = conversation?.headMessageId;
+      if (replacement && (!target || head !== replacement.head || target.content !== replacement.previous)) throw new AppError('记忆或分支已变化，请刷新后重试。未覆盖现有内容。');
+      const source = target ? memorySourceMessages(target, this.repository.getActiveBranch(chat)) : [];
+      if (replacement && !source.length) throw new AppError('memory.regenerateSource');
       const beforeState = this.repository.latestState(chat);
       const beforeMemory = this.repository.listMemories(chat, 1)[0];
       const beforeMemoryEdit = this.repository.events(chat, ['memory.edited']).at(-1)?.id;
       const completed = settledStoryIds(this.repository, chat);
       let storyTurnId = completed.at(-1) ?? null;
-      const request = await this.request(chat, storyTurnId ?? 'manual', signal, kind);
+      const request = await this.request(chat, storyTurnId ?? 'manual', signal, replacement ? 'memory-rebuild' : kind);
       if (manualTrace) request.trace = manualTrace.trace;
       else if (trace) request.trace = trace;
       const instruction = kind === 'memory'
-        ? `${memoryRecordInstruction} Append a new stage, preserve earlier memory, and avoid repeating details already summarized.`
+        ? replacement ? `${memoryRecordInstruction} Regenerate only Memory stage ${target!.stage} from the supplied history. Summarize the events in these source messages; background and pinned facts provide context for identities.`
+          : `${memoryRecordInstruction} Append a new stage, preserve earlier memory, and avoid repeating details already summarized.`
         : `Return only a JSON array of state operations: {op: updateRow|insertRow|deleteRow, table, rowId? (updates/deletes only), cells?}. Never use SQL. Allowed fields: ${JSON.stringify(modelStateColumns)}. Field labels: ${JSON.stringify(stateColumnLabels)}. Past Experience Before Story / 故事前经历 is user-authored context and must never be changed. Occupation / 身份与地位 includes identity and social standing; Current Outfit / 当前穿搭 is current clothing, while appearance is stable physical appearance. Past Experience in Story / 故事中经历 starts with this chat. global_state/protagonist_info are update-only row 1. Do not delete important_characters. Maintain current facts and long-term conclusions; chronology belongs in Memory. Required insert identities: name+gender_age, skill_name+skill_type, item_name+quantity+category, quest_name+quest_type, locations_and_factions: name+type, other: name. ${stateCollectionInstruction} Inventory quantity is a positive integer; ${stateDeathInstruction} Empty array if no evidenced change.`;
       let coverage: MemoryCoverage | null = null;
-      if (kind === 'memory') {
+      if (replacement) {
+        request.history = source;
+        request.latestUserText = '';
+        request.fixedHistory = true;
+        request.recordRebuild = true;
+        request.dynamicContext = request.dynamicContext.filter(item => item.required);
+        assertRecordBudget(request, instruction, 'memory.regenerateBudget');
+      } else if (kind === 'memory') {
         const branch = this.repository.getActiveBranch(chat);
         const included = new Set(request.history.map(message => message.id));
         const excludedTurns = new Set(branch.filter(message => message.role !== 'system' && !included.has(message.id)).map(message => message.storyTurnId));
@@ -86,17 +106,27 @@ export class RecordService {
       }
       const answer = parseModelJson(await this.runtime.maintain(request, instruction));
       signal.throwIfAborted();
-      if (this.repository.events(chat, ['memory.edited']).at(-1)?.id !== beforeMemoryEdit) throw new AppError("Memory changed; discarded stale update.");
-      if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new AppError("Records changed; discarded stale update.");
+      if (!replacement) {
+        if (this.repository.events(chat, ['memory.edited']).at(-1)?.id !== beforeMemoryEdit) throw new AppError("Memory changed; discarded stale update.");
+        if (this.repository.getConversation(chat)?.headMessageId !== head || this.repository.latestState(chat)?.id !== beforeState?.id || this.repository.listMemories(chat, 1)[0]?.id !== beforeMemory?.id) throw new AppError("Records changed; discarded stale update.");
+      }
       const result = this.repository.database.sqlite.transaction(() => {
         if (kind === 'memory') {
           const record = chronicle.parse(answer);
+          if (replacement) {
+            const current = this.repository.listMemoryStages(chat).find(entry => entry.id === target!.id);
+            const currentChat = this.repository.getConversation(chat);
+            if (currentChat?.headMessageId !== head || currentChat?.updatedAt !== conversation?.updatedAt || current?.content !== target!.content || JSON.stringify(current?.coverage) !== JSON.stringify(target!.coverage)) throw new AppError('记忆或分支已变化，请刷新后重试。未覆盖现有内容。');
+            const content = JSON.stringify(record, null, 2);
+            this.repository.addEvent(chat, null, 'memory.edited', { id: target!.id, head, content });
+            return { ...current!, content };
+          }
           return this.repository.createMemory({ conversationId: chat, stage: (beforeMemory?.stage ?? 0) + 1, storyTurnId, source: 'generated', coverage, content: JSON.stringify(record, null, 2) });
         }
         const result = applyStateOperations(beforeState?.tables ?? blankState(), answer);
         return result.changed ? this.repository.createState(chat, storyTurnId, result.tables) : { unchanged: true };
       })();
-      manualTrace?.finish('unchanged' in result ? 'unchanged' : 'updated');
+      manualTrace?.finish(replacement ? 'regenerated' : 'unchanged' in result ? 'unchanged' : 'updated');
       return result;
     } catch (error) {
       if (sink) manualTrace ??= createRecordTrace(sink, kind, '');

@@ -129,6 +129,22 @@ export default function Records({
     catch (error) { onError((error as Error).message); }
   }
 
+  async function regenerateMemory(memoryId: string) {
+    try {
+      await flushContentEdits();
+      setBusy(true);
+      const entries = await api<any[]>(`/conversations/${chat.id}/memory`);
+      const entry = entries.find(item => item.id === memoryId);
+      if (!entry?.canRegenerate) throw new Error(t('这条 Memory 的来源回合已不可用，请刷新后重试。'));
+      await api(`/conversations/${chat.id}/memory/${memoryId}/regenerate`, 'POST', { head: chat.headMessageId, previous: entry.content });
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy(false);
+      onChanged();
+    }
+  }
+
   return (
     <div className={expanded ? 'records-shade' : 'records-host'} hidden={!visible} {...backdrop}>
     {visible && rebuilding && <MemoryRebuild key={chat.id} chat={chat} disabled={disabled || busy} onClose={() => setRebuilding(false)} onChanged={onChanged} />}
@@ -197,7 +213,9 @@ export default function Records({
               <article className="memory-entry" key={entry.id} hidden={expanded && selectedMemory !== entry.id}>
                 <div className="memory-stage">{t("阶段 {0}", entry.stage)}</div>
                 <small className="muted">{entry.coverage ? t(entry.coverage.inferred ? '覆盖 {0} 轮（含临时识别的旧回合）' : '覆盖 {0} 个完整回合', entry.coverage.roundCount ?? entry.coverage.storyTurnIds.length) : t("覆盖范围：历史记录未提供")}</small>
-                {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>{t("起点")}</button><button onClick={() => onSource(entry.coverage.endMessageId)}>{t("终点")}</button></div>}
+                {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>{t("起点")}</button><button onClick={() => onSource(entry.coverage.endMessageId)}>{t("终点")}</button>
+                  {entry.canRegenerate && <button disabled={disabled || busy} onClick={() => void regenerateMemory(entry.id)}>{t('重新生成')}</button>}
+                </div>}
                 <MemoryContent key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content ?? ''} label={t("阶段 {0}", entry.stage)} disabled={disabled || busy} onError={onError}
                   onSave={async (content, previous) => {
                     const saved = await api(`/conversations/${chat.id}/memory/${entry.id}`, 'PATCH', { content, previous, head: chat.headMessageId }, { keepalive: true });

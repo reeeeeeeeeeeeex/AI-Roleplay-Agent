@@ -1415,6 +1415,40 @@ test('Memory rebuild keeps an unapplied draft across reopening on a narrow Engli
   expect((await (await request.get(`/api/conversations/${chat.id}/memory`)).json())[0].content).toBe('原有 Memory 仍生效');
 });
 
+test('Memory regeneration flushes edits, replaces only its stage and shows Trace', async ({ page, request }, info) => {
+  const chats = await (await request.get('/api/conversations')).json();
+  const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);
+  const settings = await (await request.get('/api/settings/general')).json();
+  await request.put('/api/settings/general', { data: { ...settings, manualInput: true, memoryTurnInterval: 0, stateTurnInterval: 0 } });
+  let head = chat.headMessageId;
+  await request.post(`/api/conversations/${chat.id}/memory`, { data: { head, content: 'Untraceable manual Memory' } });
+  for (let round = 1; round <= 2; round++) {
+    const user = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'user', head, input: { voice: 'protagonist', text: `Source input ${round}` } } })).json();
+    const reply = await (await request.post(`/api/conversations/${chat.id}/manual-messages`, { data: { role: 'assistant', head: user.message.id, speaker: { kind: 'narrator' }, text: `Source reply ${round}` } })).json();
+    head = reply.message.id;
+    await expect.poll(async () => (await (await request.get(`/api/conversations/${chat.id}/last-turn`)).json()).recordsStatus).toBe('completed');
+    expect((await request.post(`/api/conversations/${chat.id}/memory/generate`)).ok()).toBe(true);
+  }
+  const before = await (await request.get(`/api/conversations/${chat.id}/memory`)).json();
+  const target = before.find((entry: any) => entry.stage === 2);
+  await page.reload();
+  await englishInterface(page);
+  if (!await page.getByRole('button', { name: 'Close records panel', exact: true }).isVisible()) await page.getByRole('button', { name: 'Records panel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Regenerate', exact: true })).toHaveCount(2);
+  const chronicle = page.getByRole('textbox', { name: 'Stage 2 Chronicle', exact: true });
+  const entry = page.locator('article.memory-entry').filter({ has: chronicle });
+  await chronicle.fill('Manual draft before regeneration');
+  const sent = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith(`/memory/${target.id}/regenerate`));
+  await entry.getByRole('button', { name: 'Regenerate', exact: true }).click();
+  expect(JSON.parse((await sent).postDataJSON().previous).chronicle).toBe('Manual draft before regeneration');
+  await expect(chronicle).toHaveValue(JSON.parse(target.content).chronicle);
+  const after = await (await request.get(`/api/conversations/${chat.id}/memory`)).json();
+  expect(after.filter((item: any) => item.id !== target.id)).toEqual(before.filter((item: any) => item.id !== target.id));
+  expect(after.find((item: any) => item.id === target.id)).toEqual(target);
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(page.getByText('This Memory has been regenerated and replaced.', { exact: true })).toBeVisible();
+});
+
 test('Memory rebuild stage autosave failure preserves edits and stops applying', async ({ page, request }, info) => {
   const chats = await (await request.get('/api/conversations')).json();
   const chat = chats.find((item: any) => item.title === `Browser ${info.title}`);

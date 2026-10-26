@@ -15,11 +15,11 @@ export function buildRecordContext(request: BaseAgentRequest, instruction: strin
   };
 }
 
-export function assertRecordBudget(request: BaseAgentRequest, instruction: string): void {
+export function assertRecordBudget(request: BaseAgentRequest, instruction: string, errorKey: 'memoryRebuild.budget' | 'memory.regenerateBudget' = 'memoryRebuild.budget'): void {
   const context = buildRecordContext(request, instruction);
   const input = estimateTokens(context.systemPrompt ?? '') + context.messages.reduce((sum, message) => sum + estimateTokens(String(message.content)) + 32, 0);
   const window = request.connection.contextWindow ?? 128_000;
-  if (input + request.connection.maxTokens + 4096 > window) throw new AppError('memoryRebuild.budget', input, request.connection.maxTokens, window);
+  if (input + request.connection.maxTokens + 4096 > window) throw new AppError(errorKey, input, request.connection.maxTokens, window);
 }
 
 function section(title: string, body: string | undefined): string {

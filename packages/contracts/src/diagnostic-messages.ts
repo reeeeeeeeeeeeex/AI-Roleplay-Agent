@@ -1,5 +1,7 @@
 // Application diagnostics only; never translate provider payloads or model instructions.
 export const diagnosticMessages = {
+  'memory.regenerateSource': { original: '这条 Memory 缺少当前分支中可追踪的来源回合，无法重新生成。', zh: '这条 Memory 缺少当前分支中可追踪的来源回合，无法重新生成。', en: 'This Memory has no traceable source turns on the current branch and cannot be regenerated.' },
+  'memory.regenerateBudget': { original: '这条 Memory 的来源回合超过预算：估算输入 {0}、最大输出 {1}、上下文窗口 {2} token。原记录已保留；请增大窗口或减少最大输出。', zh: '这条 Memory 的来源回合超过预算：估算输入 {0}、最大输出 {1}、上下文窗口 {2} token。原记录已保留；请增大窗口或减少最大输出。', en: 'The source turns exceed the budget: estimated input {0}, maximum output {1}, context window {2} tokens. The original Memory is preserved. Increase the window or reduce maximum output.' },
   'Location, faction and other fields must be text.': { original: 'Location, faction and other fields must be text.', zh: '地点、势力与其他记录的字段必须是文本。', en: 'Location, faction and other fields must be text.' },
   'Location or faction type must be location or faction.': { original: 'Location or faction type must be location or faction.', zh: '地点与势力的类型必须是 location（地点）或 faction（势力）。', en: 'Location or faction type must be location or faction.' },
   "只能修改当前历史中的消息版本。": { original: "只能修改当前历史中的消息版本。", zh: "只能修改当前历史中的消息版本。", en: "Only messages in the current history can be edited or switched." },

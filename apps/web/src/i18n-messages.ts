@@ -1,5 +1,8 @@
 // Interface text only. Story content and model instructions never go through this dictionary.
 export const english = {
+  '重新生成': 'Regenerate',
+  '这一条 Memory 已重新生成并替换。': 'This Memory has been regenerated and replaced.',
+  '这条 Memory 的来源回合已不可用，请刷新后重试。': 'The source turns for this Memory are no longer available. Refresh and try again.',
   'Memory 更新': 'Memory update',
   '主角状态更新': 'Protagonist state update',
   '更新已保存。': 'Update saved.',
