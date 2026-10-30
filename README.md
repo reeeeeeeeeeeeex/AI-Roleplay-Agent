@@ -59,6 +59,8 @@ AI Roleplay Agent 是一个本地优先的 AI 角色扮演与故事创作工具�
 
 **局域网访问：** 在根目录 `.env` 中设置 `HOST=0.0.0.0`，保留 `PAIRING_TOKEN=` 为空，重启后即可用手机或平板访问 `http://电脑的局域网IP:14310`，无需配对。`HOST=127.0.0.1` 则只允许本机访问。配对是可选的：填写 24–256 位字母、数字、下划线或连字符组成的 `PAIRING_TOKEN` 才会要求配对。配置示例见 [.env.example](.env.example)。
 
+个人云服务器部署见[部署指南](docs/DEPLOYMENT.md#zh-cn)，提供 systemd、HTTPS 代理和配对认证配置，以及数据迁移说明。
+
 下载源码或克隆仓库也可使用这些入口，首次会额外构建应用。所有系统均可在项目根目录运行 `node scripts/start.mjs`。开发用 pnpm 版本由 [package.json](package.json) 的 `packageManager` 固定。
 
 1. **选择语言。** 打开左下角「设置 / Settings → 语言 / Language」，选择中文或 English，点击「保存 / Save」。语言只保存在当前浏览器，不改变故事内容或模型提示词。
@@ -161,6 +163,8 @@ The first launch downloads pinned dependencies, then opens **[http://127.0.0.1:1
 Current source defaults to port `14310`; set `PORT` in the root `.env` to use another port. Follow the matching release notes for older packages. Changing the port preserves stories in the database, but browser preferences, unsent drafts, and installed PWAs belong to their original address and do not migrate automatically.
 
 **LAN access:** Set `HOST=0.0.0.0` in the root `.env`, leave `PAIRING_TOKEN=` blank, and restart. Phones and tablets can then open `http://<computer-LAN-IP>:14310` without pairing. Use `HOST=127.0.0.1` for access from this computer only. Pairing is optional: set `PAIRING_TOKEN` to 24–256 letters, digits, underscores, or hyphens to require it. See [.env.example](.env.example).
+
+For a personal cloud server, see the [deployment guide](docs/DEPLOYMENT.md#english) for systemd, HTTPS, device pairing, and data migration.
 
 These launchers also work with a source download or clone, building the app on first launch. On any system you can run `node scripts/start.mjs` from the project root. The development pnpm version is pinned in the `packageManager` field of [package.json](package.json).
 

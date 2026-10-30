@@ -1,0 +1,19 @@
+# Caddy 2.11+. Replace with your domain or public IP; preserve any existing sites.
+{
+	# IP clients omit SNI; cloud NAT exposes a different address to the listener.
+	default_sni chat.example.com
+}
+
+chat.example.com {
+	# Public IP certificates require Let's Encrypt's short-lived profile.
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived
+		}
+	}
+	reverse_proxy 127.0.0.1:14310 {
+		# The backend uses HTTP on loopback; browser pairing cookies must use HTTPS.
+		header_down Set-Cookie "^(.+)$" "$1; Secure"
+	}
+}

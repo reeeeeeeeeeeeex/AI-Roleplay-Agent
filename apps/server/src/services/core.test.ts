@@ -570,19 +570,30 @@ it('LAN access works without pairing when enabled in configuration', async () =>
   expect((await server.app.inject({ url: '/api/settings/general', headers: { host: 'evil.example' } })).statusCode).toBe(403);
 });
 
-it('local image caching preserves pairing and no-store responses for private APIs and errors', async () => {
+it('HTTPS proxy pairing protects private APIs and image caching', async () => {
   const config = server.config;
   await server.app.close();
   const token = 'offline-pairing-fixture-token';
   server = await createApp({ ...config, host: '0.0.0.0', pairingToken: token }, runtime);
+  const proxyHeaders = { host: 'chat.example.test', origin: 'https://chat.example.test' };
   const name = 'b'.repeat(64) + '.png';
   writeFileSync(join(work, 'assets', name), Buffer.from('image-fixture'));
-  const denied = await server.app.inject({ url: `/api/assets/${name}` });
+  expect((await server.app.inject({ url: '/api/session', headers: proxyHeaders })).json().requiresPairing).toBe(true);
+  const denied = await server.app.inject({ url: `/api/assets/${name}`, headers: proxyHeaders });
   expect(denied.statusCode).toBe(401);
   expect(denied.headers['cache-control']).toBe('no-store');
-  const headers = { authorization: `Bearer ${token}` };
+  expect((await server.app.inject({ url: '/api/settings/general', headers: proxyHeaders })).statusCode).toBe(401);
+  const paired = await server.app.inject({ method: 'POST', url: '/api/pair', headers: proxyHeaders, payload: { token } });
+  expect(paired.statusCode).toBe(200);
+  const cookie = String(paired.headers['set-cookie']);
+  expect(cookie).toContain('HttpOnly; SameSite=Strict; Path=/');
+  const headers = { ...proxyHeaders, cookie: cookie.split(';')[0]! };
   expect((await server.app.inject({ url: `/api/assets/${name}`, headers })).headers['cache-control']).toContain('private');
-  expect((await server.app.inject({ url: '/api/settings/general', headers })).headers['cache-control']).toBe('no-store');
+  const settings = await server.app.inject({ url: '/api/settings/general', headers });
+  expect(settings.statusCode).toBe(200);
+  expect(settings.headers['cache-control']).toBe('no-store');
+  expect((await server.app.inject({ url: '/api/settings/general', headers: { ...proxyHeaders, authorization: `Bearer ${token}` } })).statusCode).toBe(200);
+  expect((await server.app.inject({ url: '/api/settings/general', headers: { ...headers, origin: 'https://other.example.test' } })).statusCode).toBe(403);
   const missing = await server.app.inject({ url: `/api/assets/${'c'.repeat(64)}.png`, headers });
   expect(missing.statusCode).toBe(404);
   expect(missing.headers['cache-control']).toBe('no-store');

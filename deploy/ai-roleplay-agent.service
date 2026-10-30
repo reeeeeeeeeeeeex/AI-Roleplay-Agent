@@ -1,0 +1,25 @@
+[Unit]
+Description=AI Roleplay Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ai-roleplay-agent
+Group=ai-roleplay-agent
+WorkingDirectory=/opt/ai-roleplay-agent/apps/server
+EnvironmentFile=/etc/ai-roleplay-agent.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+StateDirectory=ai-roleplay-agent
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
