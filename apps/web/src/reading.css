@@ -145,6 +145,75 @@
   --dot-character: #365a84;
 }
 
+[data-reading-theme="atelier"] {
+  color-scheme: dark;
+  --bg-canvas: #121618;
+  --bg-sidebar: #161b1e;
+  --bg-surface: #1b2125;
+  --bg-elevated: #21292e;
+  --bg-input: #151a1d;
+  --bg-hover: #273137;
+  --bg-active: #2c373e;
+  --border-subtle: #283238;
+  --border-default: #36434b;
+  --border-strong: #566b77;
+  --border-focus: #9ec5be;
+  --text-primary: #ecf2f0;
+  --text-secondary: #c7d4d0;
+  --text-muted: #b3c4bf;
+  --text-dim: #a6b8b3;
+  --text-prose: #e2ebe8;
+  --text-narration: #c5d5d0;
+  --accent: #9fd4c7;
+  --accent-hover: #c2ebe1;
+  --accent-foreground: #122420;
+  --accent-muted: #56736c;
+  --danger: #ffb3b3;
+  --danger-bg: #382226;
+  --danger-border: #94525c;
+  --warning: #f2cf92;
+  --warning-bg: #362e21;
+  --warning-border: #967a4b;
+  --success: #9dd9b8;
+  --dot-narrator: #c7d4d0;
+  --dot-character: #9fd4c7;
+}
+
+/* Atelier theme visual polish */
+[data-reading-theme="atelier"] .sidebar {
+  background: linear-gradient(180deg, #171d20 0%, #14191c 100%);
+}
+[data-reading-theme="atelier"] .story-list button.selected,
+[data-reading-theme="atelier"] .studio-nav button.selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+[data-reading-theme="atelier"] .topbar,
+[data-reading-theme="atelier"] .records > header {
+  background: linear-gradient(180deg, #1d2428 0%, #1a2024 100%);
+}
+[data-reading-theme="atelier"] .message {
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+[data-reading-theme="atelier"] .message:hover {
+  background: #171c1f;
+  box-shadow: 0 0 0 6px #171c1f;
+}
+[data-reading-theme="atelier"] .message.user .avatar {
+  border-color: var(--accent-muted);
+}
+[data-reading-theme="atelier"] .message-body header span {
+  border: 1px solid var(--border-subtle);
+  padding: 1px 6px;
+}
+[data-reading-theme="atelier"] .composer {
+  box-shadow: 0 8px 28px #00000048;
+}
+[data-reading-theme="atelier"] .records > nav button.active,
+[data-reading-theme="atelier"] .settings-nav button.active {
+  border-bottom-color: var(--accent);
+}
+
 .reading-preview {
   background: var(--bg-canvas);
   color: var(--text-prose);

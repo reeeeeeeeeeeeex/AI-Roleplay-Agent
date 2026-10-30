@@ -1,4 +1,4 @@
-export const readingThemes = ['graphite', 'midnight', 'warm', 'paper'] as const;
+export const readingThemes = ['graphite', 'midnight', 'warm', 'paper', 'atelier'] as const;
 export const readingFonts = ['sans', 'serif', 'mono'] as const;
 export type ReadingAppearance = {
   theme: typeof readingThemes[number];

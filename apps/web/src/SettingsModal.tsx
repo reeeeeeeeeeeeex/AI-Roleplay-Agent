@@ -264,7 +264,7 @@ export default function SettingsModal({
             }}>
               <div className="two-col">
                 <label>{t('阅读配色')}<select value={readingDraft.theme} onChange={event => setReadingDraft({ ...readingDraft, theme: event.target.value as ReadingAppearance['theme'] })}>
-                  {readingThemes.map(theme => <option value={theme} key={theme}>{t(({ graphite: '石墨黑', midnight: '午夜蓝', warm: '暖墨棕', paper: '纸白' } as const)[theme])}</option>)}
+                  {readingThemes.map(theme => <option value={theme} key={theme}>{t(({ graphite: '石墨黑', midnight: '午夜蓝', warm: '暖墨棕', paper: '纸白', atelier: '青砚' } as const)[theme])}</option>)}
                 </select></label>
                 <label>{t('正文字体')}<select value={readingDraft.font} onChange={event => setReadingDraft({ ...readingDraft, font: event.target.value as ReadingAppearance['font'] })}>
                   {readingFonts.map(font => <option value={font} key={font}>{t(({ sans: '系统黑体', serif: '宋体／衬线', mono: '等宽字体' } as const)[font])}</option>)}

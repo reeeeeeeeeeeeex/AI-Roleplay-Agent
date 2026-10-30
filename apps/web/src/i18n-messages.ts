@@ -90,6 +90,7 @@ export const english = {
   "午夜蓝": "Midnight blue",
   "暖墨棕": "Warm dark",
   "纸白": "Paper white",
+  "青砚": "Atelier",
   "系统黑体": "System sans serif",
   "宋体／衬线": "Serif",
   "等宽字体": "Monospace",

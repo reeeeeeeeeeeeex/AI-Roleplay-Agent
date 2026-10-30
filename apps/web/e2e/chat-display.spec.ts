@@ -343,7 +343,7 @@ test('reading: all palettes pair readable text with their backgrounds', async ({
   await readingStory(page, request);
   const settings = await readingSettings(page);
   // One palette invariant, including supporting text and the light-theme hover state.
-  for (const theme of ['graphite', 'midnight', 'warm', 'paper']) {
+  for (const theme of ['graphite', 'midnight', 'warm', 'atelier', 'paper']) {
     await settings.getByRole('combobox', { name: '阅读配色', exact: true }).selectOption(theme);
     await settings.getByRole('button', { name: '保存阅读外观', exact: true }).click();
     const ratios = await page.evaluate(() => {
