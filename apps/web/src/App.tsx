@@ -856,13 +856,13 @@ export default function App() {
               {titles[kind]} <span>{data[kind]?.length ?? 0}</span>
             </button>
           ))}
-          <button onClick={() => { setShowSettings(true); setMobileNav(false); }}>
-            <Settings2 size={14} />设置 / Settings</button>
           <button onClick={() => { setShowPersona(true); setMobileNav(false); }}>
             <Users size={14} />{t("主角：")}{activePersona?.name ?? t("未选择")}
           </button>
           <button className={page === 'import' ? 'selected' : ''} onClick={() => act(selectPage('import'))}>
             <Upload size={14} />{t("导入故事")}</button>
+          <button className="studio-nav-settings" onClick={() => { setShowSettings(true); setMobileNav(false); }}>
+            <Settings2 size={14} />设置 / Settings</button>
         </nav>
 
         <div className="local-status">
@@ -890,6 +890,12 @@ export default function App() {
           <div className="top-actions">
             {chat && page === 'chat' && (
               <>
+                <button ref={searchButton} title={t('搜索正文（Ctrl / ⌘ + F）')} aria-label={t('搜索正文')} aria-keyshortcuts="Control+f Meta+f" aria-expanded={showSearch}
+                  onClick={() => showSearch ? closeSearch() : setShowSearch(true)}><Search size={14} /></button>
+                <button title={t("故事资料")} aria-label={t("故事资料")} onClick={() => edit('conversations', chat)}>
+                  <BookOpen size={14} />
+                  <span>{t("故事资料")}</span>
+                </button>
                 <button title={t("作者注释")} aria-label={t("作者注释")} onClick={() => setShowAuthorNote(true)}>
                   <FilePenLine size={14} />
                   <span>{t("作者注释")}</span>
@@ -898,12 +904,6 @@ export default function App() {
                   <GitFork size={14} />
                   <span>{t("故事分支")}</span>
                 </button>
-                <button title={t("故事资料")} aria-label={t("故事资料")} onClick={() => edit('conversations', chat)}>
-                  <BookOpen size={14} />
-                  <span>{t("故事资料")}</span>
-                </button>
-                <button ref={searchButton} title={t('搜索正文（Ctrl / ⌘ + F）')} aria-label={t('搜索正文')} aria-keyshortcuts="Control+f Meta+f" aria-expanded={showSearch}
-                  onClick={() => showSearch ? closeSearch() : setShowSearch(true)}><Search size={14} /></button>
                 <button disabled={sending || !!turn || !!messageEdit} title={t("发送前预览提示词")} aria-label={t("发送前预览提示词")} onClick={() => act(showPromptPreview())}>{t("预览")}</button>
                 <button title={t("记录面板")} aria-label={t("记录面板")} onClick={() => panel ? act(closeRecords()) : setPanel(true)}>
                   {panel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
@@ -1015,21 +1015,6 @@ export default function App() {
                         // Run the click before blur can move or replace the message controls.
                         if (document.activeElement?.closest('.prose')) event.preventDefault();
                       }}>
-                        <button onClick={event => {
-                          const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
-                          act(copyText(body?.value ?? m.content).then(() => setNotice(t('正文已复制。'))));
-                        }}><Copy size={12} />{t('复制正文')}</button>
-                        {m.role !== 'system' && <button className={branch[historyStartPosition]?.id === m.id ? 'active' : ''} disabled={!!turn || sending}
-                          title={t("包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整")}
-                          onClick={() => act(setHistoryStart(branch[historyStartPosition]?.id === m.id ? null : m.id))}>
-                          {branch[historyStartPosition]?.id === m.id ? t("发送起点 · 取消") : t("从此处开始发送")}
-                        </button>}
-                        <button disabled={!!turn || sending} onClick={event => {
-                          const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
-                          const selected = body?.value.slice(body.selectionStart, body.selectionEnd).trim();
-                          const content = selected || body?.value || m.content;
-                          act(flushContentEdits().then(() => saveMessageEdit({ ...m, id: savedMessageId(m.id)! }, 'fact', content)));
-                        }}>{t("固定事实")}</button>
                         {swipes.length > 1 && (
                           <>
                             <button title={t("上一个版本")} disabled={!!turn || sending || !!messageEdit || index <= 0} onClick={() => act(selectVersion(m.id, swipes[index - 1]!.id))}>
@@ -1045,12 +1030,27 @@ export default function App() {
                           <>
                             <button disabled={!!turn || sending || !!messageEdit} title={generalSettings.manualInput ? t("手动填写新版本 · 保留原回复和发言者，不调用模型") : t("只重新生成这一条，保持当前发言者；原文保留为其他版本")} onClick={() => act(swipe(m))}>
                               <RotateCw size={12} />{t("新版本")}</button>
-                            {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title={t("重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留")} onClick={() => act(send('regenerate', m.id))}>{t("重做整轮（2 条）")}</button>}
                             <button disabled={!!turn} onClick={() => act(send('continue', m.id))}>{t("续写")}</button>
                             <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'rewrite', initial: '' })))}>{t("按要求改写")}</button>
+                            {wholeTurnTargets.has(m.id) && <button disabled={!!turn} title={t("重新生成本轮的两条回复；按当前模式和回复目标重新决定输出，旧分支保留")} onClick={() => act(send('regenerate', m.id))}>{t("重做整轮（2 条）")}</button>}
                           </>
                         )}
+                        <button onClick={event => {
+                          const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
+                          act(copyText(body?.value ?? m.content).then(() => setNotice(t('正文已复制。'))));
+                        }}><Copy size={12} />{t('复制正文')}</button>
+                        <button disabled={!!turn || sending} onClick={event => {
+                          const body = event.currentTarget.closest('article')?.querySelector<HTMLTextAreaElement>('.prose textarea');
+                          const selected = body?.value.slice(body.selectionStart, body.selectionEnd).trim();
+                          const content = selected || body?.value || m.content;
+                          act(flushContentEdits().then(() => saveMessageEdit({ ...m, id: savedMessageId(m.id)! }, 'fact', content)));
+                        }}>{t("固定事实")}</button>
                         <button disabled={!!turn || sending} onClick={() => act(flushContentEdits().then(() => setMessageEdit({ id: savedMessageId(m.id)!, action: 'bookmark', initial: '' })))}>{t("书签")}</button>
+                        {m.role !== 'system' && <button className={branch[historyStartPosition]?.id === m.id ? 'active' : ''} disabled={!!turn || sending}
+                          title={t("包含本条及后续消息，覆盖通用设置的发送条数；固定范围超出上下文时提示调整")}
+                          onClick={() => act(setHistoryStart(branch[historyStartPosition]?.id === m.id ? null : m.id))}>
+                          {branch[historyStartPosition]?.id === m.id ? t("发送起点 · 取消") : t("从此处开始发送")}
+                        </button>}
                         <button disabled={!!turn || sending} title={t("保留至本条消息，创建独立聊天；原聊天不变")} onClick={() => act(forkFrom(m.id))}>
                           <GitFork size={12} />{t("从此处分支")}</button>
                         <button className="danger" disabled={!!turn || sending} title={t("删除本条及其后的所有消息")} onClick={() => act(deleteFrom(m.id))}>{t("删除")}</button>

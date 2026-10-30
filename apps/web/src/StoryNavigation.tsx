@@ -49,7 +49,6 @@ export default function StoryNavigation({ chatId, title, head, version, disabled
     <summary aria-label={t("场景与书签")} title={t("场景与书签")}><BookMarked size={14} /><span>{t("场景与书签")}</span></summary>
     <div className="story-navigation-content">
     <small className="story-agency">{agencyLabel}</small>
-    <div><button disabled={disabled} onClick={() => void download('markdown')}>{t("导出当前分支 Markdown")}</button><button disabled={disabled} onClick={() => void download('native')}>{t("导出完整故事包")}</button></div>
     {data && <>
       <AutoSaveField draftKey={`${chatId}:scene`} initial={data.scene.scenario} label={t("当前场景")} placeholder={t("场景未记录")} disabled={disabled} onError={onError} onSave={async (scenario, previous) => {
         const current = await api(`/conversations/${chatId}`);
@@ -60,7 +59,7 @@ export default function StoryNavigation({ chatId, title, head, version, disabled
         onSave={async (content, previous) => { await api(`/conversations/${chatId}/state/cell`, 'PATCH', { table: 'global_state', rowId: 1, column: field === 'time' ? 'current_time' : 'current_location', content, previous, head }, { keepalive: true }); onChanged(); }} /></label>)}</div>
       <small>{t("重要角色：")}{data.scene.importantCharacters.join('、') || t("未记录")}</small>
       </> : <p className="muted" role="status">{t("正在读取记录…")}</p>}
-      {data.bookmarks.map(bookmark => <div key={bookmark.id}>
+      {data.bookmarks.map(bookmark => <div className="bookmark-row" key={bookmark.id}>
         <AutoSaveField draftKey={`${chatId}:bookmark:${bookmark.id}`} initial={bookmark.name} label={t("书签名称")} singleLine disabled={disabled} onError={onError}
           onSave={async (name, previous) => { const saved = await api(`/conversations/${chatId}/bookmarks`, 'POST', { ...bookmark, name, previous }, { keepalive: true }); onChanged(); return saved.name; }} />
         <button disabled={disabled} aria-label={t("跳转到书签 {0}", bookmark.name)} onClick={() => run(onJump(bookmark.messageId))}>{t("跳转")}</button>
@@ -68,6 +67,7 @@ export default function StoryNavigation({ chatId, title, head, version, disabled
       </div>)}
       {!data.bookmarks.length && <p className="muted">{t("可从消息操作中添加书签。")}</p>}
     </>}
+    <div className="story-export-actions"><button disabled={disabled} onClick={() => void download('markdown')}>{t("导出当前分支 Markdown")}</button><button disabled={disabled} onClick={() => void download('native')}>{t("导出完整故事包")}</button></div>
     </div>
   </details>;
 }

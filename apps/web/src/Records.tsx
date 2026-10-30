@@ -199,21 +199,25 @@ export default function Records({
                     const saved = await api(`/conversations/${chat.id}/facts`, 'POST', { id: fact.id, content, previous, head: chat.headMessageId }, { keepalive: true });
                     setFacts(items => items.map(item => item.id === fact.id ? saved : item)); onChanged(); return saved.content;
                   }} />
-                {fact.sourceMessageId && <button onClick={() => onSource(fact.sourceMessageId!)}>{t("查看来源")}</button>}
+                <div className="memory-entry-actions">
+                  {fact.sourceMessageId && <button onClick={() => onSource(fact.sourceMessageId!)}>{t("查看来源")}</button>}
                   <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/facts/${fact.id}`, {}, 'DELETE')}>{t("取消固定")}</button>
+                </div>
               </article>)}
               <AutoSaveField key={`new-fact:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:new-fact`} initial="" label={t("添加固定事实")} placeholder={t("填写固定事实，离开自动保存")} disabled={disabled || busy} resetOnSave lockWhileSaving onError={onError}
                 onSave={async content => { await api(`/conversations/${chat.id}/facts`, 'POST', { content, head: chat.headMessageId }, { keepalive: true }); onChanged(); }} />
             </details>
-            <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory/generate`)}>
-              {busy ? t("更新中…") : t("立即生成 Memory")}
-            </button>
-            <button style={{ width: '100%', marginBottom: 12 }} disabled={disabled || busy} onClick={() => { void flushContentEdits().then(() => setRebuilding(true)).catch(error => onError(error.message)); }}>{t('手动重建 Memory')}</button>
+            <div className="records-action-row">
+              <button disabled={disabled || busy} onClick={() => void run(`/conversations/${chat.id}/memory/generate`)}>
+                {busy ? t("更新中…") : t("立即生成 Memory")}
+              </button>
+              <button disabled={disabled || busy} onClick={() => { void flushContentEdits().then(() => setRebuilding(true)).catch(error => onError(error.message)); }}>{t('手动重建 Memory')}</button>
+            </div>
             {[...memory].reverse().map((entry) => (
               <article className="memory-entry" key={entry.id} hidden={expanded && selectedMemory !== entry.id}>
                 <div className="memory-stage">{t("阶段 {0}", entry.stage)}</div>
                 <small className="muted">{entry.coverage ? t(entry.coverage.inferred ? '覆盖 {0} 轮（含临时识别的旧回合）' : '覆盖 {0} 个完整回合', entry.coverage.roundCount ?? entry.coverage.storyTurnIds.length) : t("覆盖范围：历史记录未提供")}</small>
-                {entry.coverage && <div><button onClick={() => onSource(entry.coverage.startMessageId)}>{t("起点")}</button><button onClick={() => onSource(entry.coverage.endMessageId)}>{t("终点")}</button>
+                {entry.coverage && <div className="memory-entry-actions"><button onClick={() => onSource(entry.coverage.startMessageId)}>{t("起点")}</button><button onClick={() => onSource(entry.coverage.endMessageId)}>{t("终点")}</button>
                   {entry.canRegenerate && <button disabled={disabled || busy} onClick={() => void regenerateMemory(entry.id)}>{t('重新生成')}</button>}
                 </div>}
                 <MemoryContent key={`${entry.id}:${chat.headMessageId}`} draftKey={`${chat.id}:${chat.headMessageId}:memory:${entry.id}`} initial={entry.content ?? ''} label={t("阶段 {0}", entry.stage)} disabled={disabled || busy} onError={onError}

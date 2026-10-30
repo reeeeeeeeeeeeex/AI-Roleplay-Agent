@@ -280,7 +280,7 @@ label.check input[type="checkbox"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 8px;
+  padding: 6px 8px 4px;
   color: var(--text-dim);
   font-size: 10px;
   font-weight: 600;
@@ -336,7 +336,7 @@ label.check input[type="checkbox"] {
   margin-bottom: 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .story-list button, .studio-nav button {
@@ -344,7 +344,7 @@ label.check input[type="checkbox"] {
   align-items: center;
   width: 100%;
   text-align: left;
-  padding: 6px 8px;
+  padding: 7px 9px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -384,9 +384,10 @@ label.check input[type="checkbox"] {
 .story-list .story-draft-indicator {
   flex-shrink: 0;
   margin: 0;
-  padding: 2px 4px;
+  padding: 2px 5px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
   color: var(--text-primary);
 }
 
@@ -396,6 +397,13 @@ label.check input[type="checkbox"] {
   gap: 2px;
   border-top: 1px solid var(--border-subtle);
   padding-top: 8px;
+}
+
+.studio-nav .studio-nav-settings {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
 .studio-nav button span {
@@ -576,6 +584,11 @@ main {
 .story-navigation-content { position: absolute; top: calc(100% + 4px); left: 12px; width: min(520px, calc(100cqw - 24px)); max-height: min(420px, calc(100dvh - 80px)); overflow: auto; padding: 14px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); box-shadow: 0 8px 24px #0005; }
 .story-agency { display: block; margin-bottom: 8px; color: var(--text-dim); font-size: 11px; }
 .story-navigation button { margin: 4px; }
+.bookmark-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.bookmark-row > .record-field { flex: 1; min-width: 0; border-bottom: 1px solid var(--border-subtle); padding-bottom: 2px; }
+.bookmark-row > button { margin: 0; flex-shrink: 0; font-size: 11px; padding: 4px 8px; }
+.story-export-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
+.story-export-actions > button { margin: 0; font-size: 11px; padding: 5px 10px; }
 .context-report { margin: 10px 0; }
 .context-report ol { max-height: 360px; overflow: auto; padding-left: 24px; }
 .context-report li { margin: 10px 0; overflow-wrap: anywhere; }
@@ -725,7 +738,7 @@ main {
 .message-thinking { margin: 0 0 8px; border-left: 2px solid var(--accent); padding-left: 10px; color: var(--text-secondary); }
 .message-thinking summary { cursor: pointer; font-size: 12px; }
 .message-thinking pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
-.generation-info { display: block; margin-top: 8px; color: var(--text-secondary); }
+.generation-info { display: block; margin-top: 6px; font-size: 11px; color: var(--text-dim); }
 
 .narration .prose {
   color: var(--text-narration);
@@ -1371,6 +1384,21 @@ main {
 .records-content button {
   font-size: 11px;
   padding: 5px 10px;
+}
+
+.records-action-row {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.records-action-row > button {
+  flex: 1;
+}
+.memory-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .memory-entry {
